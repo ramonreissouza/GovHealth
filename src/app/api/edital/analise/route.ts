@@ -11,8 +11,6 @@ import { IA_HABILITADA } from '@/lib/features'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
 // Limita o texto enviado ao modelo (controle de custo/contexto). ~48k chars ≈ edital típico.
 const MAX_CHARS = 48_000
 
@@ -75,6 +73,9 @@ export async function POST(req: NextRequest) {
       : ''
 
     const userContent = `EDITAL:\n${texto.slice(0, MAX_CHARS)}${portfolioStr}`
+
+    // Instanciado aqui (não no topo) para o build não exigir OPENAI_API_KEY.
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',

@@ -7,8 +7,6 @@ import { IA_HABILITADA } from '@/lib/features'
 
 export const runtime = 'nodejs'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
 const SYSTEM_PROMPT = `Você é o GovHealth AI, copiloto de inteligência comercial para fornecedores de equipamentos e serviços para a saúde pública brasileira.
 
 Você tem acesso em tempo real a dados dos seguintes sistemas governamentais:
@@ -65,6 +63,10 @@ export async function POST(req: NextRequest) {
         { status: 401 }
       )
     }
+
+    // Instanciado aqui (não no topo do módulo) para não quebrar o build quando
+    // OPENAI_API_KEY não existe no ambiente (IA desativada).
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
     const body: RequestBody = await req.json()
     const { messages, context } = body
