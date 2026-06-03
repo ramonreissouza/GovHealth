@@ -10,7 +10,7 @@
   "crons": [
     {
       "path": "/api/cron/sync-pncp",
-      "schedule": "0 */4 * * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/cron/sync-transferegov",
