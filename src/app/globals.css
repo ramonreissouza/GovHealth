@@ -1,0 +1,105 @@
+/* src/app/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-dm-sans: 'DM Sans', sans-serif;
+  --font-syne: 'Syne', sans-serif;
+  --font-dm-mono: 'DM Mono', monospace;
+
+  /* Design tokens — tema claro hospitalar (branco + azul-saúde) */
+  --bg: #ffffff;        /* fundo da página */
+  --bg2: #ffffff;       /* cards */
+  --bg3: #f3f6fa;       /* superfícies secundárias / hover */
+  --bg4: #e9eef4;       /* terciária / skeleton / badges */
+  --border: rgba(15, 23, 42, 0.10);
+  --border2: rgba(15, 23, 42, 0.16);
+  --text: #0f172a;      /* texto primário */
+  --text2: #5b6573;     /* texto secundário (muted) */
+  --text3: #94a3b8;     /* texto fraco (faint) */
+  --accent: #2f80ed;    /* azul-saúde */
+  --accent2: #1f6fd6;   /* hover do acento */
+  --amber: #d97706;
+  --red: #dc2626;
+  --blue: #2563eb;
+  --purple: #7c3aed;
+  --green: #16a34a;
+  --cyan: #0891b2;
+  --orange: #ea580c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(15,23,42,0.18); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(15,23,42,0.30); }
+
+/* Utility classes */
+@layer utilities {
+  .font-heading { font-family: var(--font-syne); }
+  .font-mono-custom { font-family: var(--font-dm-mono); }
+
+  .text-strong { color: var(--text); }
+  .text-accent { color: var(--accent); }
+  .text-amber { color: var(--amber); }
+  .text-brand-red { color: var(--red); }
+  .text-brand-blue { color: var(--blue); }
+  .text-brand-purple { color: var(--purple); }
+  .text-muted { color: var(--text2); }
+  .text-faint { color: var(--text3); }
+
+  .bg-bg2 { background: var(--bg2); }
+  .bg-bg3 { background: var(--bg3); }
+  .bg-bg4 { background: var(--bg4); }
+
+  .border-subtle { border-color: var(--border); }
+  .border-subtle2 { border-color: var(--border2); }
+
+  /* Score colors — quente(laranja) › morno(âmbar) › frio(azul) */
+  .score-hot { background: rgba(234,88,12,.10); color: var(--orange); border: 1px solid rgba(234,88,12,.22); }
+  .score-warm { background: rgba(217,119,6,.10); color: var(--amber); border: 1px solid rgba(217,119,6,.22); }
+  .score-cold { background: rgba(37,99,235,.10); color: var(--blue); border: 1px solid rgba(37,99,235,.22); }
+
+  /* Tag variants — fundo em tom claro + texto na cor semântica */
+  .tag-green { background: rgba(22,163,74,.10); color: var(--green); border: 1px solid rgba(22,163,74,.22); }
+  .tag-amber { background: rgba(217,119,6,.10); color: var(--amber); border: 1px solid rgba(217,119,6,.22); }
+  .tag-red { background: rgba(220,38,38,.10); color: var(--red); border: 1px solid rgba(220,38,38,.22); }
+  .tag-blue { background: rgba(47,128,237,.10); color: var(--accent); border: 1px solid rgba(47,128,237,.22); }
+  .tag-purple { background: rgba(124,58,237,.10); color: var(--purple); border: 1px solid rgba(124,58,237,.22); }
+  .tag-cyan { background: rgba(8,145,178,.10); color: var(--cyan); border: 1px solid rgba(8,145,178,.22); }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease forwards;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* Mapbox overrides */
+.mapboxgl-ctrl-logo { display: none !important; }
+.mapboxgl-ctrl-bottom-right { display: none !important; }

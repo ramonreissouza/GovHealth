@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item *)",
+      "PowerShell(cd \"C:\\\\Users\\\\souza\\\\OneDrive\\\\Documentos\\\\TecHealth\\\\Hospmult\\\\govhealth-ai \\(1\\)\\\\govhealth-ai-clean\"; $proc = Start-Process -FilePath \"node\" -ArgumentList '\"C:\\\\Program Files\\\\nodejs\\\\node_modules\\\\npm\\\\bin\\\\npm-cli.js\"', \"run\", \"dev\" -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 8; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/login\" -UseBasicParsing -TimeoutSec 10; \"Status: $\\($r.StatusCode\\)\" } catch { \"Error: $_\" }; $proc.Kill\\(\\))",
+      "PowerShell(cd \"C:\\\\Users\\\\souza\\\\OneDrive\\\\Documentos\\\\TecHealth\\\\Hospmult\\\\govhealth-ai \\(1\\)\\\\govhealth-ai-clean\"; $proc = Start-Process -FilePath \"node\" -ArgumentList '\"C:\\\\Program Files\\\\nodejs\\\\node_modules\\\\npm\\\\bin\\\\npm-cli.js\"', \"run\", \"dev\" -PassThru -WindowStyle Hidden; Start-Sleep -Seconds 8; try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/\" -UseBasicParsing -TimeoutSec 10 -MaximumRedirection 0 -ErrorAction SilentlyContinue; \"Status: $\\($r.StatusCode\\) Location: $\\($r.Headers['Location']\\)\" } catch { \"Caught: $\\($_.Exception.Response.StatusCode\\) — $\\($_.Exception.Response.Headers['Location']\\)\" }; $proc.Kill\\(\\))",
+      "PowerShell(npm run *)"
+    ]
+  }
+}

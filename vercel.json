@@ -1,0 +1,20 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install",
+  "regions": ["gru1"],
+  "env": {
+    "NEXT_PUBLIC_APP_URL": "https://govhealth-ai.vercel.app"
+  },
+  "crons": [
+    {
+      "path": "/api/cron/sync-pncp",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/sync-transferegov",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}
