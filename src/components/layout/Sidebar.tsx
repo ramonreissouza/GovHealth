@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle,
-  Boxes, FileSearch, FolderKanban, FileSignature, Landmark,
+  Boxes, FileSearch, FolderKanban, FileSignature, Landmark, Trophy,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
@@ -31,6 +31,7 @@ const NAV_STATIC = [
   {
     label: 'Inteligência',
     items: [
+      { href: '/vencedores', label: 'Vencedores', icon: Trophy, badge: 'novo' as string | null },
       { href: '/concorrentes', label: 'Concorrentes', icon: Users, badge: null as string | null },
       { href: '/timeline', label: 'Timeline', icon: GitBranch, badge: '3' as string | null },
       { href: '/precos', label: 'Preços Ref.', icon: TrendingDown, badge: null as string | null },
