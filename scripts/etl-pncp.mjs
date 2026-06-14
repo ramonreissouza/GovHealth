@@ -28,7 +28,8 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const [k, v] = a.replace(/^--/, '').split('=')
   return [k, v ?? true]
 }))
-const UF = (args.uf ?? 'CE').toUpperCase()
+const UF_LIST = String(args.uf ?? 'CE').toUpperCase().split(',').map((s) => s.trim()).filter(Boolean)
+let UF = UF_LIST[0] // UF corrente (usada na desnormalização); reatribuída por iteração
 const MESES = Number(args.meses ?? 3)
 const MODALIDADES = String(args.modalidades ?? '6,8').split(',').map(Number)
 const MAX_CONTRATACOES = Number(args.max ?? 80)
@@ -118,42 +119,70 @@ async function upsertResultado(c, it, r) {
   )
 }
 
+// ── checkpoint / resumo ──────────────────────────────────────────────────────
+async function jaProcessada(num) {
+  const r = await db.query('SELECT 1 FROM itens WHERE numero_controle_pncp = $1 LIMIT 1', [num])
+  return r.rowCount > 0
+}
+async function lerCheckpoint(chave) {
+  const r = await db.query('SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chave])
+  return r.rows[0]?.ultima_pagina ?? 0
+}
+async function salvarCheckpoint(chave, pagina) {
+  await db.query(`INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1,$2)
+    ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`, [chave, pagina])
+}
+
 // ── pipeline ─────────────────────────────────────────────────────────────────
-let nContrat = 0, nItens = 0, nResult = 0
-console.log(`[ETL] UF=${UF} janela=${dataInicial}→${dataFinal} modalidades=${MODALIDADES} max=${MAX_CONTRATACOES}`)
+let totC = 0, totI = 0, totR = 0, totSkip = 0
+console.log(`[ETL] UFs=${UF_LIST.join(',')} janela=${dataInicial}→${dataFinal} modalidades=${MODALIDADES} max/UF=${MAX_CONTRATACOES} delay=${DELAY}ms`)
 
-outer:
-for (const mod of MODALIDADES) {
-  for (let pagina = 1; pagina <= 50; pagina++) {
-    const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf: UF, pagina: String(pagina), tamanhoPagina: '50' })
-    const resp = await fetchJson(`${CONSULTA}/contratacoes/publicacao?${sp}`)
-    const lista = (resp?.data ?? []).filter((c) => isSaude(c.objetoCompra))
-    if (!resp || (resp.data ?? []).length === 0) break
+for (const ufAtual of UF_LIST) {
+  UF = ufAtual
+  let nContrat = 0
+  console.log(`\n── UF ${UF} ──`)
 
-    for (const c of lista) {
-      if (nContrat >= MAX_CONTRATACOES) break outer
-      await upsertContratacao(c); nContrat++
+  for (const mod of MODALIDADES) {
+    const chave = `uf:${UF}:mod:${mod}`
+    let pagina = (await lerCheckpoint(chave)) + 1
+    if (pagina > 1) console.log(`  retomando ${UF}/mod${mod} da página ${pagina}`)
 
-      const itensResp = await fetchJson(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens?pagina=1&tamanhoPagina=100`)
-      await sleep(DELAY)
-      const itens = Array.isArray(itensResp) ? itensResp : (itensResp?.data ?? [])
-      for (const it of itens) {
-        await upsertItem(c.numeroControlePNCP, it); nItens++
-        if (it.temResultado || it.situacaoCompraItem === 2) {
-          const resArr = await fetchJson(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens/${it.numeroItem}/resultados?pagina=1&tamanhoPagina=20`)
-          await sleep(DELAY)
-          for (const r of (Array.isArray(resArr) ? resArr : (resArr?.data ?? []))) {
-            await upsertResultado(c, it, r); nResult++
+    for (; pagina <= 400; pagina++) {
+      const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf: UF, pagina: String(pagina), tamanhoPagina: '50' })
+      const resp = await fetchJson(`${CONSULTA}/contratacoes/publicacao?${sp}`)
+      if (!resp || (resp.data ?? []).length === 0) break
+      const lista = resp.data.filter((c) => isSaude(c.objetoCompra))
+
+      let hitMax = false
+      for (const c of lista) {
+        if (nContrat >= MAX_CONTRATACOES) { hitMax = true; break }
+        await upsertContratacao(c); nContrat++; totC++
+
+        // Resumo barato: se a contratação já tem itens no banco, pula chamadas caras.
+        if (await jaProcessada(c.numeroControlePNCP)) { totSkip++; continue }
+
+        const itensResp = await fetchJson(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens?pagina=1&tamanhoPagina=100`)
+        await sleep(DELAY)
+        const itens = Array.isArray(itensResp) ? itensResp : (itensResp?.data ?? [])
+        for (const it of itens) {
+          await upsertItem(c.numeroControlePNCP, it); totI++
+          if (it.temResultado || it.situacaoCompraItem === 2) {
+            const resArr = await fetchJson(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens/${it.numeroItem}/resultados?pagina=1&tamanhoPagina=20`)
+            await sleep(DELAY)
+            for (const r of (Array.isArray(resArr) ? resArr : (resArr?.data ?? []))) { await upsertResultado(c, it, r); totR++ }
           }
         }
       }
-      console.log(`  ✓ ${c.numeroControlePNCP} (${itens.length} itens) — acum: ${nContrat}c / ${nItens}i / ${nResult}r`)
+
+      if (hitMax) { console.log(`  max/UF (${MAX_CONTRATACOES}) atingido em ${UF}`); break }
+      await salvarCheckpoint(chave, pagina) // página inteira concluída → checkpoint
+      console.log(`  ${UF}/mod${mod} pág ${pagina}: +${lista.length} saúde — acum ${totC}c/${totI}i/${totR}r (skip ${totSkip})`)
+      if (resp.data.length < 50 || pagina >= (resp.totalPaginas ?? 1)) break
     }
-    if ((resp.data ?? []).length < 50 || pagina >= (resp.totalPaginas ?? 1)) break
+    if (nContrat >= MAX_CONTRATACOES) break
   }
+  console.log(`  ✓ ${UF}: ${nContrat} contratações nesta rodada`)
 }
 
-await db.query(`INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1,$2)
-  ON CONFLICT (chave) DO UPDATE SET atualizado_em = now()`, [`uf:${UF}`, 0])
-console.log(`\n[ETL] concluído: ${nContrat} contratações · ${nItens} itens · ${nResult} resultados homologados`)
+console.log(`\n[ETL] concluído: ${totC} contratações · ${totI} itens · ${totR} resultados · ${totSkip} já processadas (puladas)`)
 await db.end()
