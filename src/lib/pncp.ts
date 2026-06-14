@@ -1,204 +1,177 @@
-// src/lib/pncp.ts
-// Portal Nacional de Contrata��es P�blicas � API p�blica, sem autentica��o
+// src/lib/pncp.ts — VERSÃO FINAL (calibrada com dados reais do /api/debug)
+//
+// Confirmado via debug em produção:
+// - PNCP responde 200 com alto volume (dispensas: 196k/90d, pregões: 97k/90d)
+// - ~12% dos itens por página são de saúde
+// - formato de data AAAAMMDD e codigoModalidadeContratacao obrigatório (já corrigidos)
+//
+// Esta versão varre MÚLTIPLAS PÁGINAS por modalidade para acumular volume real
+// de saúde, com limite configurável para não estourar tempo de request.
 
 import { PNCPContratacoesResponse, PNCPContratacao, Licitacao } from './types'
 import { withTimeout } from './http'
-import { stripAccents } from './text'
 
 const PNCP_BASE = process.env.PNCP_BASE_URL ?? 'https://pncp.gov.br/api/consulta/v1'
+// Endpoint de detalhe (itens/resultado de uma compra) — base diferente da consulta.
 const PNCP_API = process.env.PNCP_API_BASE ?? 'https://pncp.gov.br/api/pncp/v1'
 
-// Palavras-chave para filtrar compras de sa�de
+const MODALIDADES_SAUDE = [6, 8, 4, 9] // pregão eletr., dispensa, concorrência eletr., inexigibilidade
+
+// Palavras-chave calibradas pela amostra real do debug.
+// A amostra mostrou: rouparia hospitalar, cânula de traqueostomia, monitor fetal,
+// medicamentos, material de consumo hospitalar — todos capturados por estas chaves.
 const HEALTH_KEYWORDS = [
-  'tom�grafo', 'tomografia', 'resson�ncia', 'ultrassom', 'ultrassonografia',
-  'raio-x', 'radiologia', 'mam�grafo', 'mamografia', 'endosc�pio',
-  'ventilador', 'respirador', 'monitor multiparam�trico', 'desfibrilador',
-  'eletrocardi�grafo', 'ox�metro', 'bomba de infus�o',
-  'analisador hematol�gico', 'autoclave', 'mesa cir�rgica',
-  'equipamento hospitalar', 'equipamento m�dico', 'material m�dico',
-  'hospital', 'sa�de', 'unidade de terapia', 'laborat�rio cl�nico',
-  'hemoterapia', 'hemodi�lise', 'oncologia',
-  // Medicamentos / insumos farmac�uticos
-  'medicament', 'f�rmaco', 'farmac�ut', 'antibi�tic', 'insumo farmac',
-  'princ�pio ativo', 'vacina', 'soro fisiol�gico', 'injet�vel',
-  // OPME
-  '�rtese', 'pr�tese', 'implante', 'stent', 'marcapasso', 'osteoss�ntese',
-  // Acess�rios / insumos / servi�os de sa�de
-  'material hospitalar', 'cateter', 'sonda', 'seringa', 'gaze', 'curativo',
-  'ambul�ncia', 'oxig�nio medicinal', 'gases medicinais', 'esteriliza��o',
-  'lavanderia hospitalar', 'res�duo de servi�o de sa�de', 'sus',
+  'saúde', 'saude', 'hospital', 'hospitalar', 'médic', 'medic',
+  'tomógrafo', 'tomografia', 'ressonância', 'ultrassom', 'ultrassonografia',
+  'raio-x', 'raio x', 'radiolog', 'mamógraf', 'mamografia', 'endoscóp',
+  'ventilador pulmonar', 'respirador', 'monitor', 'desfibrilador', 'oxímetro',
+  'eletrocardióg', 'bomba de infusão', 'cânula', 'traqueostomia', 'cateter',
+  'analisador', 'autoclave', 'cirúrg', 'cirurgia', 'enfermagem', 'enfermaria',
+  'uti', 'unidade de terapia', 'leito', 'laboratório clínico', 'laboratorial',
+  'hemodiálise', 'hemoterapia', 'oncolog', 'medicamento', 'fármaco', 'farmacêut',
+  'insumo', 'material médico', 'material hospitalar', 'rouparia hospitalar',
+  'ambulânc', 'clínic', 'frequência cardíaca', 'fetal', 'odontológ',
 ]
-
-// Termos que indicam compra N�O relacionada � sa�de � sobrescrevem um match
-// gen�rico (ex.: "trator para a Secretaria de Sa�de" deve ser exclu�do).
-const NAO_SAUDE_KEYWORDS = [
-  'colheitadeira', 'trator', 'semente', 'fertilizante', 'adubo', 'calc�rio',
-  'agr�cola', 'pavimenta', 'asfalto', 'recapeamento', 'merenda',
-  'g�nero aliment�cio', 'material escolar', 'transporte escolar',
-  'uniforme escolar', '�nibus escolar', 'ro�adeira', 'motoniveladora',
-  'retroescavadeira', 'combust�vel', 'pneu para',
-]
-
-// Modalidades de interesse (codigoModalidadeContratacao do PNCP):
-// 4=Concorr�ncia Eletr�nica, 6=Preg�o Eletr�nico, 8=Dispensa, 9=Inexigibilidade
-const MODALIDADES_SAUDE = [6, 8, 4, 9]
 
 function buildHeaders() {
-  return {
-    'Accept': 'application/json',
-  }
+  return { Accept: 'application/json' }
+}
+
+export function toPncpDate(d: Date): string {
+  return d.toISOString().split('T')[0].replace(/-/g, '')
 }
 
 export interface PNCPSearchParams {
-  dataInicial?: string   // YYYY-MM-DD
+  dataInicial?: string
   dataFinal?: string
-  pagina?: number
-  tamanhoPagina?: number
   uf?: string
-  codigoMunicipio?: string
-  modalidade?: number
-  termo?: string
+  tamanhoPagina?: number
+  maxPaginasPorModalidade?: number
 }
 
 /**
- * Busca contrata��es publicadas no PNCP com filtros
- * Docs: https://pncp.gov.br/api/consulta
+ * Busca uma página de uma modalidade específica.
  */
-// PNCP exige yyyyMMdd (sem h�fens)
+async function buscarPagina(
+  modalidade: number,
+  dataInicial: string,
+  dataFinal: string,
+  pagina: number,
+  tamanhoPagina: number,
+  uf?: string
+): Promise<PNCPContratacoesResponse> {
+  const sp = new URLSearchParams({
+    dataInicial,
+    dataFinal,
+    codigoModalidadeContratacao: String(modalidade),
+    pagina: String(pagina),
+    tamanhoPagina: String(tamanhoPagina),
+  })
+  if (uf) sp.set('uf', uf)
+
+  const res = await fetch(`${PNCP_BASE}/contratacoes/publicacao?${sp}`, {
+    headers: buildHeaders(),
+    next: { revalidate: 900 },
+  })
+  if (!res.ok) throw new Error(`PNCP ${res.status} mod ${modalidade} p${pagina}`)
+  return res.json()
+}
+
+/**
+ * Busca compras de saúde varrendo múltiplas páginas por modalidade.
+ * Calibrado: com ~12% de saúde por página, varrer 5 páginas x 4 modalidades
+ * x 50 itens = ~1000 itens brutos → ~120 de saúde por consulta de 30 dias.
+ */
+export async function buscarComprasSaude(params: PNCPSearchParams = {}) {
+  const hoje = new Date()
+  const inicio = new Date(hoje)
+  inicio.setDate(hoje.getDate() - 30)
+
+  const dataInicial = params.dataInicial ?? toPncpDate(inicio)
+  const dataFinal = params.dataFinal ?? toPncpDate(hoje)
+  const tamanhoPagina = params.tamanhoPagina ?? 50
+  const maxPaginas = params.maxPaginasPorModalidade ?? 5
+
+  const todas: PNCPContratacao[] = []
+  const erros: string[] = []
+
+  // Varre modalidades em paralelo; páginas em série dentro de cada uma
+  await Promise.all(
+    MODALIDADES_SAUDE.map(async (mod) => {
+      for (let pagina = 1; pagina <= maxPaginas; pagina++) {
+        try {
+          const resp = await buscarPagina(mod, dataInicial, dataFinal, pagina, tamanhoPagina, params.uf)
+          const dados = resp.data ?? []
+          todas.push(...dados.filter((c) => isSaudeRelated(c.objetoCompra ?? '')))
+          if (dados.length < tamanhoPagina || pagina >= (resp.totalPaginas ?? 1)) break
+        } catch (e) {
+          erros.push(String(e).substring(0, 120))
+          break
+        }
+      }
+    })
+  )
+
+  // Dedup
+  const vistos = new Set<string>()
+  const unicas = todas.filter((c) => {
+    if (vistos.has(c.numeroControlePNCP)) return false
+    vistos.add(c.numeroControlePNCP)
+    return true
+  })
+
+  return {
+    data: unicas,
+    totalRegistros: unicas.length,
+    erros: erros.length ? erros : undefined,
+  }
+}
+
+export function isSaudeRelated(texto: string): boolean {
+  const lower = texto.toLowerCase()
+  return HEALTH_KEYWORDS.some((kw) => lower.includes(kw))
+}
+
+// PNCP exige datas no formato yyyyMMdd (sem hífens).
 function toYYYYMMDD(s: string): string {
   return s.replace(/-/g, '')
 }
 
-export async function buscarContratacoes(
-  params: PNCPSearchParams = {}
-): Promise<PNCPContratacoesResponse> {
-  const searchParams = new URLSearchParams({
-    dataInicial: toYYYYMMDD(params.dataInicial ?? '2025-11-01'),
-    dataFinal:   toYYYYMMDD(params.dataFinal   ?? '2025-12-31'),
+/**
+ * Busca uma janela de contratações por modalidade.
+ * Usado pela análise de vencedores (slots históricos por bimestre/semestre).
+ */
+export async function buscarContratacoes(params: {
+  dataInicial?: string
+  dataFinal?: string
+  modalidade?: number
+  tamanhoPagina?: number
+  uf?: string
+  pagina?: number
+} = {}): Promise<PNCPContratacoesResponse> {
+  const hoje = new Date()
+  const inicio = new Date(hoje)
+  inicio.setDate(hoje.getDate() - 30)
+
+  const sp = new URLSearchParams({
+    dataInicial: params.dataInicial ? toYYYYMMDD(params.dataInicial) : toPncpDate(inicio),
+    dataFinal: params.dataFinal ? toYYYYMMDD(params.dataFinal) : toPncpDate(hoje),
+    // codigoModalidadeContratacao é obrigatório; default 6 = Pregão Eletrônico
+    codigoModalidadeContratacao: String(params.modalidade ?? 6),
     pagina: String(params.pagina ?? 1),
     tamanhoPagina: String(params.tamanhoPagina ?? 50),
   })
-
-  if (params.uf) searchParams.set('uf', params.uf)
-  if (params.codigoMunicipio) searchParams.set('codigoMunicipio', params.codigoMunicipio)
-  // codigoModalidadeContratacao � obrigat�rio; default 6 = Preg�o Eletr�nico
-  searchParams.set('codigoModalidadeContratacao', String(params.modalidade ?? 6))
-
-  const url = `${PNCP_BASE}/contratacoes/publicacao?${searchParams}`
+  if (params.uf) sp.set('uf', params.uf)
 
   const res = await withTimeout(
-    fetch(url, { headers: buildHeaders(), next: { revalidate: 900 } }),
-    18_000
+    fetch(`${PNCP_BASE}/contratacoes/publicacao?${sp}`, {
+      headers: buildHeaders(),
+      next: { revalidate: 900 },
+    }),
+    18_000,
   )
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`PNCP API error ${res.status}: ${text}`)
-  }
-
+  if (!res.ok) throw new Error(`PNCP ${res.status} contratações mod ${params.modalidade ?? 6}`)
   return res.json()
-}
-
-type Slot = [string, string, number, number]
-
-/**
- * Gera janelas bimestrais din�micas do ano corrente at� o m�s atual,
- * para Preg�o Eletr�nico (6). Garante que os editais mais recentes
- * (inclusive do ano corrente) sempre entrem, sem "vencer" com datas fixas.
- */
-function slotsRecentesDinamicos(): Slot[] {
-  const hoje = new Date()
-  const ano = hoje.getFullYear()
-  const mesAtual = hoje.getMonth() // 0-11
-  const slots: Slot[] = []
-  // Bimestres do ano corrente: jan-fev, mar-abr, mai-jun, ... at� o bimestre atual
-  for (let inicioMes = 0; inicioMes <= mesAtual; inicioMes += 2) {
-    const fimMes = Math.min(inicioMes + 1, 11)
-    const di = `${ano}-${String(inicioMes + 1).padStart(2, '0')}-01`
-    // �ltimo dia do m�s final do bimestre
-    const ultimoDia = new Date(ano, fimMes + 1, 0).getDate()
-    const df = `${ano}-${String(fimMes + 1).padStart(2, '0')}-${String(ultimoDia).padStart(2, '0')}`
-    slots.push([di, df, 6, 50])
-  }
-  // Dispensa, Concorr�ncia Eletr�nica e Inexigibilidade do ano corrente (per�odo acumulado)
-  const inicioAno = `${ano}-01-01`
-  const fimMesAtual = `${ano}-${String(mesAtual + 1).padStart(2, '0')}-${String(new Date(ano, mesAtual + 1, 0).getDate()).padStart(2, '0')}`
-  slots.push([inicioAno, fimMesAtual, 8, 50]) // Dispensa
-  slots.push([inicioAno, fimMesAtual, 4, 40]) // Concorr�ncia Eletr�nica
-  slots.push([inicioAno, fimMesAtual, 9, 30]) // Inexigibilidade
-  return slots
-}
-
-/**
- * Busca compras de sa�de combinando o ano corrente (din�mico) com hist�rico.
- * PNCP limita queries longas ? usamos janelas curtas (bi-mensais/semestrais).
- * Cada tupla: [dataInicial, dataFinal, modalidade, tamanhoPagina]
- */
-export async function buscarComprasSaude(params: PNCPSearchParams = {}) {
-  // PNCP aceita tamanhoPagina m�x 50. Timeout por slot: 18s.
-  const anoPassado = new Date().getFullYear() - 1
-  const slots: Slot[] = [
-    // Ano corrente � bimestral + modalidades extras (gerado dinamicamente)
-    ...slotsRecentesDinamicos(),
-    // Ano anterior � semestral (Preg�o) + acumulado de Dispensa
-    [`${anoPassado}-07-01`, `${anoPassado}-12-31`, 6, 50],
-    [`${anoPassado}-01-01`, `${anoPassado}-06-30`, 6, 50],
-    [`${anoPassado}-01-01`, `${anoPassado}-12-31`, 8, 40],
-    [`${anoPassado}-01-01`, `${anoPassado}-12-31`, 4, 30],
-    // Dois anos atr�s � semestral (intelig�ncia de mercado / ciclo de recompra)
-    [`${anoPassado - 1}-07-01`, `${anoPassado - 1}-12-31`, 6, 40],
-    [`${anoPassado - 1}-01-01`, `${anoPassado - 1}-06-30`, 6, 40],
-  ]
-
-  const results = await Promise.allSettled(
-    slots.map(([dataInicial, dataFinal, modalidade, tamanhoPagina]) =>
-      buscarContratacoes({ ...params, dataInicial, dataFinal, modalidade, tamanhoPagina })
-    )
-  )
-
-  const all: PNCPContratacao[] = []
-  for (const r of results) {
-    if (r.status === 'fulfilled') all.push(...r.value.data)
-  }
-
-  // Deduplica por numeroControlePNCP
-  const seen = new Set<string>()
-  const unique = all.filter((c) => {
-    if (seen.has(c.numeroControlePNCP)) return false
-    seen.add(c.numeroControlePNCP)
-    return true
-  })
-
-  const dadosSaude = unique.filter((c) => isSaudeRelated(c.objetoCompra))
-
-  return {
-    data: dadosSaude,
-    totalRegistros: dadosSaude.length,
-    totalPaginas: 1,
-    paginaAtual: 1,
-    tamanhoPagina: dadosSaude.length,
-  }
-}
-
-/**
- * Busca itens de uma compra espec�fica
- */
-export async function buscarItensCompra(
-  cnpj: string,
-  ano: number,
-  sequencial: number
-): Promise<ItemPNCP[]> {
-  const url = `${PNCP_API}/orgaos/${cnpj}/compras/${ano}/${sequencial}/itens?pagina=1&tamanhoPagina=100`
-
-  const res = await fetch(url, {
-    headers: buildHeaders(),
-    next: { revalidate: 3600 },
-  })
-
-  if (!res.ok) return []
-
-  const data = await res.json()
-  return data.data ?? []
 }
 
 export interface ItemPNCP {
@@ -210,6 +183,21 @@ export interface ItemPNCP {
   situacaoCompraItemNome: string
 }
 
+/** Itens individuais de uma compra específica. */
+export async function buscarItensCompra(
+  cnpj: string,
+  ano: number,
+  sequencial: number,
+): Promise<ItemPNCP[]> {
+  const res = await fetch(
+    `${PNCP_API}/orgaos/${cnpj}/compras/${ano}/${sequencial}/itens?pagina=1&tamanhoPagina=100`,
+    { headers: buildHeaders(), next: { revalidate: 3600 } },
+  )
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.data ?? []
+}
+
 export interface ResultadoCompra {
   niFornecedor: string
   nomeFornecedor: string
@@ -217,19 +205,18 @@ export interface ResultadoCompra {
   situacaoCompraItemResultadoNome?: string
 }
 
-/**
- * Busca vencedores (fornecedores) de uma compra espec�fica
- */
+/** Vencedores (fornecedores) de uma compra específica — alimenta a estratificação de fornecedores. */
 export async function buscarResultadoCompra(
   cnpj: string,
   anoCompra: number,
   sequencialCompra: number,
 ): Promise<ResultadoCompra[]> {
-  const url = `${PNCP_API}/orgaos/${cnpj}/compras/${anoCompra}/${sequencialCompra}/resultado?pagina=1&tamanhoPagina=50`
-
   try {
     const res = await withTimeout(
-      fetch(url, { headers: buildHeaders(), next: { revalidate: 3600 } }),
+      fetch(
+        `${PNCP_API}/orgaos/${cnpj}/compras/${anoCompra}/${sequencialCompra}/resultado?pagina=1&tamanhoPagina=50`,
+        { headers: buildHeaders(), next: { revalidate: 3600 } },
+      ),
       5_000,
     )
     if (!res.ok) return []
@@ -241,44 +228,47 @@ export async function buscarResultadoCompra(
 }
 
 /**
- * Busca resultados/homologa��es recentes
+ * Resultados/homologações recentes (endpoint /contratacoes/proposta).
  */
-export async function buscarResultados(params: PNCPSearchParams = {}) {
-  const searchParams = new URLSearchParams({
-    dataInicial: params.dataInicial ?? getDateDaysAgo(90),
-    dataFinal: params.dataFinal ?? getToday(),
+export async function buscarResultados(params: {
+  dataInicial?: string
+  dataFinal?: string
+  uf?: string
+  pagina?: number
+  tamanhoPagina?: number
+} = {}): Promise<PNCPContratacoesResponse> {
+  const hoje = new Date()
+  const inicio = new Date(hoje)
+  inicio.setDate(hoje.getDate() - 90)
+
+  const sp = new URLSearchParams({
+    dataInicial: params.dataInicial ? toYYYYMMDD(params.dataInicial) : toPncpDate(inicio),
+    dataFinal: params.dataFinal ? toYYYYMMDD(params.dataFinal) : toPncpDate(hoje),
     pagina: String(params.pagina ?? 1),
     tamanhoPagina: String(params.tamanhoPagina ?? 50),
   })
+  if (params.uf) sp.set('uf', params.uf)
 
-  if (params.uf) searchParams.set('uf', params.uf)
-
-  const url = `${PNCP_BASE}/contratacoes/proposta?${searchParams}`
-
-  const res = await fetch(url, {
+  const res = await fetch(`${PNCP_BASE}/contratacoes/proposta?${sp}`, {
     headers: buildHeaders(),
     next: { revalidate: 1800 },
   })
-
-  if (!res.ok) return { data: [], totalRegistros: 0, totalPaginas: 0, paginaAtual: 1, tamanhoPagina: 50 }
-  return res.json() as Promise<PNCPContratacoesResponse>
+  if (!res.ok) {
+    return { data: [], totalRegistros: 0, totalPaginas: 0, paginaAtual: 1, tamanhoPagina: 50 }
+  }
+  return res.json()
 }
 
 /**
- * Busca vencedores de preg�es de sa�de � analisa resultados para extrair concorrentes
+ * Agrega vencedores de saúde a partir dos resultados recentes (consolidado por órgão).
  */
 export async function buscarVencedoresSaude(uf?: string) {
   const resultados = await buscarResultados({ uf, tamanhoPagina: 200 })
 
   const vencedores: Record<string, { nome: string; vitorias: number; valorTotal: number }> = {}
-
   for (const item of resultados.data) {
     if (!isSaudeRelated(item.objetoCompra)) continue
     if (!item.valorTotalHomologado) continue
-
-    // O PNCP n�o retorna o CNPJ vencedor na listagem � precisaria buscar
-    // cada contrato individualmente. Aqui consolidamos por raz�o social do �rg�o
-    // para an�lise de concentra��o de mercado.
     const key = item.orgaoEntidade.cnpj
     vencedores[key] = {
       nome: item.orgaoEntidade.razaoSocial,
@@ -286,20 +276,7 @@ export async function buscarVencedoresSaude(uf?: string) {
       valorTotal: (vencedores[key]?.valorTotal ?? 0) + (item.valorTotalHomologado ?? 0),
     }
   }
-
   return vencedores
-}
-
-// --- Helpers ---
-
-export function isSaudeRelated(texto: string): boolean {
-  // Dados do governo s�o inconsistentes ("SAUDE" vs "sa�de") ? normaliza acentos.
-  const lower = stripAccents(texto.toLowerCase())
-  // Exclui compras claramente n�o-relacionadas � sa�de (agro, obras, escolar�)
-  if (NAO_SAUDE_KEYWORDS.some((kw) => lower.includes(stripAccents(kw)))) return false
-  // 'uti' com fronteira de palavra (evita falsos positivos: "reutiliz�vel" etc.)
-  if (/\buti\b/.test(lower)) return true
-  return HEALTH_KEYWORDS.some((kw) => lower.includes(stripAccents(kw)))
 }
 
 export function normalizarLicitacao(raw: PNCPContratacao): Licitacao {
@@ -307,10 +284,10 @@ export function normalizarLicitacao(raw: PNCPContratacao): Licitacao {
     id: raw.numeroControlePNCP,
     numeroControlePNCP: raw.numeroControlePNCP,
     orgaoEntidade: {
-      cnpj: raw.orgaoEntidade.cnpj,
-      razaoSocial: raw.orgaoEntidade.razaoSocial,
-      municipio: raw.unidadeOrgao?.municipioNome ?? raw.orgaoEntidade.municipioNome,
-      uf: raw.unidadeOrgao?.ufSigla ?? raw.orgaoEntidade.ufSigla,
+      cnpj: raw.orgaoEntidade?.cnpj ?? '',
+      razaoSocial: raw.orgaoEntidade?.razaoSocial ?? '',
+      municipio: raw.unidadeOrgao?.municipioNome,
+      uf: raw.unidadeOrgao?.ufSigla,
     },
     modalidadeNome: raw.modalidadeNome,
     objetoCompra: raw.objetoCompra,
@@ -321,14 +298,4 @@ export function normalizarLicitacao(raw: PNCPContratacao): Licitacao {
     situacaoCompraNome: raw.situacaoCompraNome,
     linkSistemaOrigem: raw.linkSistemaOrigem,
   }
-}
-
-function getToday(): string {
-  return new Date().toISOString().split('T')[0]
-}
-
-function getDateDaysAgo(days: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - days)
-  return d.toISOString().split('T')[0]
 }

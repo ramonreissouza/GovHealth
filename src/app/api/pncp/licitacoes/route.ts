@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     const dataFinal = searchParams.get('dataFinal') ?? undefined
 
     const resultado = somentesSaude
-      ? await buscarComprasSaude({ uf, pagina, tamanhoPagina, dataInicial, dataFinal })
+      ? await buscarComprasSaude({ uf, tamanhoPagina, dataInicial, dataFinal })
       : await buscarContratacoes({ uf, pagina, tamanhoPagina, dataInicial, dataFinal })
 
     const licitacoes = resultado.data.map(normalizarLicitacao)
@@ -24,8 +24,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       licitacoes,
       total: resultado.totalRegistros,
-      pagina: resultado.paginaAtual,
-      totalPaginas: resultado.totalPaginas,
+      pagina,
       fonte: 'PNCP',
       atualizadoEm: new Date().toISOString(),
     })
