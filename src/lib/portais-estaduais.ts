@@ -173,12 +173,12 @@ export const ENTIDADES_SAUDE: Partial<Record<UFEstadual, string[]>> = {
 // O BEC/SP expõe um endpoint de consulta pública. Tentamos buscar o JSON;
 // em caso de falha (CORS, formato inesperado, timeout) retornamos [] silenciosamente.
 
-async function buscarBECSP(params: PNCPSearchParams): Promise<LicitacaoEstadual[]> {
+async function buscarBECSP(termo?: string): Promise<LicitacaoEstadual[]> {
   // BEC/SP tem um endpoint JSON não documentado oficialmente.
   // Usamos apenas como complemento — falha silenciosamente.
   try {
     const sp = new URLSearchParams({
-      ds_objeto: params.termo ?? 'equipamento médico saúde',
+      ds_objeto: termo ?? 'equipamento médico saúde',
       nr_pagina: '1',
       qt_registros: '50',
     })
@@ -318,7 +318,7 @@ export async function buscarLicitacoesEstado(
   // ── Portal estadual próprio (complemento) ─────────────────────────────────
   let portalOk = false
   if (uf === 'SP' && portal.temAPIPublica) {
-    const extra = await buscarBECSP(params)
+    const extra = await buscarBECSP()
     if (extra.length > 0) {
       // dedup por descrição + valor para evitar duplicatas com PNCP
       const seen = new Set(licitacoes.map((l) => `${l.descricao.slice(0, 40)}:${l.valor}`))

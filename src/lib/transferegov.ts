@@ -1,250 +1,237 @@
-// src/lib/transferegov.ts
-// Portal da Transparência — API de convênios (TransfereGov / SICONV)
-// Documentação: https://portaldatransparencia.gov.br/api-de-dados
-// Cadastro gratuito de chave: https://portaldatransparencia.gov.br/api-de-dados
+// src/lib/transferegov.ts — VERSÃO FINAL (calibrada com debug)
+//
+// Confirmado via debug:
+// - /convenios EXIGE filtro (uf, codigoIBGE, etc) — sem filtro retorna 400
+// - estrutura real: objeto vem em dimConvenio.objeto (não no nível raiz)
+// - retorna campos: id, dataInicioVigencia, dataFinalVigencia, dataPublicacao, etc.
 
-import { Convenio, TranspGovConvenio } from './types'
+import { Convenio } from './types'
 import { normalizeKey } from './text'
 
 const BASE_URL = 'https://api.portaldatransparencia.gov.br/api-de-dados'
-const API_KEY = process.env.PORTAL_TRANSPARENCIA_API_KEY ?? ''
+
+// UFs para varrer quando se quer cobertura nacional
+const TODAS_UFS = [
+  'AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA',
+  'PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO',
+]
 
 function buildHeaders() {
-  if (!API_KEY) {
-    throw new Error(
-      'PORTAL_TRANSPARENCIA_API_KEY não configurada. ' +
-        'Cadastre-se em https://portaldatransparencia.gov.br/api-de-dados'
-    )
+  const key = process.env.PORTAL_TRANSPARENCIA_API_KEY
+  if (!key) throw new Error('PORTAL_TRANSPARENCIA_API_KEY não configurada')
+  return { 'chave-api-dados': key, Accept: 'application/json' }
+}
+
+// Estrutura real retornada pela API (confirmada no debug)
+interface ConvenioRaw {
+  id: number
+  dataInicioVigencia?: string
+  dataFinalVigencia?: string
+  dataPublicacao?: string
+  dataUltimaLiberacao?: string
+  dataConclusao?: string | null
+  dimConvenio?: {
+    codigo?: string
+    objeto?: string
+    situacao?: string
+    valor?: number
+    valorLiberado?: number
+    valorContrapartida?: number
   }
-  return {
-    'chave-api-dados': API_KEY,
-    'Accept': 'application/json',
+  convenente?: {
+    nome?: string
+    municipio?: { nomeIBGE?: string; uf?: { sigla?: string } }
   }
+  // campos podem variar; mantém flexível
+  [key: string]: unknown
+}
+
+const HEALTH_KW = [
+  'saúde','saude','hospital','médic','medic','medicamento','equipamento médic',
+  'uti','enfermagem','clínic','ambulânc','posto de saúde','unidade básica',
+  'ubs','upa','sus','farmácia','laboratório','odontológ','cirúrg',
+]
+
+function isSaudeConvenio(objeto: string): boolean {
+  const l = (objeto ?? '').toLowerCase()
+  return HEALTH_KW.some((k) => l.includes(k))
 }
 
 export interface ConveniosParams {
-  situacao?: string
-  uf?: string
-  municipio?: string
-  orgaoSuperior?: string
-  dataInicio?: string   // DD/MM/YYYY
-  dataFim?: string
+  uf: string // OBRIGATÓRIO
   pagina?: number
-  tamanhoPagina?: number
 }
 
 /**
- * Busca convênios do TransfereGov
- * A API exige ao menos um filtro: uf, municipio, orgao, data ou número do convênio
+ * Busca convênios de UMA UF (filtro obrigatório).
  */
-export async function buscarConvenios(
-  params: ConveniosParams = {}
-): Promise<{ convenios: Convenio[]; total: number }> {
-  const searchParams = new URLSearchParams({
+export async function buscarConveniosUF(params: ConveniosParams): Promise<Convenio[]> {
+  const sp = new URLSearchParams({
+    uf: params.uf,
     pagina: String(params.pagina ?? 1),
-    tamanhoPagina: String(params.tamanhoPagina ?? 50),
   })
 
-  if (params.situacao) searchParams.set('situacao', params.situacao)
-  if (params.uf) searchParams.set('uf', params.uf)
-  if (params.municipio) searchParams.set('municipio', params.municipio)
-  if (params.orgaoSuperior) searchParams.set('codigoOrgaoSuperior', params.orgaoSuperior)
-  if (params.dataInicio) searchParams.set('dataInicio', params.dataInicio)
-  if (params.dataFim) searchParams.set('dataFim', params.dataFim)
-
-  const url = `${BASE_URL}/convenios?${searchParams}`
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 15_000)
-
-  let res: Response
-  try {
-    res = await fetch(url, {
-      headers: buildHeaders(),
-      signal: controller.signal,
-      next: { revalidate: 3600 },
-    })
-  } finally {
-    clearTimeout(timer)
-  }
-
+  const res = await fetch(`${BASE_URL}/convenios?${sp}`, { headers: buildHeaders(), next: { revalidate: 3600 } })
   if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`TransfereGov API error ${res.status}: ${text}`)
+    if (res.status === 400) throw new Error('Convênios 400 — filtro obrigatório ausente')
+    throw new Error(`Convênios ${res.status}`)
   }
+  const data: ConvenioRaw[] = await res.json()
+  return Array.isArray(data) ? data.map(normalizar) : []
+}
 
-  const json = await res.json()
-  // A API retorna { value: [...] }
-  const raw: TranspGovConvenio[] = Array.isArray(json) ? json : (json.value ?? [])
+/**
+ * Busca convênios de saúde de uma UF (filtra pelo objeto).
+ */
+export async function buscarConveniosSaudeUF(uf: string, maxPaginas = 5): Promise<Convenio[]> {
+  const todos: Convenio[] = []
+  for (let pagina = 1; pagina <= maxPaginas; pagina++) {
+    const lote = await buscarConveniosUF({ uf, pagina })
+    if (lote.length === 0) break
+    todos.push(...lote.filter((c) => isSaudeConvenio(c.objeto)))
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  return todos
+}
+
+/**
+ * Cobertura nacional: varre UFs prioritárias (ou todas).
+ * Use ufs limitado em request de página; todas só em sync.
+ */
+export async function buscarConveniosSaudeNacional(
+  ufs: string[] = ['SP','RJ','MG','BA','CE','PE','PR','RS','PA','AM']
+): Promise<Convenio[]> {
+  const resultados = await Promise.allSettled(ufs.map((uf) => buscarConveniosSaudeUF(uf, 3)))
+  const todos: Convenio[] = []
+  for (const r of resultados) {
+    if (r.status === 'fulfilled') todos.push(...r.value)
+  }
+  return todos
+}
+
+function normalizar(raw: ConvenioRaw): Convenio {
+  const dim = raw.dimConvenio ?? {}
+  const valorTotal = dim.valor ?? 0
+  const valorLiberado = dim.valorLiberado ?? 0
+  const pct = valorTotal > 0 ? Math.round((valorLiberado / valorTotal) * 100) : 0
 
   return {
-    convenios: raw.map(normalizarConvenio),
-    total: raw.length,
+    id: String(raw.id),
+    numero: dim.codigo ?? String(raw.id),
+    objeto: dim.objeto ?? '',
+    situacao: dim.situacao ?? 'N/D',
+    valorTotal,
+    valorLiberado,
+    valorContrapartida: dim.valorContrapartida ?? 0,
+    dataInicio: raw.dataInicioVigencia ?? '',
+    dataFim: raw.dataFinalVigencia ?? '',
+    municipio: raw.convenente?.municipio?.nomeIBGE ?? '',
+    uf: raw.convenente?.municipio?.uf?.sigla ?? '',
+    orgaoConcedente: '',
+    convenente: raw.convenente?.nome ?? '',
+    percentualExecutado: pct,
   }
 }
 
-const HEALTH_KEYWORDS_PT = ['saúde', 'hospital', 'uti', 'médico', 'equipamento médico', 'laborat', 'hemot', 'oncol', 'cirurg', 'tomógrafo', 'ressonância', 'medicament', 'fármaco', 'farmacêut', 'vacina']
-
-function isConvenioSaude(objeto: string): boolean {
-  const lower = objeto.toLowerCase()
-  return HEALTH_KEYWORDS_PT.some((kw) => lower.includes(kw))
+export function diasAteVencimento(dataFim: string): number {
+  if (!dataFim) return 999
+  const fim = new Date(dataFim).getTime()
+  return Math.ceil((fim - Date.now()) / 86_400_000)
 }
 
 /**
- * Busca convênios de saúde ativos por UF
- * A API do Portal da Transparência exige ao menos uma localidade (uf/município),
- * por isso retorna vazio quando nenhuma UF é informada.
+ * Busca convênios de um município específico (em execução por padrão).
+ * A API exige pelo menos um filtro de localidade (município e/ou UF).
  */
-export async function buscarConveniosSaudeAtivos(uf?: string) {
-  if (!uf) return { convenios: [], total: 0 }
-
-  const result = await buscarConvenios({ uf, tamanhoPagina: 100 })
-  const saude = result.convenios.filter((c) => isConvenioSaude(c.objeto))
-  return { convenios: saude, total: saude.length }
-}
-
-/**
- * Busca convênios de um município específico
- */
-export async function buscarConveniosMunicipio(municipio: string, uf?: string) {
-  return buscarConvenios({
+export async function buscarConveniosMunicipio(
+  municipio: string,
+  uf?: string,
+  pagina = 1,
+): Promise<Convenio[]> {
+  const sp = new URLSearchParams({
     municipio,
-    uf,
     situacao: 'Em Execução',
-    tamanhoPagina: 50,
+    pagina: String(pagina),
   })
+  if (uf) sp.set('uf', uf)
+
+  const res = await fetch(`${BASE_URL}/convenios?${sp}`, { headers: buildHeaders(), next: { revalidate: 3600 } })
+  if (!res.ok) {
+    if (res.status === 400) throw new Error('Convênios 400 — filtro obrigatório ausente')
+    throw new Error(`Convênios ${res.status}`)
+  }
+  const data: ConvenioRaw[] = await res.json()
+  return Array.isArray(data) ? data.map(normalizar) : []
 }
 
 /**
- * Busca repasses (transferências diretas) do Portal da Transparência
+ * Busca repasses (transferências voluntárias) do Portal da Transparência.
+ * Retorna o payload cru da API (estrutura varia por endpoint).
  */
 export async function buscarRepasses(params: {
   uf?: string
   municipio?: string
   funcao?: string
   pagina?: number
-} = {}) {
-  const searchParams = new URLSearchParams({
+} = {}): Promise<unknown[]> {
+  const sp = new URLSearchParams({
     pagina: String(params.pagina ?? 1),
     tamanhoPagina: '50',
   })
+  if (params.uf) sp.set('uf', params.uf)
+  if (params.municipio) sp.set('municipio', params.municipio)
+  if (params.funcao) sp.set('funcao', params.funcao)
 
-  if (params.uf) searchParams.set('uf', params.uf)
-  if (params.municipio) searchParams.set('municipio', params.municipio)
-  if (params.funcao) searchParams.set('funcao', params.funcao)
-
-  const url = `${BASE_URL}/transferencias-voluntarias?${searchParams}`
-
-  const res = await fetch(url, {
+  const res = await fetch(`${BASE_URL}/transferencias-voluntarias?${sp}`, {
     headers: buildHeaders(),
     next: { revalidate: 3600 },
   })
-
   if (!res.ok) return []
   return res.json()
 }
 
 /**
- * Busca emendas parlamentares de saúde
- * Fonte crucial para detectar verbas novas que geram oportunidades
+ * Busca emendas parlamentares de saúde por UF — verbas novas que geram oportunidades
+ * ("emendas quentes"). Retorna o payload cru da API de emendas.
  */
 export async function buscarEmendasSaude(params: {
   uf?: string
   ano?: number
   pagina?: number
   funcao?: string  // código de função orçamentária: '10' = Saúde
-} = {}) {
+} = {}): Promise<Array<Record<string, unknown>>> {
   if (!params.uf) return []
 
   const ano = params.ano ?? new Date().getFullYear()
-  const searchParams = new URLSearchParams({
+  const sp = new URLSearchParams({
     pagina: String(params.pagina ?? 1),
     tamanhoPagina: '50',
     ano: String(ano),
+    uf: params.uf,
   })
-  searchParams.set('uf', params.uf)
-  if (params.funcao) searchParams.set('funcao', params.funcao)
+  if (params.funcao) sp.set('funcao', params.funcao)
 
-  const url = `${BASE_URL}/emendas?${searchParams}`
-
-  const res = await fetch(url, {
-    headers: buildHeaders(),
-    next: { revalidate: 7200 },
-  })
-
+  const res = await fetch(`${BASE_URL}/emendas?${sp}`, { headers: buildHeaders(), next: { revalidate: 7200 } })
   if (!res.ok) return []
   const json = await res.json()
   return Array.isArray(json) ? json : (json.value ?? [])
 }
 
 /**
- * Retorna o conjunto de municípios com emendas parlamentares de saúde ativas.
+ * Conjunto de municípios (chave normalizada) com emendas de saúde ativas.
  * Usado pelo score engine para elevar o score de convênios nesses municípios.
- * Falha silenciosamente (retorna Set vazio) se API key não estiver configurada.
+ * Falha silenciosamente (Set vazio) se a API key não estiver configurada.
  */
 export async function getMunicipiosComEmendasSaude(uf: string): Promise<Set<string>> {
   try {
     const emendas = await buscarEmendasSaude({ uf, funcao: '10' })
     const set = new Set<string>()
     for (const e of emendas) {
-      const nome: string | undefined = e.municipio ?? e.localidade ?? e.nomeUnidade
-      if (nome) set.add(normalizarMunicipio(nome))
+      const nome = (e.municipio ?? e.localidade ?? e.nomeUnidade) as string | undefined
+      if (nome) set.add(normalizeKey(nome))
     }
     return set
   } catch {
     return new Set()
   }
-}
-
-function normalizarMunicipio(nome: string): string {
-  return normalizeKey(nome)
-}
-
-// --- Helpers ---
-
-export function normalizarConvenio(raw: TranspGovConvenio): Convenio {
-  const percentualExecutado =
-    raw.valor > 0
-      ? Math.round((raw.valorLiberado / raw.valor) * 100)
-      : 0
-
-  return {
-    id: String(raw.id),
-    numero: raw.dimConvenio.numero,
-    objeto: raw.dimConvenio.objeto,
-    situacao: raw.situacao,
-    valorTotal: raw.valor,
-    valorLiberado: raw.valorLiberado,
-    valorContrapartida: raw.valorContrapartida,
-    dataInicio: raw.dataInicioVigencia,
-    dataFim: raw.dataFinalVigencia,
-    municipio: raw.municipioConvenente?.nomeIBGE ?? '',
-    uf: raw.municipioConvenente?.uf?.nome ?? '',  // campo "nome" é a sigla (SP, MG…)
-    orgaoConcedente: raw.orgao?.nome ?? '',
-    convenente: raw.convenente?.nome ?? '',
-    percentualExecutado,
-  }
-}
-
-/**
- * Calcula dias restantes até o vencimento do convênio
- */
-export function diasAteVencimento(dataFim: string): number {
-  const fim = new Date(dataFim)
-  const hoje = new Date()
-  const diff = fim.getTime() - hoje.getTime()
-  return Math.ceil(diff / (1000 * 60 * 60 * 24))
-}
-
-/**
- * Verifica se um convênio está em estado favorável para gerar licitação
- */
-export function convenioEstaQuente(convenio: Convenio): boolean {
-  const dias = diasAteVencimento(convenio.dataFim)
-  return (
-    convenio.percentualExecutado >= 50 &&
-    convenio.valorLiberado > 0 &&
-    dias > 0 &&
-    dias < 365
-  )
 }

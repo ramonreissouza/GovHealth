@@ -1,9 +1,10 @@
 // src/app/api/transferegov/convenios/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  buscarConveniosSaudeAtivos,
-  buscarConvenios,
-  normalizarConvenio,
+  buscarConveniosSaudeUF,
+  buscarConveniosSaudeNacional,
+  buscarConveniosUF,
+  buscarConveniosMunicipio,
 } from '@/lib/transferegov'
 
 export const runtime = 'nodejs'
@@ -12,18 +13,34 @@ export const revalidate = 3600 // 1h
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
-    const uf = searchParams.get('uf') ?? undefined
-    const municipio = searchParams.get('municipio') ?? undefined
+    const uf = searchParams.get('uf')?.toUpperCase() ?? undefined
+    const municipio = searchParams.get('municipio')?.trim() || undefined
     const pagina = Number(searchParams.get('pagina') ?? 1)
     const somenteAtivos = searchParams.get('ativos') !== 'false'
 
-    const resultado = somenteAtivos
-      ? await buscarConveniosSaudeAtivos(uf)
-      : await buscarConvenios({ uf, municipio, pagina, tamanhoPagina: 100 })
+    // municipio → convênios "Em Execução" daquele município (opcionalmente com UF).
+    // somenteAtivos → filtra pelo objeto (saúde). Por UF se informada, senão cobertura nacional.
+    // ativos=false → página crua de uma UF (a API do TransfereGov exige filtro por UF).
+    let convenios
+    if (municipio) {
+      convenios = await buscarConveniosMunicipio(municipio, uf, pagina)
+    } else if (somenteAtivos) {
+      convenios = uf
+        ? await buscarConveniosSaudeUF(uf)
+        : await buscarConveniosSaudeNacional()
+    } else {
+      if (!uf) {
+        return NextResponse.json(
+          { error: 'Parâmetro "uf" é obrigatório quando ativos=false (a API exige filtro por UF).' },
+          { status: 400 },
+        )
+      }
+      convenios = await buscarConveniosUF({ uf, pagina })
+    }
 
     return NextResponse.json({
-      convenios: resultado.convenios,
-      total: resultado.total,
+      convenios,
+      total: convenios.length,
       fonte: 'TransfereGov / Portal da Transparência',
       atualizadoEm: new Date().toISOString(),
     })

@@ -1,8 +1,8 @@
 // src/app/api/vencedores/route.ts
 // Agrega fornecedores vencedores de licitações de saúde via PNCP /resultado
 
-import { NextResponse } from 'next/server'
-import { buscarContratacoes, buscarResultadoCompra, isSaudeRelated } from '@/lib/pncp'
+import { NextRequest, NextResponse } from 'next/server'
+import { buscarContratacoes, buscarResultadoCompra, buscarVencedoresSaude, isSaudeRelated } from '@/lib/pncp'
 import { inferirCategoria } from '@/lib/score-engine'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { MOCK_VENCEDORES } from '@/lib/mock-data'
@@ -20,7 +20,37 @@ export interface VencedorAgregado {
   categorias: string[]
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const { searchParams } = req.nextUrl
+  const fonte = searchParams.get('fonte')
+  const uf = searchParams.get('uf') ?? undefined
+
+  // fonte=orgaos → consolidação de vencedores por órgão (homologações recentes via /proposta)
+  if (fonte === 'orgaos') {
+    const cacheKey = `vencedores:orgaos:${uf ?? ''}`
+    const cachedOrgaos = getCached<object>(cacheKey)
+    if (cachedOrgaos) return NextResponse.json(cachedOrgaos)
+
+    try {
+      const mapa = await buscarVencedoresSaude(uf)
+      const orgaos = Object.entries(mapa)
+        .map(([cnpj, d]) => ({ cnpj, ...d }))
+        .sort((a, b) => b.valorTotal - a.valorTotal)
+        .slice(0, 50)
+      const payload = {
+        orgaos,
+        total: orgaos.length,
+        fonte: 'PNCP /contratacoes/proposta (consolidado por órgão)',
+        atualizadoEm: new Date().toISOString(),
+      }
+      setCached(cacheKey, payload, TTL.MEDIUM)
+      return NextResponse.json(payload)
+    } catch (error) {
+      console.error('[vencedores:orgaos]', error)
+      return NextResponse.json({ error: String(error) }, { status: 500 })
+    }
+  }
+
   const cached = getCached<object>('vencedores')
   if (cached) return NextResponse.json(cached)
 
