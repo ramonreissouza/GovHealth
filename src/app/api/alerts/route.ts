@@ -1,12 +1,13 @@
 // src/app/api/alerts/route.ts — CORRIGIDO
 import { NextRequest, NextResponse } from 'next/server'
 import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
-import { buscarEmendasSaudeAno, parseValorBR } from '@/lib/emendas'
+import { buscarEmendasSaudeAno, parseValorBR, type EmendaParlamentar } from '@/lib/emendas'
 import { Alert } from '@/lib/types'
 import { randomUUID } from 'crypto'
 
 export const runtime = 'nodejs'
 export const revalidate = 600
+export const maxDuration = 30 // fallback de emendas pode varrer múltiplos anos
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -44,17 +45,27 @@ export async function GET(req: NextRequest) {
     console.warn('[alerts] PNCP:', e)
   }
 
-  // Alertas de emendas de saúde (ano atual)
+  // Alertas de emendas de saúde — tenta o ano atual e recua para anos anteriores.
+  // As emendas de saúde do ano corrente costumam ser esparsas nas primeiras páginas,
+  // então sem o fallback o feed ficava sempre sem emendas.
   try {
-    const ano = new Date().getFullYear()
-    const emendas = await buscarEmendasSaudeAno(ano, 5)
+    const anoAtual = new Date().getFullYear()
+    let emendas: EmendaParlamentar[] = []
+    let anoEmendas = anoAtual
+    for (const ano of [anoAtual, anoAtual - 1, anoAtual - 2]) {
+      emendas = await buscarEmendasSaudeAno(ano, 6)
+      if (emendas.length > 0) { anoEmendas = ano; break }
+    }
+
+    // Maiores valores empenhados primeiro
+    emendas.sort((a, b) => parseValorBR(b.valorEmpenhado) - parseValorBR(a.valorEmpenhado))
 
     for (const emenda of emendas.slice(0, 3)) {
       const valor = parseValorBR(emenda.valorEmpenhado)
       alerts.push({
         id: randomUUID(),
         tipo: 'emenda',
-        titulo: 'Emenda parlamentar de saúde',
+        titulo: `Emenda parlamentar de saúde (${anoEmendas})`,
         descricao: `${emenda.localidadeDoGasto ?? 'Localidade N/D'} — R$${(valor / 1000).toFixed(0)}K empenhados. Autor: ${emenda.autor ?? 'N/D'}.`,
         urgencia: 'media',
         createdAt: agora,
