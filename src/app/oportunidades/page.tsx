@@ -22,21 +22,6 @@ import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/port
 
 const CATEGORIAS = ['todos', 'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento', 'outros']
 
-const EQUIP_FILTERS = [
-  { key: 'raio-x',        label: 'Raio-X',        terms: ['raio-x', 'rx digital', 'radiolog', 'radiografia'] },
-  { key: 'ultrassom',     label: 'Ultrassom',      terms: ['ultrassom', 'ultrassonografia', 'eco card', 'ecograf'] },
-  { key: 'tomografo',     label: 'Tomógrafo',      terms: ['tomógrafo', 'tomografia', 'tomografos'] },
-  { key: 'ressonancia',   label: 'Ressonância',    terms: ['ressonância', 'ressonancia magn', 'rm '] },
-  { key: 'mamogrofo',     label: 'Mamógrafo',      terms: ['mamógrafo', 'mamografia', 'mamografia'] },
-  { key: 'ventilador',    label: 'Ventilador',     terms: ['ventilador', 'respirador mecân', 'respirador pulm'] },
-  { key: 'monitor',       label: 'Monitor',        terms: ['monitor multipar', 'monitor cardíac', 'monitor de leito'] },
-  { key: 'desfibrilador', label: 'Desfibrilador',  terms: ['desfibrilador', 'cardioversor'] },
-  { key: 'endoscopio',    label: 'Endoscópio',     terms: ['endoscópio', 'endoscopia', 'videoscópio', 'videoendos'] },
-  { key: 'autoclave',     label: 'Autoclave',      terms: ['autoclave', 'esterilizad'] },
-  { key: 'incubadora',    label: 'Incubadora',     terms: ['incubadora', 'berço aquecido'] },
-  { key: 'bisturi',       label: 'Bisturi',        terms: ['bisturi', 'eletrocirúrgico', 'bisturis'] },
-  { key: 'medicamento',   label: 'Medicamento',    terms: ['medicament', 'fármaco', 'farmacêut', 'antibiótic', 'vacina', 'soro', 'injetável'] },
-]
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos','2026','2025','2024','2023']
 
@@ -63,6 +48,16 @@ function parsePNCPNum(num?: string): { cnpj: string; ano: number; seq: number } 
   const seq = Number(parts[2])
   if (!ano || !seq) return null
   return { cnpj: parts[0], ano, seq }
+}
+
+// "Em aberto" = prazo de proposta ainda no futuro. O PNCP às vezes mantém
+// situacaoCompraId=1 mesmo após o prazo vencer, então a data de encerramento
+// (quando existe) é a fonte de verdade. Usada tanto no filtro quanto no KPI.
+function estaAberta(o: Oportunidade): boolean {
+  const lic = o.licitacaoRelacionada
+  return lic?.dataEncerramentoProposta
+    ? new Date(lic.dataEncerramentoProposta) > new Date()
+    : lic?.situacaoCompraId === 1
 }
 
 // ── ItemsRow: lazy-loads PNCP items for a given oportunidade ─────────────────
@@ -144,7 +139,6 @@ function OportunidadesInner() {
   const [minScore, setMinScore] = useState(0)
   const [viewMode, setViewMode] = useState<'tabela' | 'cards'>('tabela')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [equipFilter, setEquipFilter] = useState<string | null>(null)
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([])
   const [soPortfolio, setSoPortfolio] = useState(false)
 
@@ -198,17 +192,8 @@ function OportunidadesInner() {
     const lic = o.licitacaoRelacionada
     if (ufsAtivos.size > 0 && !ufsAtivos.has(o.uf)) return false
     if (anoFiltro !== 'todos' && lic?.dataPublicacaoPncp?.substring(0, 4) !== anoFiltro) return false
-    // Use actual deadline date — PNCP may keep situacaoId=1 even after deadline passes
-    const estaAberto = lic?.dataEncerramentoProposta
-      ? new Date(lic.dataEncerramentoProposta) > new Date()
-      : lic?.situacaoCompraId === 1
-    if (statusFiltro === 'aberto' && !estaAberto) return false
-    if (statusFiltro === 'encerrado' && estaAberto) return false
-    if (equipFilter) {
-      const terms = EQUIP_FILTERS.find((e) => e.key === equipFilter)?.terms ?? []
-      const text = (o.descricao + ' ' + (lic?.objetoCompra ?? '')).toLowerCase()
-      if (!terms.some((t) => text.includes(t))) return false
-    }
+    if (statusFiltro === 'aberto' && !estaAberta(o)) return false
+    if (statusFiltro === 'encerrado' && estaAberta(o)) return false
     if (queryProponente && !(o.hospital ?? o.municipio).toLowerCase().includes(queryProponente.toLowerCase())) return false
     if (queryConvenio && !(lic?.numeroControlePNCP ?? '').toLowerCase().includes(queryConvenio.toLowerCase())) return false
     if (query) {
@@ -228,7 +213,7 @@ function OportunidadesInner() {
   const valorTotal = filtered.reduce((s, o) => s + o.valorEstimado, 0)
   const ticketMedio = filtered.length ? valorTotal / filtered.length : 0
   const estados = new Set(filtered.map((o) => o.uf)).size
-  const abertos = filtered.filter((o) => o.licitacaoRelacionada?.situacaoCompraId === 1).length
+  const abertos = filtered.filter(estaAberta).length
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -387,27 +372,6 @@ function OportunidadesInner() {
                 {cat === 'todos' ? 'Todas categorias' : CATEGORIA_LABEL[cat]}
               </button>
             ))}
-          </div>
-
-          {/* ── Equipment filter ─────────────────────────────────────────── */}
-          <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
-            <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Filtrar por equipamento</div>
-            <div className="flex gap-1.5 flex-wrap">
-              <button
-                onClick={() => setEquipFilter(null)}
-                className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md border transition-all',
-                  equipFilter === null ? 'bg-accent text-black border-accent font-bold' : 'border-subtle2 text-muted hover:text-strong hover:bg-bg3')}>
-                Todos
-              </button>
-              {EQUIP_FILTERS.map(({ key, label }) => (
-                <button key={key}
-                  onClick={() => setEquipFilter((p) => p === key ? null : key)}
-                  className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md border transition-all',
-                    equipFilter === key ? 'bg-accent text-black border-accent font-bold' : 'border-subtle2 text-muted hover:text-strong hover:bg-bg3')}>
-                  {label}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* ── 3 search boxes ───────────────────────────────────────────── */}

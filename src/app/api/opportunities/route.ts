@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { buscarComprasSaude, normalizarLicitacao, isSaudeRelated } from '@/lib/pncp'
+import { classificarTipo } from '@/lib/score-engine'
 import { Oportunidade } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -66,6 +67,7 @@ export async function GET(req: NextRequest) {
         descricao: lic.objetoCompra.substring(0, 140),
         score,
         subScores: { convenio: 80, historico: 65, orgao: 75, competicao: 60 },
+        tipoFornecimento: classificarTipo(lic.objetoCompra),
         valorEstimado: lic.valorTotalEstimado,
         janelaEmDias: aberto ? 0 : 30,
         urgencia: aberto ? 'urgente' : 'alta',
