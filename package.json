@@ -9,7 +9,8 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "db:setup": "node scripts/db-setup.mjs",
-    "etl": "node scripts/etl-pncp.mjs"
+    "etl": "node scripts/etl-pncp.mjs",
+    "etl:overnight": "node scripts/etl-overnight.mjs"
   },
   "dependencies": {
     "@types/mapbox-gl": "^3.1.0",
