@@ -79,3 +79,92 @@ export async function buscarEmendasSaudeHistorico(
   }
   return todas
 }
+
+// ── Detalhe da emenda (empenhos → favorecido / órgão / objeto) ───────────────
+// A listagem de emendas é enxuta. O que está "incluso" (objeto, unidade
+// contratada, órgão) vem dos documentos de empenho e do detalhe da despesa.
+
+interface EmendaDocumentoRaw {
+  id: number
+  data: string
+  fase: string
+  codigoDocumento: string
+  codigoDocumentoResumido: string
+}
+
+export interface EmendaEmpenho {
+  documento: string
+  data: string
+  valor: string
+  favorecido: string        // unidade/entidade contratada
+  codigoFavorecido: string  // CNPJ/CPF
+  ufFavorecido: string
+  ug: string                // unidade gestora
+  orgao: string
+  orgaoSuperior: string
+  observacao: string        // objeto: portaria, proposta, CNES…
+  programa: string
+  acao: string
+  modalidade: string
+}
+
+export interface EmendaDetalhe {
+  codigoEmenda: string
+  fases: { empenho: number; liquidacao: number; pagamento: number }
+  empenhos: EmendaEmpenho[]
+}
+
+async function buscarDocumentosEmenda(codigoEmenda: string): Promise<EmendaDocumentoRaw[]> {
+  const res = await fetch(`${BASE_URL}/emendas/documentos/${codigoEmenda}?pagina=1`, {
+    headers: buildHeaders(),
+    next: { revalidate: 86400 },
+  })
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
+
+async function buscarDetalheDespesa(codigoDocumento: string): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${BASE_URL}/despesas/documentos/${codigoDocumento}`, {
+    headers: buildHeaders(),
+    next: { revalidate: 86400 },
+  })
+  if (!res.ok) return null
+  return res.json()
+}
+
+/**
+ * Detalha uma emenda: resolve os empenhos e enriquece com favorecido (unidade
+ * contratada), órgão/UG e o objeto (observação). Lazy — chamado sob demanda.
+ */
+export async function buscarDetalheEmenda(codigoEmenda: string, maxEmpenhos = 8): Promise<EmendaDetalhe> {
+  const docs = await buscarDocumentosEmenda(codigoEmenda)
+  const fases = {
+    empenho: docs.filter((d) => d.fase === 'Empenho').length,
+    liquidacao: docs.filter((d) => d.fase === 'Liquidação').length,
+    pagamento: docs.filter((d) => d.fase === 'Pagamento').length,
+  }
+
+  const empenhoDocs = docs.filter((d) => d.fase === 'Empenho').slice(0, maxEmpenhos)
+  const detalhes = await Promise.all(empenhoDocs.map((d) => buscarDetalheDespesa(d.codigoDocumento)))
+
+  const empenhos: EmendaEmpenho[] = detalhes
+    .filter((x): x is Record<string, unknown> => !!x)
+    .map((x) => ({
+      documento: String(x.documentoResumido ?? x.documento ?? ''),
+      data: String(x.data ?? ''),
+      valor: String(x.valor ?? ''),
+      favorecido: String(x.nomeFavorecido ?? x.favorecido ?? ''),
+      codigoFavorecido: String(x.codigoFavorecido ?? ''),
+      ufFavorecido: String(x.ufFavorecido ?? ''),
+      ug: String(x.ug ?? ''),
+      orgao: String(x.orgao ?? ''),
+      orgaoSuperior: String(x.orgaoSuperior ?? ''),
+      observacao: String(x.observacao ?? ''),
+      programa: String(x.programa ?? ''),
+      acao: String(x.acao ?? ''),
+      modalidade: String(x.modalidade ?? ''),
+    }))
+
+  return { codigoEmenda, fases, empenhos }
+}
