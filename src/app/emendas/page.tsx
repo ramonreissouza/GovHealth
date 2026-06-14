@@ -1,13 +1,16 @@
 'use client'
 // src/app/emendas/page.tsx — Emendas Parlamentares de Saúde
 // Verbas parlamentares destinadas à função "Saúde" (Portal da Transparência).
+// Cada linha expande para mostrar empenhos: unidade contratada (favorecido),
+// órgão/UG e o objeto (observação: portaria, proposta, CNES).
 
 import React, { useState, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Search, Landmark, User, MapPin } from 'lucide-react'
+import { Search, Landmark, User, MapPin, ChevronDown, ChevronUp, Building2, FileText, Receipt } from 'lucide-react'
 import type { EmendaView } from '@/app/api/emendas/route'
+import type { EmendaDetalhe } from '@/lib/emendas'
 import { formatBRL } from '@/lib/format'
 
 const ANOS = ['auto', '2026', '2025', '2024', '2023']
@@ -24,6 +27,66 @@ interface ApiResponse {
   instrucoes?: string
 }
 
+// ── Detalhe (empenhos) de uma emenda — lazy-load ─────────────────────────────
+function DetalheEmenda({ codigo }: { codigo: string }) {
+  const [det, setDet] = useState<EmendaDetalhe | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let vivo = true
+    fetch(`/api/emendas/detalhe?codigo=${encodeURIComponent(codigo)}`)
+      .then((r) => r.json())
+      .then((d) => { if (vivo) setDet(d) })
+      .catch(() => {})
+      .finally(() => { if (vivo) setLoading(false) })
+    return () => { vivo = false }
+  }, [codigo])
+
+  if (loading) {
+    return <div className="text-[11px] text-faint py-2 flex items-center gap-1.5"><Receipt size={12} className="animate-pulse" /> Buscando empenhos e unidade contratada…</div>
+  }
+  if (!det || det.empenhos.length === 0) {
+    return <div className="text-[11px] text-faint py-2">Sem detalhamento de empenhos disponível para esta emenda no Portal da Transparência.</div>
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider flex items-center gap-1.5">
+        <Receipt size={11} /> Empenhos ({det.empenhos.length})
+        <span className="text-faint/70 normal-case">· {det.fases.empenho} empenho · {det.fases.liquidacao} liquidação · {det.fases.pagamento} pagamento</span>
+      </div>
+      {det.empenhos.map((emp, i) => (
+        <div key={emp.documento + i} className="bg-bg4/40 rounded-lg px-3 py-2.5 space-y-1.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-1.5 text-[12px] text-strong">
+              <Building2 size={12} className="text-accent flex-shrink-0" />
+              <span className="font-medium">{emp.favorecido || 'Favorecido N/D'}</span>
+              {emp.codigoFavorecido && <span className="text-[10px] font-mono-custom text-faint">· {emp.codigoFavorecido}</span>}
+              {emp.ufFavorecido && <span className="text-[10px] font-mono-custom text-faint">· {emp.ufFavorecido}</span>}
+            </div>
+            <div className="text-[12px] font-mono-custom font-bold text-strong whitespace-nowrap">{emp.valor ? `R$ ${emp.valor}` : '—'}</div>
+          </div>
+
+          {emp.observacao && (
+            <div className="flex items-start gap-1.5 text-[11px] text-muted leading-snug">
+              <FileText size={11} className="text-faint flex-shrink-0 mt-0.5" />
+              <span>{emp.observacao}</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] font-mono-custom text-faint">
+            {emp.ug && <span><span className="text-faint/60">UG:</span> {emp.ug}</span>}
+            {emp.orgao && <span><span className="text-faint/60">Órgão:</span> {emp.orgao}</span>}
+            {emp.acao && <span><span className="text-faint/60">Ação:</span> {emp.acao}</span>}
+            {emp.modalidade && <span><span className="text-faint/60">Modalidade:</span> {emp.modalidade}</span>}
+            {emp.documento && <span><span className="text-faint/60">Doc:</span> {emp.documento} · {emp.data}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function EmendasPage() {
   const [data, setData] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -32,10 +95,15 @@ export default function EmendasPage() {
   const [ano, setAno] = useState('auto')
   const [query, setQuery] = useState('')
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  const toggle = (id: string) =>
+    setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s })
 
   const load = useCallback(async () => {
     setLoading(true)
     setErro(null)
+    setExpanded(new Set())
     try {
       const params = new URLSearchParams()
       if (ano !== 'auto') params.set('ano', ano)
@@ -91,15 +159,14 @@ export default function EmendasPage() {
 
           <div className="mb-4 max-w-[680px]">
             <p className="text-[13px] text-muted leading-relaxed">
-              Verbas parlamentares destinadas à função <span className="text-strong">Saúde</span>. Emendas com alto valor
-              empenhado e baixa execução sinalizam <span className="text-accent">compras iminentes</span> no município —
-              fonte primária de oportunidades antes da publicação do edital.
+              Verbas parlamentares destinadas à função <span className="text-strong">Saúde</span>. Clique numa emenda para
+              ver os <span className="text-accent">empenhos</span>: unidade contratada (favorecido), órgão/UG e o objeto
+              (portaria, proposta, CNES) — sinais de compra iminente no município.
             </p>
           </div>
 
           {/* ── Filtros ──────────────────────────────────────────────────── */}
           <div className="flex items-center gap-2 mb-3 flex-wrap">
-            {/* Ano */}
             <div className="flex gap-0.5 bg-bg2 border border-subtle2 rounded-lg p-1">
               {ANOS.map((a) => (
                 <button key={a} onClick={() => setAno(a)}
@@ -109,8 +176,6 @@ export default function EmendasPage() {
                 </button>
               ))}
             </div>
-
-            {/* Busca */}
             <div className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2 flex-1 min-w-[220px]">
               <Search size={13} className="text-faint flex-shrink-0" />
               <input value={query} onChange={(e) => setQuery(e.target.value)}
@@ -174,38 +239,53 @@ export default function EmendasPage() {
                     <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Empenhado</th>
                     <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Pago</th>
                     <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5 w-28">Execução</th>
+                    <th className="w-8"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((e, idx) => (
-                    <tr key={`${e.codigoEmenda}-${idx}`} className="border-b border-subtle last:border-0 hover:bg-bg3 transition-colors">
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-1.5 text-[12px] text-strong">
-                          <MapPin size={11} className="text-faint flex-shrink-0" />
-                          {e.localidadeDoGasto || '—'}
-                        </div>
-                        <div className="text-[9px] text-faint font-mono-custom mt-0.5">{e.tipoEmenda} · nº {e.numeroEmenda}</div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-1.5 text-[12px] text-muted max-w-[220px] truncate">
-                          <User size={11} className="text-faint flex-shrink-0" />
-                          {e.autor || '—'}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-[11px] text-muted max-w-[160px] truncate">{e.subfuncao || '—'}</td>
-                      <td className="px-4 py-2.5 text-right text-[12px] font-mono-custom font-bold text-strong">{formatBRL(e.empenhado)}</td>
-                      <td className="px-4 py-2.5 text-right text-[11px] font-mono-custom text-muted">{formatBRL(e.pago)}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-bg4 rounded-full overflow-hidden">
-                            <div className={clsx('h-full rounded-full', e.pctExecucao >= 80 ? 'bg-emerald-500' : e.pctExecucao >= 40 ? 'bg-amber' : 'bg-accent')}
-                              style={{ width: `${Math.min(e.pctExecucao, 100)}%` }} />
-                          </div>
-                          <span className="text-[10px] font-mono-custom text-faint w-9 text-right">{e.pctExecucao}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map((e, idx) => {
+                    const isOpen = expanded.has(e.codigoEmenda)
+                    return (
+                      <React.Fragment key={`${e.codigoEmenda}-${idx}`}>
+                        <tr className={clsx('border-b border-subtle transition-colors cursor-pointer group', isOpen ? 'bg-bg3' : 'hover:bg-bg3')}
+                          onClick={() => toggle(e.codigoEmenda)}>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1.5 text-[12px] text-strong">
+                              <MapPin size={11} className="text-faint flex-shrink-0" />
+                              {e.localidadeDoGasto || '—'}
+                            </div>
+                            <div className="text-[9px] text-faint font-mono-custom mt-0.5">{e.tipoEmenda} · nº {e.numeroEmenda}</div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1.5 text-[12px] text-muted max-w-[220px] truncate">
+                              <User size={11} className="text-faint flex-shrink-0" />
+                              {e.autor || '—'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-[11px] text-muted max-w-[160px] truncate">{e.subfuncao || '—'}</td>
+                          <td className="px-4 py-2.5 text-right text-[12px] font-mono-custom font-bold text-strong">{formatBRL(e.empenhado)}</td>
+                          <td className="px-4 py-2.5 text-right text-[11px] font-mono-custom text-muted">{formatBRL(e.pago)}</td>
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-1.5 bg-bg4 rounded-full overflow-hidden">
+                                <div className={clsx('h-full rounded-full', e.pctExecucao >= 80 ? 'bg-emerald-500' : e.pctExecucao >= 40 ? 'bg-amber' : 'bg-accent')}
+                                  style={{ width: `${Math.min(e.pctExecucao, 100)}%` }} />
+                              </div>
+                              <span className="text-[10px] font-mono-custom text-faint w-9 text-right">{e.pctExecucao}%</span>
+                            </div>
+                          </td>
+                          <td className="px-2 text-faint">{isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr className="border-b border-subtle bg-bg3/40">
+                            <td colSpan={7} className="px-6 py-4">
+                              <DetalheEmenda codigo={e.codigoEmenda} />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
