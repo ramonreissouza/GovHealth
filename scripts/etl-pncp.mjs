@@ -10,6 +10,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { isSaude, categoria } from './saude-filter.mjs'
 
 // ── env ──────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -33,6 +34,10 @@ let UF = UF_LIST[0] // UF corrente (usada na desnormalização); reatribuída po
 const MESES = Number(args.meses ?? 3)
 const MODALIDADES = String(args.modalidades ?? '6,8').split(',').map(Number)
 const MAX_CONTRATACOES = Number(args.max ?? 80)
+// Cap por UF: --maxuf=SP:1500,MG:1500 sobrepõe o --max para UFs específicas.
+const MAX_UF = Object.fromEntries(String(args.maxuf ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  .map((p) => { const [u, n] = p.split(':'); return [u.toUpperCase(), Number(n)] }))
+const maxDaUf = (uf) => MAX_UF[uf] ?? MAX_CONTRATACOES
 const DELAY = Number(args.delay ?? 400)
 
 const CONSULTA = 'https://pncp.gov.br/api/consulta/v1'
@@ -45,19 +50,6 @@ const hoje = new Date()
 const inicio = new Date(hoje); inicio.setMonth(hoje.getMonth() - MESES)
 const dataInicial = yyyymmdd(inicio)
 const dataFinal = yyyymmdd(hoje)
-
-const HEALTH = ['saude','saúde','hospital','médic','medic','equip','uti','laborat','cirurg','tomógrafo','ressonância','ultrassom','monitor','ventilador','respirador','medicament','farmac','enfermagem','clínic','ambulânc','odontológ','oncolog','raio','cateter','seringa','luva']
-const isSaude = (s) => { const l = (s ?? '').toLowerCase(); return HEALTH.some((k) => l.includes(k)) }
-function categoria(s) {
-  const l = (s ?? '').toLowerCase()
-  if (/tom[óo]grafo|tomografia|resson|ultrassom|raio|mam[óo]graf|radiolog/.test(l)) return 'imagem'
-  if (/uti|ventilador|respirador|monitor|desfibrilador|oxímetro/.test(l)) return 'uti'
-  if (/laborat|analisador|hematolog|reagente/.test(l)) return 'laboratorio'
-  if (/cirurg|bisturi|mesa cir/.test(l)) return 'cirurgia'
-  if (/oncolog|quimioter|radioter/.test(l)) return 'oncologia'
-  if (/medicament|fármaco|farmac|vacina|soro|injetável/.test(l)) return 'medicamento'
-  return 'outros'
-}
 
 // Retorna o JSON, ou null SÓ quando o servidor responde 404 (recurso inexistente).
 // Erros transitórios (rede, timeout, 429, 5xx) são retentados com backoff; se
@@ -93,11 +85,35 @@ async function pncpVivo(mod, uf) {
 }
 
 // ── DB ───────────────────────────────────────────────────────────────────────
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+// Neon (serverless) derruba conexões ociosas; sem tratamento, o evento 'error'
+// do pg.Client encerra o processo. Aqui o cliente é recriável e dbQuery reconecta
+// sob demanda — assim um drop vira uma reconexão, não um crash + restart.
+function novoDb() {
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  c.on('error', (e) => console.warn(`  [db] evento de erro de conexão: ${e.message} (reconecta sob demanda)`))
+  return c
+}
+let db = novoDb()
 await db.connect()
 
+async function dbQuery(text, params, tent = 0) {
+  try {
+    return await db.query(text, params)
+  } catch (e) {
+    if (tent < 5) {
+      console.warn(`  [db] query falhou (${e.message.slice(0, 50)}) — reconectando ${tent + 1}/5`)
+      try { await db.end() } catch { /* noop */ }
+      db = novoDb()
+      try { await db.connect() } catch { /* tentará de novo no retry */ }
+      await sleep(1500 * (tent + 1))
+      return dbQuery(text, params, tent + 1)
+    }
+    throw e
+  }
+}
+
 async function upsertContratacao(c) {
-  await db.query(
+  await dbQuery(
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
        data_publicacao, situacao_id, categoria_saude)
@@ -114,7 +130,7 @@ async function upsertContratacao(c) {
 }
 
 async function upsertItem(numeroControle, it) {
-  await db.query(
+  await dbQuery(
     `INSERT INTO itens (numero_controle_pncp, numero_item, descricao, codigo_catmat, nome_catmat,
        quantidade, valor_unitario_estimado, situacao_item_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -127,7 +143,7 @@ async function upsertItem(numeroControle, it) {
 
 async function upsertResultado(c, it, r) {
   if (!r.niFornecedor) return
-  await db.query(
+  await dbQuery(
     `INSERT INTO resultados (numero_controle_pncp, numero_item, ni_fornecedor, nome_fornecedor,
        quantidade_homologada, valor_unitario_homologado, valor_total_homologado, data_resultado,
        ordem_classificacao_srp, porte_fornecedor, uf, codigo_catmat, nome_catmat, ano)
@@ -145,15 +161,15 @@ async function upsertResultado(c, it, r) {
 
 // ── checkpoint / resumo ──────────────────────────────────────────────────────
 async function jaProcessada(num) {
-  const r = await db.query('SELECT 1 FROM itens WHERE numero_controle_pncp = $1 LIMIT 1', [num])
+  const r = await dbQuery('SELECT 1 FROM itens WHERE numero_controle_pncp = $1 LIMIT 1', [num])
   return r.rowCount > 0
 }
 async function lerCheckpoint(chave) {
-  const r = await db.query('SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chave])
+  const r = await dbQuery('SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chave])
   return r.rows[0]?.ultima_pagina ?? 0
 }
 async function salvarCheckpoint(chave, pagina) {
-  await db.query(`INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1,$2)
+  await dbQuery(`INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1,$2)
     ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`, [chave, pagina])
 }
 
@@ -166,10 +182,11 @@ for (const ufAtual of UF_LIST) {
   // Cap PERSISTENTE: já contabiliza o que existe no banco p/ esta UF, então a
   // amostra de MAX_CONTRATACOES é por UF "no total" e sobrevive a restarts —
   // uma UF já saturada é pulada na hora em vez de reabrir o orçamento.
-  const jaNoBanco = await db.query('SELECT count(*)::int n FROM contratacoes WHERE uf = $1', [UF])
+  const capUF = maxDaUf(UF)
+  const jaNoBanco = await dbQuery('SELECT count(*)::int n FROM contratacoes WHERE uf = $1', [UF])
   let nContrat = jaNoBanco.rows[0].n
-  if (nContrat >= MAX_CONTRATACOES) { console.log(`\n── UF ${UF} ── já saturada (${nContrat} ≥ ${MAX_CONTRATACOES}) — pulando`); continue }
-  console.log(`\n── UF ${UF} ── (${nContrat} já no banco)`)
+  if (nContrat >= capUF) { console.log(`\n── UF ${UF} ── já saturada (${nContrat} ≥ ${capUF}) — pulando`); continue }
+  console.log(`\n── UF ${UF} ── (${nContrat} já no banco · alvo ${capUF})`)
 
   for (const mod of MODALIDADES) {
     const chave = `uf:${UF}:mod:${mod}`
@@ -209,7 +226,7 @@ for (const ufAtual of UF_LIST) {
 
       let hitMax = false
       for (const c of lista) {
-        if (nContrat >= MAX_CONTRATACOES) { hitMax = true; break }
+        if (nContrat >= capUF) { hitMax = true; break }
         await upsertContratacao(c); totC++
 
         // Resumo barato: se a contratação já tem itens no banco, pula chamadas caras.
@@ -230,12 +247,12 @@ for (const ufAtual of UF_LIST) {
         }
       }
 
-      if (hitMax) { console.log(`  max/UF (${MAX_CONTRATACOES}) atingido em ${UF}`); break }
+      if (hitMax) { console.log(`  max/UF (${capUF}) atingido em ${UF}`); break }
       await salvarCheckpoint(chave, pagina) // página inteira concluída → checkpoint
       console.log(`  ${UF}/mod${mod} pág ${pagina}: +${lista.length} saúde — acum ${totC}c/${totI}i/${totR}r (skip ${totSkip})`)
       if (resp.data.length < 50 || pagina >= (resp.totalPaginas ?? 1)) break
     }
-    if (nContrat >= MAX_CONTRATACOES) break
+    if (nContrat >= capUF) break
   }
   console.log(`  ✓ ${UF}: ${nContrat} contratações nesta rodada`)
 }
