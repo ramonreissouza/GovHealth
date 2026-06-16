@@ -59,13 +59,37 @@ function categoria(s) {
   return 'outros'
 }
 
+// Retorna o JSON, ou null SÓ quando o servidor responde 404 (recurso inexistente).
+// Erros transitórios (rede, timeout, 429, 5xx) são retentados com backoff; se
+// esgotarem as tentativas, lança — o chamador decide se aborta ou tolera.
 async function fetchJson(url, tentativa = 0) {
+  const MAX = 5
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json' } })
-    if (res.status === 429 && tentativa < 4) { await sleep(2000 * (tentativa + 1)); return fetchJson(url, tentativa + 1) }
-    if (!res.ok) return null
+    // PNCP às vezes deixa a conexão pendurada sem responder; sem timeout o fetch
+    // trava pra sempre e congela o ETL. AbortSignal.timeout aborta → vira retry.
+    const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
+    if (res.status === 404) return null
+    if ((res.status === 429 || res.status >= 500) && tentativa < MAX) {
+      console.warn(`  [rate-limit] HTTP ${res.status} — retry ${tentativa + 1}/${MAX} em ${2 * (tentativa + 1)}s`)
+      await sleep(2000 * (tentativa + 1)); return fetchJson(url, tentativa + 1)
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return await res.json()
-  } catch { return null }
+  } catch (e) {
+    if (tentativa < MAX) { await sleep(2000 * (tentativa + 1)); return fetchJson(url, tentativa + 1) }
+    throw new Error(`falha após ${MAX} tentativas em ${url}: ${e.message}`)
+  }
+}
+// Variante tolerante: usada em chamadas onde um null transitório só perde 1 item.
+async function fetchJsonSafe(url) { try { return await fetchJson(url) } catch { return null } }
+// Canário barato (1 tentativa, timeout curto): a página 1 daquela UF/modalidade
+// responde? Serve para distinguir outage global do PNCP de página profunda quebrada.
+async function pncpVivo(mod, uf) {
+  try {
+    const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf, pagina: '1', tamanhoPagina: '1' })
+    const res = await fetch(`${CONSULTA}/contratacoes/publicacao?${sp}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) })
+    return res.ok
+  } catch { return false }
 }
 
 // ── DB ───────────────────────────────────────────────────────────────────────
@@ -139,35 +163,67 @@ console.log(`[ETL] UFs=${UF_LIST.join(',')} janela=${dataInicial}→${dataFinal}
 
 for (const ufAtual of UF_LIST) {
   UF = ufAtual
-  let nContrat = 0
-  console.log(`\n── UF ${UF} ──`)
+  // Cap PERSISTENTE: já contabiliza o que existe no banco p/ esta UF, então a
+  // amostra de MAX_CONTRATACOES é por UF "no total" e sobrevive a restarts —
+  // uma UF já saturada é pulada na hora em vez de reabrir o orçamento.
+  const jaNoBanco = await db.query('SELECT count(*)::int n FROM contratacoes WHERE uf = $1', [UF])
+  let nContrat = jaNoBanco.rows[0].n
+  if (nContrat >= MAX_CONTRATACOES) { console.log(`\n── UF ${UF} ── já saturada (${nContrat} ≥ ${MAX_CONTRATACOES}) — pulando`); continue }
+  console.log(`\n── UF ${UF} ── (${nContrat} já no banco)`)
 
   for (const mod of MODALIDADES) {
     const chave = `uf:${UF}:mod:${mod}`
     let pagina = (await lerCheckpoint(chave)) + 1
     if (pagina > 1) console.log(`  retomando ${UF}/mod${mod} da página ${pagina}`)
 
+    let falhasSeguidas = 0
     for (; pagina <= 400; pagina++) {
       const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf: UF, pagina: String(pagina), tamanhoPagina: '50' })
-      const resp = await fetchJson(`${CONSULTA}/contratacoes/publicacao?${sp}`)
+      let resp
+      try {
+        resp = await fetchJson(`${CONSULTA}/contratacoes/publicacao?${sp}`)
+        falhasSeguidas = 0
+      } catch (e) {
+        // Dois cenários ao falhar uma página de listagem:
+        //  (a) OUTAGE global do PNCP (até a página 1 falha): esperar e repetir a
+        //      MESMA página, sem avançar o checkpoint — não perde dados e retoma
+        //      a coleta quando o PNCP voltar (essencial p/ rodar overnight).
+        //  (b) Paginação profunda quebrada (pág 1 responde, mas a atual não):
+        //      pular a página; após 3 seguidas, circuit breaker → próxima
+        //      modalidade/UF, para não gastar horas em páginas mortas.
+        if (!(await pncpVivo(mod, UF))) {
+          console.warn(`  [outage] PNCP indisponível (pág 1 também falha) — aguardando 60s e repetindo ${UF}/mod${mod} pág ${pagina}`)
+          await sleep(60000)
+          pagina-- // repete a MESMA página (o for fará pagina++); checkpoint NÃO avança
+          falhasSeguidas = 0
+          continue
+        }
+        falhasSeguidas++
+        console.warn(`  [skip] ${UF}/mod${mod} pág ${pagina} falhou (${falhasSeguidas}x seguidas) — ${e.message.slice(0, 40)}`)
+        await salvarCheckpoint(chave, pagina)
+        if (falhasSeguidas >= 3) { console.warn(`  [circuit-breaker] ${UF}/mod${mod}: ${falhasSeguidas} páginas seguidas falhando (pág 1 ok) — paginação profunda degradada; encerrando modalidade`); break }
+        continue
+      }
       if (!resp || (resp.data ?? []).length === 0) break
       const lista = resp.data.filter((c) => isSaude(c.objetoCompra))
 
       let hitMax = false
       for (const c of lista) {
         if (nContrat >= MAX_CONTRATACOES) { hitMax = true; break }
-        await upsertContratacao(c); nContrat++; totC++
+        await upsertContratacao(c); totC++
 
         // Resumo barato: se a contratação já tem itens no banco, pula chamadas caras.
+        // Não conta no cap (nContrat) — assim a retomada avança para as novas.
         if (await jaProcessada(c.numeroControlePNCP)) { totSkip++; continue }
+        nContrat++ // só conta contratações efetivamente processadas nesta rodada
 
-        const itensResp = await fetchJson(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens?pagina=1&tamanhoPagina=100`)
+        const itensResp = await fetchJsonSafe(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens?pagina=1&tamanhoPagina=100`)
         await sleep(DELAY)
         const itens = Array.isArray(itensResp) ? itensResp : (itensResp?.data ?? [])
         for (const it of itens) {
           await upsertItem(c.numeroControlePNCP, it); totI++
           if (it.temResultado || it.situacaoCompraItem === 2) {
-            const resArr = await fetchJson(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens/${it.numeroItem}/resultados?pagina=1&tamanhoPagina=20`)
+            const resArr = await fetchJsonSafe(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens/${it.numeroItem}/resultados?pagina=1&tamanhoPagina=20`)
             await sleep(DELAY)
             for (const r of (Array.isArray(resArr) ? resArr : (resArr?.data ?? []))) { await upsertResultado(c, it, r); totR++ }
           }
