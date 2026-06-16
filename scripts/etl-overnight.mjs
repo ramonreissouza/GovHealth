@@ -14,10 +14,11 @@ import { spawn } from 'node:child_process'
 
 const UF = process.env.ETL_UF ?? 'SP,MG,RJ,BA,CE,PR,PE,RS'
 const MESES = process.env.ETL_MESES ?? '12'
-const MAX = process.env.ETL_MAX ?? '1500'
+const MAX = process.env.ETL_MAX ?? '600'          // alvo padrão por UF
+const MAXUF = process.env.ETL_MAXUF ?? 'SP:1500,MG:1500' // overrides por UF
 const DELAY = process.env.ETL_DELAY ?? '250'
-const ARGS = ['scripts/etl-pncp.mjs', `--uf=${UF}`, `--meses=${MESES}`, `--max=${MAX}`, `--delay=${DELAY}`]
-const MAX_TENTATIVAS = 30
+const ARGS = ['scripts/etl-pncp.mjs', `--uf=${UF}`, `--meses=${MESES}`, `--max=${MAX}`, `--maxuf=${MAXUF}`, `--delay=${DELAY}`]
+const MAX_TENTATIVAS = 100
 
 const ts = () => new Date().toLocaleString('pt-BR')
 function rodar() {
