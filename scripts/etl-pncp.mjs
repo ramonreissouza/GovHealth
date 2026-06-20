@@ -32,6 +32,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
 const UF_LIST = String(args.uf ?? 'CE').toUpperCase().split(',').map((s) => s.trim()).filter(Boolean)
 let UF = UF_LIST[0] // UF corrente (usada na desnormalização); reatribuída por iteração
 const MESES = Number(args.meses ?? 3)
+const DIAS = args.dias ? Number(args.dias) : null // janela em dias (modo incremental); sobrepõe --meses
 const MODALIDADES = String(args.modalidades ?? '6,8').split(',').map(Number)
 const MAX_CONTRATACOES = Number(args.max ?? 80)
 // Cap por UF: --maxuf=SP:1500,MG:1500 sobrepõe o --max para UFs específicas.
@@ -47,7 +48,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const yyyymmdd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '')
 
 const hoje = new Date()
-const inicio = new Date(hoje); inicio.setMonth(hoje.getMonth() - MESES)
+const inicio = new Date(hoje)
+if (DIAS) inicio.setDate(hoje.getDate() - DIAS)
+else inicio.setMonth(hoje.getMonth() - MESES)
 const dataInicial = yyyymmdd(inicio)
 const dataFinal = yyyymmdd(hoje)
 
@@ -189,7 +192,9 @@ for (const ufAtual of UF_LIST) {
   console.log(`\n── UF ${UF} ── (${nContrat} já no banco · alvo ${capUF})`)
 
   for (const mod of MODALIDADES) {
-    const chave = `uf:${UF}:mod:${mod}`
+    // No modo incremental (--dias), o checkpoint é isolado pela janela (dataInicial),
+    // pra não herdar a paginação do scan histórico (chave estável uf:UF:mod:mod).
+    const chave = DIAS ? `uf:${UF}:mod:${mod}:d${dataInicial}` : `uf:${UF}:mod:${mod}`
     let pagina = (await lerCheckpoint(chave)) + 1
     if (pagina > 1) console.log(`  retomando ${UF}/mod${mod} da página ${pagina}`)
 
