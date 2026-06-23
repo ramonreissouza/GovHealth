@@ -65,13 +65,15 @@ async function buscarPagina(
     dataFinal,
     codigoModalidadeContratacao: String(modalidade),
     pagina: String(pagina),
-    tamanhoPagina: String(tamanhoPagina),
+    // O endpoint de consulta do PNCP rejeita tamanhoPagina > 50 (HTTP 400).
+    tamanhoPagina: String(Math.min(tamanhoPagina, 50)),
   })
   if (uf) sp.set('uf', uf)
 
   const res = await fetch(`${PNCP_BASE}/contratacoes/publicacao?${sp}`, {
     headers: buildHeaders(),
     next: { revalidate: 900 },
+    signal: AbortSignal.timeout(15_000), // PNCP às vezes pendura; evita travar a função
   })
   if (!res.ok) throw new Error(`PNCP ${res.status} mod ${modalidade} p${pagina}`)
   return res.json()
