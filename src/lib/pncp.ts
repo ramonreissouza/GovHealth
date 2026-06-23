@@ -121,6 +121,53 @@ export function isSaudeRelated(texto: string): boolean {
   return isSaude(texto)
 }
 
+/**
+ * Licitações de saúde ABERTAS (recebendo proposta) — endpoint /contratacoes/proposta,
+ * com prazo de encerramento no futuro (janela até +90 dias). É a fonte certa das
+ * "oportunidades em aberto" (a /publicacao olha para trás e traz sobretudo encerradas).
+ */
+export async function buscarLicitacoesAbertas(params: PNCPSearchParams = {}): Promise<PNCPContratacao[]> {
+  const hoje = new Date()
+  const fim = new Date(hoje); fim.setDate(hoje.getDate() + 90)
+  const dataFinal = params.dataFinal ?? toPncpDate(fim)
+  const tamanhoPagina = Math.min(params.tamanhoPagina ?? 50, 50)
+  const maxPaginas = params.maxPaginasPorModalidade ?? 5
+
+  const todas: PNCPContratacao[] = []
+  await Promise.all(
+    MODALIDADES_SAUDE.map(async (mod) => {
+      for (let pagina = 1; pagina <= maxPaginas; pagina++) {
+        try {
+          const sp = new URLSearchParams({
+            dataFinal,
+            codigoModalidadeContratacao: String(mod),
+            pagina: String(pagina),
+            tamanhoPagina: String(tamanhoPagina),
+          })
+          if (params.uf) sp.set('uf', params.uf)
+          const res = await fetch(`${PNCP_BASE}/contratacoes/proposta?${sp}`, {
+            headers: buildHeaders(),
+            next: { revalidate: 900 },
+            signal: AbortSignal.timeout(15_000),
+          })
+          if (!res.ok) break
+          const resp: PNCPContratacoesResponse = await res.json()
+          const dados = resp.data ?? []
+          todas.push(...dados.filter((c) => isSaudeRelated(c.objetoCompra ?? '')))
+          if (dados.length < tamanhoPagina || pagina >= (resp.totalPaginas ?? 1)) break
+        } catch { break }
+      }
+    })
+  )
+
+  const vistos = new Set<string>()
+  return todas.filter((c) => {
+    if (vistos.has(c.numeroControlePNCP)) return false
+    vistos.add(c.numeroControlePNCP)
+    return true
+  })
+}
+
 // PNCP exige datas no formato yyyyMMdd (sem hífens).
 function toYYYYMMDD(s: string): string {
   return s.replace(/-/g, '')
