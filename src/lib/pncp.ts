@@ -10,6 +10,7 @@
 
 import { PNCPContratacoesResponse, PNCPContratacao, Licitacao } from './types'
 import { withTimeout } from './http'
+import { isSaude } from './saude-filter'
 
 const PNCP_BASE = process.env.PNCP_BASE_URL ?? 'https://pncp.gov.br/api/consulta/v1'
 // Endpoint de detalhe (itens/resultado de uma compra) — base diferente da consulta.
@@ -17,21 +18,6 @@ const PNCP_API = process.env.PNCP_API_BASE ?? 'https://pncp.gov.br/api/pncp/v1'
 
 const MODALIDADES_SAUDE = [6, 8, 4, 9] // pregão eletr., dispensa, concorrência eletr., inexigibilidade
 
-// Palavras-chave calibradas pela amostra real do debug.
-// A amostra mostrou: rouparia hospitalar, cânula de traqueostomia, monitor fetal,
-// medicamentos, material de consumo hospitalar — todos capturados por estas chaves.
-const HEALTH_KEYWORDS = [
-  'saúde', 'saude', 'hospital', 'hospitalar', 'médic', 'medic',
-  'tomógrafo', 'tomografia', 'ressonância', 'ultrassom', 'ultrassonografia',
-  'raio-x', 'raio x', 'radiolog', 'mamógraf', 'mamografia', 'endoscóp',
-  'ventilador pulmonar', 'respirador', 'monitor', 'desfibrilador', 'oxímetro',
-  'eletrocardióg', 'bomba de infusão', 'cânula', 'traqueostomia', 'cateter',
-  'analisador', 'autoclave', 'cirúrg', 'cirurgia', 'enfermagem', 'enfermaria',
-  'uti', 'unidade de terapia', 'leito', 'laboratório clínico', 'laboratorial',
-  'hemodiálise', 'hemoterapia', 'oncolog', 'medicamento', 'fármaco', 'farmacêut',
-  'insumo', 'material médico', 'material hospitalar', 'rouparia hospitalar',
-  'ambulânc', 'clínic', 'frequência cardíaca', 'fetal', 'odontológ',
-]
 
 function buildHeaders() {
   return { Accept: 'application/json' }
@@ -129,9 +115,10 @@ export async function buscarComprasSaude(params: PNCPSearchParams = {}) {
   }
 }
 
+// Filtro de precisão compartilhado (exclui eventos/obras/combustível/limpeza/etc.
+// e exige termo específico de saúde). Mesma lógica do ETL.
 export function isSaudeRelated(texto: string): boolean {
-  const lower = texto.toLowerCase()
-  return HEALTH_KEYWORDS.some((kw) => lower.includes(kw))
+  return isSaude(texto)
 }
 
 // PNCP exige datas no formato yyyyMMdd (sem hífens).
