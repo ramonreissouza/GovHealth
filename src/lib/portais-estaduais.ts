@@ -308,7 +308,7 @@ export async function buscarLicitacoesEstado(
   let licitacoes: LicitacaoEstadual[] = []
 
   try {
-    const result = await buscarComprasSaude({ ...params, uf, tamanhoPagina: 100 })
+    const result = await buscarComprasSaude({ ...params, uf, tamanhoPagina: 50 })
     licitacoes = result.data
       .filter((c) => isSaudeRelated(c.objetoCompra))
       .map(pncpToEstadual)
@@ -392,7 +392,7 @@ export async function buscarResumoEstados(): Promise<ResumoEstados> {
   }
 
   try {
-    const result = await buscarComprasSaude({ tamanhoPagina: 100 })
+    const result = await buscarComprasSaude({ tamanhoPagina: 50 })
     const porUf: Partial<Record<UFEstadual, LicitacaoEstadual[]>> = {}
     for (const c of result.data) {
       const lic = pncpToEstadual(c)
