@@ -599,15 +599,24 @@ export default function EstadosPage() {
     setCarregandoReais(true)
     const fila = [...TODAS_UFS]
     const CONCORRENCIA = 2
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    // Busca a contagem real da UF. SÓ adota o valor quando vier com dados (total>0):
+    // se o PNCP falhar/rate-limitar na rajada, mantém a amostra (nunca zera).
+    async function fetchUF(uf: UFEstadual, tentativa = 0): Promise<void> {
+      try {
+        const r = await fetch(`/api/portais-estaduais?uf=${uf}`)
+        const d = await r.json()
+        const k = d?.kpis as KPIsEstado | undefined
+        if (!cancelled && k && k.total > 0) { setRealKpis((prev) => ({ ...prev, [uf]: k })); return }
+      } catch { /* cai no retry */ }
+      if (!cancelled && tentativa < 2) { await sleep(2000 * (tentativa + 1)); return fetchUF(uf, tentativa + 1) }
+    }
     async function worker() {
       while (!cancelled) {
         const uf = fila.shift()
         if (!uf) break
-        try {
-          const r = await fetch(`/api/portais-estaduais?uf=${uf}`)
-          const d = await r.json()
-          if (!cancelled && d?.kpis) setRealKpis((prev) => ({ ...prev, [uf]: d.kpis as KPIsEstado }))
-        } catch { /* mantém a amostra para essa UF */ }
+        await fetchUF(uf)
+        await sleep(400) // respiro entre UFs para não disparar o rate-limit do PNCP
       }
     }
     Promise.all(Array.from({ length: CONCORRENCIA }, worker)).finally(() => { if (!cancelled) setCarregandoReais(false) })
