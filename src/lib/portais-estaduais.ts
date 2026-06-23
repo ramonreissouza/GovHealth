@@ -12,6 +12,7 @@
 
 import {
   buscarComprasSaude,
+  buscarLicitacoesAbertas,
   normalizarLicitacao,
   isSaudeRelated,
   type PNCPSearchParams,
@@ -308,9 +309,15 @@ export async function buscarLicitacoesEstado(
   let licitacoes: LicitacaoEstadual[] = []
 
   try {
-    const result = await buscarComprasSaude({ ...params, uf, tamanhoPagina: 50 })
-    licitacoes = result.data
-      .filter((c) => isSaudeRelated(c.objetoCompra))
+    // Recentes publicadas (sobretudo encerradas) + ABERTAS (recebendo proposta).
+    const [recentes, abertas] = await Promise.all([
+      buscarComprasSaude({ ...params, uf, tamanhoPagina: 50 }),
+      buscarLicitacoesAbertas({ uf, tamanhoPagina: 50 }),
+    ])
+    const brutas = [...abertas, ...recentes.data] // ambos já filtrados por saúde
+    const vistos = new Set<string>()
+    licitacoes = brutas
+      .filter((c) => { if (vistos.has(c.numeroControlePNCP)) return false; vistos.add(c.numeroControlePNCP); return true })
       .map(pncpToEstadual)
     pncpOk = true
   } catch { /* silent */ }
