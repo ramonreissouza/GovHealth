@@ -3,8 +3,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
 
 export const runtime = 'nodejs'
+
+const CAT_SQL = categoriaCaseSql('r.nome_catmat')
 
 interface VencedorRow {
   proponente: string | null
@@ -12,10 +15,17 @@ interface VencedorRow {
   vencedor: string | null
   codigo_catmat: string | null
   nome_catmat: string | null
+  categoria: string | null
   qtd: number | null
   valor: number | null
   uf: string | null
   ano: number | null
+}
+
+interface CatCountRow {
+  categoria: string
+  n: number
+  valor: number
 }
 
 interface KpiRow {
@@ -31,18 +41,36 @@ export async function GET(req: NextRequest) {
   const empresa = searchParams.get('empresa')?.trim() || undefined
   const dataIni = searchParams.get('dataIni') || undefined                     // YYYY-MM-DD
   const dataFim = searchParams.get('dataFim') || undefined
+  const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
+  const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
   const limit = Math.min(Number(searchParams.get('limit') ?? 500), 2000)
 
-  // WHERE dinâmico compartilhado entre KPIs e listagem
-  const where: string[] = ['r.valor_total_homologado IS NOT NULL']
-  const params: unknown[] = []
-  if (uf) { params.push(uf.split(',')); where.push(`r.uf = ANY($${params.length})`) }
-  if (empresa) { params.push(`%${empresa}%`); where.push(`r.nome_fornecedor ILIKE $${params.length}`) }
-  if (dataIni) { params.push(dataIni); where.push(`r.data_resultado >= $${params.length}`) }
-  if (dataFim) { params.push(dataFim); where.push(`r.data_resultado <= $${params.length}`) }
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  // WHERE base (UF/empresa/datas) — usado nas contagens por categoria.
+  const whereBase: string[] = ['r.valor_total_homologado IS NOT NULL']
+  const baseParams: unknown[] = []
+  if (uf) { baseParams.push(uf.split(',')); whereBase.push(`r.uf = ANY($${baseParams.length})`) }
+  if (empresa) { baseParams.push(`%${empresa}%`); whereBase.push(`r.nome_fornecedor ILIKE $${baseParams.length}`) }
+  if (dataIni) { baseParams.push(dataIni); whereBase.push(`r.data_resultado >= $${baseParams.length}`) }
+  if (dataFim) { baseParams.push(dataFim); whereBase.push(`r.data_resultado <= $${baseParams.length}`) }
+  const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
+
+  // WHERE com o filtro de categoria aplicado (KPIs + listagem).
+  const where = [...whereBase]
+  const params = [...baseParams]
+  if (categoria) { params.push(categoria); where.push(`(${CAT_SQL}) = $${params.length}`) }
+  const whereSql = `WHERE ${where.join(' AND ')}`
 
   try {
+    // Contagem por categoria (respeita UF/empresa/datas, ignora o filtro de categoria).
+    const catCounts = await query<CatCountRow>(
+      `SELECT (${CAT_SQL}) AS categoria, COUNT(*)::int AS n,
+              COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor
+       FROM resultados r
+       ${whereBaseSql}
+       GROUP BY 1`,
+      baseParams,
+    )
+
     const [kpi] = await query<KpiRow>(
       `SELECT
          COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor_total,
@@ -62,6 +90,7 @@ export async function GET(req: NextRequest) {
          r.nome_fornecedor           AS vencedor,
          r.codigo_catmat,
          r.nome_catmat,
+         (${CAT_SQL})                AS categoria,
          r.quantidade_homologada::float8 AS qtd,
          r.valor_total_homologado::float8 AS valor,
          r.uf,
@@ -86,6 +115,7 @@ export async function GET(req: NextRequest) {
         consumidores: Number(kpi?.consumidores ?? 0),
       },
       vencedores,
+      categorias: catCounts,
       total: vencedores.length,
       atualizadoEm: new Date().toISOString(),
     })
