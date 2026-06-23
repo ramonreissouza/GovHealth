@@ -1,7 +1,7 @@
 'use client'
 // src/app/estados/page.tsx — Portais Estaduais (SP, RJ, MG, BA)
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -578,14 +578,10 @@ export default function EstadosPage() {
   const [resumoLoading, setResumoLoading] = useState(true)
   const [selectedUF, setSelectedUF]   = useState<UFEstadual | null>(null)
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>('todas')
-
-  const metricaUF = useCallback((uf: UFEstadual) => {
-    const k = resumo?.estados[uf]?.kpis
-    if (!k) return 0
-    if (statusFiltro === 'abertas') return k.abertas
-    if (statusFiltro === 'fechadas') return Math.max(k.total - k.abertas, 0)
-    return k.total
-  }, [resumo, statusFiltro])
+  // Contagens REAIS por UF (busca profunda ao vivo, igual ao detalhe) — preenchidas
+  // progressivamente sobre a amostra nacional inicial.
+  const [realKpis, setRealKpis] = useState<Partial<Record<UFEstadual, KPIsEstado>>>({})
+  const [carregandoReais, setCarregandoReais] = useState(false)
 
   useEffect(() => {
     fetch('/api/portais-estaduais?all=1')
@@ -595,12 +591,54 @@ export default function EstadosPage() {
       .finally(() => setResumoLoading(false))
   }, [])
 
-  const totalLicitacoes = resumo
-    ? UFS.reduce((s, uf) => s + (resumo.estados[uf]?.kpis.total ?? 0), 0)
+  // Progressivo: após a amostra, busca o número real de cada UF (cacheado no
+  // servidor), com concorrência limitada (2) para não estourar o rate-limit do PNCP.
+  useEffect(() => {
+    if (!resumo) return
+    let cancelled = false
+    setCarregandoReais(true)
+    const fila = [...TODAS_UFS]
+    const CONCORRENCIA = 2
+    async function worker() {
+      while (!cancelled) {
+        const uf = fila.shift()
+        if (!uf) break
+        try {
+          const r = await fetch(`/api/portais-estaduais?uf=${uf}`)
+          const d = await r.json()
+          if (!cancelled && d?.kpis) setRealKpis((prev) => ({ ...prev, [uf]: d.kpis as KPIsEstado }))
+        } catch { /* mantém a amostra para essa UF */ }
+      }
+    }
+    Promise.all(Array.from({ length: CONCORRENCIA }, worker)).finally(() => { if (!cancelled) setCarregandoReais(false) })
+    return () => { cancelled = true }
+  }, [resumo])
+
+  // Resumo efetivo: usa a contagem real da UF quando já chegou; senão, a amostra.
+  const resumoEfetivo = useMemo<ResumoPayload | null>(() => {
+    if (!resumo) return null
+    const estados = { ...resumo.estados }
+    for (const uf of TODAS_UFS) {
+      const real = realKpis[uf]
+      if (real) estados[uf] = { kpis: real, fontesAtivas: resumo.estados[uf]?.fontesAtivas ?? { pncp: true, portalProprio: false } }
+    }
+    return { ...resumo, estados }
+  }, [resumo, realKpis])
+
+  const metricaUF = useCallback((uf: UFEstadual) => {
+    const k = resumoEfetivo?.estados[uf]?.kpis
+    if (!k) return 0
+    if (statusFiltro === 'abertas') return k.abertas
+    if (statusFiltro === 'fechadas') return Math.max(k.total - k.abertas, 0)
+    return k.total
+  }, [resumoEfetivo, statusFiltro])
+
+  const totalLicitacoes = resumoEfetivo
+    ? UFS.reduce((s, uf) => s + (resumoEfetivo.estados[uf]?.kpis.total ?? 0), 0)
     : 0
 
-  const totalValor = resumo
-    ? UFS.reduce((s, uf) => s + (resumo.estados[uf]?.kpis.valorTotal ?? 0), 0)
+  const totalValor = resumoEfetivo
+    ? UFS.reduce((s, uf) => s + (resumoEfetivo.estados[uf]?.kpis.valorTotal ?? 0), 0)
     : 0
 
   return (
@@ -612,7 +650,7 @@ export default function EstadosPage() {
           subtitle={
             resumoLoading
               ? 'Carregando…'
-              : `${totalLicitacoes} licitações · ${formatBRL(totalValor)} · 27 UFs (via PNCP)`
+              : `${totalLicitacoes} licitações · ${formatBRL(totalValor)} · 27 UFs (via PNCP)${carregandoReais ? ' · atualizando contagens reais…' : ''}`
           }
         />
 
@@ -632,11 +670,11 @@ export default function EstadosPage() {
               <div className="max-w-xs">
                 <EstadoCard
                   uf={selectedUF}
-                  kpis={resumo?.estados[selectedUF]?.kpis ?? {
+                  kpis={resumoEfetivo?.estados[selectedUF]?.kpis ?? {
                     total: 0, abertas: 0, valorTotal: 0, ticketMedio: 0,
                     entidadesEstaduais: 0, porCategoria: {}, topProponentes: [],
                   }}
-                  fontesAtivas={resumo?.estados[selectedUF]?.fontesAtivas ?? { pncp: false, portalProprio: false }}
+                  fontesAtivas={resumoEfetivo?.estados[selectedUF]?.fontesAtivas ?? { pncp: false, portalProprio: false }}
                   selected
                   loading={resumoLoading}
                   statusFiltro={statusFiltro}
@@ -661,11 +699,11 @@ export default function EstadosPage() {
                   <EstadoCard
                     key={uf}
                     uf={uf}
-                    kpis={resumo?.estados[uf]?.kpis ?? {
+                    kpis={resumoEfetivo?.estados[uf]?.kpis ?? {
                       total: 0, abertas: 0, valorTotal: 0, ticketMedio: 0,
                       entidadesEstaduais: 0, porCategoria: {}, topProponentes: [],
                     }}
-                    fontesAtivas={resumo?.estados[uf]?.fontesAtivas ?? { pncp: false, portalProprio: false }}
+                    fontesAtivas={resumoEfetivo?.estados[uf]?.fontesAtivas ?? { pncp: false, portalProprio: false }}
                     selected={false}
                     loading={resumoLoading}
                     statusFiltro={statusFiltro}
@@ -675,7 +713,7 @@ export default function EstadosPage() {
               </div>
 
               {/* ── Comparação ────────────────────────────────────────────── */}
-              {!resumoLoading && <TabelaComparacao resumo={resumo} statusFiltro={statusFiltro} />}
+              {!resumoLoading && <TabelaComparacao resumo={resumoEfetivo} statusFiltro={statusFiltro} />}
             </>
           )}
         </main>
