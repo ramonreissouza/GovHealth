@@ -33,6 +33,32 @@ function formatDate(s: string) {
   catch { return s }
 }
 
+// Status de uma licitação (mesma lógica dos KPIs): aberta se ainda dentro do prazo
+// de encerramento, ou — sem data — se a situação indicar processo em andamento.
+function isAbertaLic(l: LicitacaoEstadual): boolean {
+  if (l.dataEncerramento) return new Date(l.dataEncerramento) > new Date()
+  const s = (l.situacao ?? '').toLowerCase()
+  return s.includes('aberto') || s.includes('publicad') || s.includes('divulgad') || s.includes('recebendo')
+}
+
+type StatusFiltro = 'todas' | 'abertas' | 'fechadas'
+
+// Toggle reutilizável Todas / Abertas / Fechadas.
+function StatusFilter({ value, onChange }: { value: StatusFiltro; onChange: (v: StatusFiltro) => void }) {
+  const opts: [StatusFiltro, string][] = [['todas', 'Todas'], ['abertas', 'Abertas'], ['fechadas', 'Fechadas']]
+  return (
+    <div className="flex gap-1 items-center">
+      {opts.map(([k, label]) => (
+        <button key={k} onClick={() => onChange(k)}
+          className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+            value === k ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 const STATE_ACCENT: Partial<Record<UFEstadual, string>> = {
   SP: 'text-brand-blue',
   MG: 'text-brand-purple',
@@ -59,6 +85,7 @@ function EstadoCard({
   fontesAtivas,
   selected,
   loading,
+  statusFiltro = 'todas',
   onClick,
 }: {
   uf: UFEstadual
@@ -66,10 +93,16 @@ function EstadoCard({
   fontesAtivas: { pncp: boolean; portalProprio: boolean }
   selected: boolean
   loading: boolean
+  statusFiltro?: StatusFiltro
   onClick: () => void
 }) {
   const portal = PORTAIS_CONFIG[uf]
   const color  = accent(uf)
+  const fechadas = Math.max(kpis.total - kpis.abertas, 0)
+  const primaria =
+    statusFiltro === 'abertas' ? { label: 'Em aberto', value: kpis.abertas }
+    : statusFiltro === 'fechadas' ? { label: 'Encerradas', value: fechadas }
+    : { label: 'Licitações', value: kpis.total }
 
   return (
     <button
@@ -112,19 +145,22 @@ function EstadoCard({
       ) : (
         <div className="space-y-1.5">
           <div className="flex justify-between">
-            <span className="text-[10px] text-faint">Licitações</span>
-            <span className="text-[13px] font-mono-custom font-bold text-strong">{kpis.total}</span>
+            <span className="text-[10px] text-faint">{primaria.label}</span>
+            <span className={clsx('text-[13px] font-mono-custom font-bold',
+              statusFiltro === 'abertas' ? 'text-emerald-400' : 'text-strong')}>{primaria.value}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-[10px] text-faint">Valor total</span>
             <span className="text-[12px] font-mono-custom text-accent">{formatBRL(kpis.valorTotal)}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-[10px] text-faint">Em aberto</span>
-            <span className={clsx('text-[11px] font-mono-custom', kpis.abertas > 0 ? 'text-emerald-400' : 'text-faint')}>
-              {kpis.abertas}
-            </span>
-          </div>
+          {statusFiltro === 'todas' && (
+            <div className="flex justify-between">
+              <span className="text-[10px] text-faint">Em aberto</span>
+              <span className={clsx('text-[11px] font-mono-custom', kpis.abertas > 0 ? 'text-emerald-400' : 'text-faint')}>
+                {kpis.abertas}
+              </span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-[10px] text-faint">Entidades estaduais</span>
             <span className="text-[11px] font-mono-custom text-brand-blue">{kpis.entidadesEstaduais}</span>
@@ -142,7 +178,7 @@ function EstadoCard({
 
 // ── Detalhe do estado ─────────────────────────────────────────────────────────
 
-function EstadoDetalhe({ uf }: { uf: UFEstadual }) {
+function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; statusFiltro: StatusFiltro; onStatusChange: (v: StatusFiltro) => void }) {
   const [resultado, setResultado]   = useState<ResultadoEstado | null>(null)
   const [loading, setLoading]       = useState(true)
   const [query, setQuery]           = useState('')
@@ -167,12 +203,17 @@ function EstadoDetalhe({ uf }: { uf: UFEstadual }) {
   const entidades = ENTIDADES_SAUDE[uf] ?? []
 
   const licitacoes: LicitacaoEstadual[] = resultado?.licitacoes ?? []
-  const filtered = licitacoes.filter((l) =>
-    !query ||
-    l.proponente.toLowerCase().includes(query.toLowerCase()) ||
-    l.descricao.toLowerCase().includes(query.toLowerCase()) ||
-    l.municipio.toLowerCase().includes(query.toLowerCase())
-  )
+  const filtered = licitacoes.filter((l) => {
+    if (statusFiltro === 'abertas' && !isAbertaLic(l)) return false
+    if (statusFiltro === 'fechadas' && isAbertaLic(l)) return false
+    return (
+      !query ||
+      l.proponente.toLowerCase().includes(query.toLowerCase()) ||
+      l.descricao.toLowerCase().includes(query.toLowerCase()) ||
+      l.municipio.toLowerCase().includes(query.toLowerCase())
+    )
+  })
+  const nAbertas = licitacoes.filter(isAbertaLic).length
 
   return (
     <div className="space-y-4">
@@ -269,7 +310,10 @@ function EstadoDetalhe({ uf }: { uf: UFEstadual }) {
             placeholder="Buscar por proponente, item, município…"
             className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none"
           />
-          <span className="text-[10px] font-mono-custom text-faint">{filtered.length} resultados</span>
+          <StatusFilter value={statusFiltro} onChange={onStatusChange} />
+          <span className="text-[10px] font-mono-custom text-faint whitespace-nowrap">
+            {filtered.length} de {licitacoes.length} · {nAbertas} abertas
+          </span>
           <a
             href={portal.urlConsulta}
             target="_blank"
@@ -452,12 +496,15 @@ function EstadoDetalhe({ uf }: { uf: UFEstadual }) {
 
 // ── Comparação entre estados ──────────────────────────────────────────────────
 
-function TabelaComparacao({ resumo }: { resumo: ResumoPayload | null }) {
+function TabelaComparacao({ resumo, statusFiltro }: { resumo: ResumoPayload | null; statusFiltro: StatusFiltro }) {
   if (!resumo) return null
-  // Ordena por volume de licitações (mais ativos primeiro)
-  const ufs: UFEstadual[] = [...TODAS_UFS].sort(
-    (a, b) => (resumo.estados[b]?.kpis.total ?? 0) - (resumo.estados[a]?.kpis.total ?? 0)
-  )
+  const fechadasDe = (uf: UFEstadual) => Math.max((resumo.estados[uf]?.kpis.total ?? 0) - (resumo.estados[uf]?.kpis.abertas ?? 0), 0)
+  const metrica = (uf: UFEstadual) =>
+    statusFiltro === 'abertas' ? (resumo.estados[uf]?.kpis.abertas ?? 0)
+    : statusFiltro === 'fechadas' ? fechadasDe(uf)
+    : (resumo.estados[uf]?.kpis.total ?? 0)
+  // Ordena pelo métrica do filtro (mais ativos primeiro)
+  const ufs: UFEstadual[] = [...TODAS_UFS].sort((a, b) => metrica(b) - metrica(a))
 
   return (
     <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
@@ -470,6 +517,7 @@ function TabelaComparacao({ resumo }: { resumo: ResumoPayload | null }) {
             <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2">Estado</th>
             <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2">Licitações</th>
             <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2">Em aberto</th>
+            <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2">Encerradas</th>
             <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2">Valor total</th>
             <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2">Ticket médio</th>
             <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2">PNCP</th>
@@ -495,6 +543,7 @@ function TabelaComparacao({ resumo }: { resumo: ResumoPayload | null }) {
                 </td>
                 <td className="px-3 py-2.5 text-right font-mono-custom text-[13px] text-strong">{d.kpis.total}</td>
                 <td className="px-3 py-2.5 text-right font-mono-custom text-[12px] text-emerald-400">{d.kpis.abertas}</td>
+                <td className="px-3 py-2.5 text-right font-mono-custom text-[12px] text-muted">{fechadasDe(uf)}</td>
                 <td className="px-4 py-2.5 text-right font-mono-custom text-[13px] text-accent font-bold">{formatBRL(d.kpis.valorTotal)}</td>
                 <td className="px-3 py-2.5 text-right font-mono-custom text-[11px] text-muted">{formatBRL(d.kpis.ticketMedio)}</td>
                 <td className="px-3 py-2.5 text-center">
@@ -528,6 +577,15 @@ export default function EstadosPage() {
   const [resumo, setResumo]           = useState<ResumoPayload | null>(null)
   const [resumoLoading, setResumoLoading] = useState(true)
   const [selectedUF, setSelectedUF]   = useState<UFEstadual | null>(null)
+  const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>('todas')
+
+  const metricaUF = useCallback((uf: UFEstadual) => {
+    const k = resumo?.estados[uf]?.kpis
+    if (!k) return 0
+    if (statusFiltro === 'abertas') return k.abertas
+    if (statusFiltro === 'fechadas') return Math.max(k.total - k.abertas, 0)
+    return k.total
+  }, [resumo, statusFiltro])
 
   useEffect(() => {
     fetch('/api/portais-estaduais?all=1')
@@ -581,18 +639,25 @@ export default function EstadosPage() {
                   fontesAtivas={resumo?.estados[selectedUF]?.fontesAtivas ?? { pncp: false, portalProprio: false }}
                   selected
                   loading={resumoLoading}
+                  statusFiltro={statusFiltro}
                   onClick={() => setSelectedUF(null)}
                 />
               </div>
 
               {/* Tabela de licitações do estado (sobe para o topo) */}
-              <EstadoDetalhe uf={selectedUF} />
+              <EstadoDetalhe uf={selectedUF} statusFiltro={statusFiltro} onStatusChange={setStatusFiltro} />
             </>
           ) : (
             <>
-              {/* ── Cards de estado (ordenados por volume) ──────────────────── */}
+              {/* ── Filtro de status ────────────────────────────────────────── */}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Filtrar por status</span>
+                <StatusFilter value={statusFiltro} onChange={setStatusFiltro} />
+              </div>
+
+              {/* ── Cards de estado (ordenados pela métrica do filtro) ──────── */}
               <div className="grid grid-cols-4 gap-3">
-                {[...UFS].sort((a, b) => (resumo?.estados[b]?.kpis.total ?? 0) - (resumo?.estados[a]?.kpis.total ?? 0)).map((uf) => (
+                {[...UFS].sort((a, b) => metricaUF(b) - metricaUF(a)).map((uf) => (
                   <EstadoCard
                     key={uf}
                     uf={uf}
@@ -603,13 +668,14 @@ export default function EstadosPage() {
                     fontesAtivas={resumo?.estados[uf]?.fontesAtivas ?? { pncp: false, portalProprio: false }}
                     selected={false}
                     loading={resumoLoading}
+                    statusFiltro={statusFiltro}
                     onClick={() => setSelectedUF(uf)}
                   />
                 ))}
               </div>
 
               {/* ── Comparação ────────────────────────────────────────────── */}
-              {!resumoLoading && <TabelaComparacao resumo={resumo} />}
+              {!resumoLoading && <TabelaComparacao resumo={resumo} statusFiltro={statusFiltro} />}
             </>
           )}
         </main>
