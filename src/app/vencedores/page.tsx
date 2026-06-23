@@ -8,8 +8,21 @@ import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import { Search, Trophy, Database } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
+import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
+
+// cores dos badges por categoria
+const CAT_COR: Record<string, string> = {
+  equip_medico: 'bg-blue-500/15 text-blue-400',
+  medicamento: 'bg-emerald-500/15 text-emerald-400',
+  opme: 'bg-purple-500/15 text-purple-400',
+  odontologico: 'bg-teal-500/15 text-teal-400',
+  servico_saude: 'bg-amber-500/15 text-amber-400',
+  acessorio: 'bg-cyan-500/15 text-cyan-400',
+  laboratorio: 'bg-pink-500/15 text-pink-400',
+  outros: 'bg-faint/10 text-faint',
+}
 
 interface Vencedor {
   proponente: string | null
@@ -17,6 +30,7 @@ interface Vencedor {
   vencedor: string | null
   codigo_catmat: string | null
   nome_catmat: string | null
+  categoria: string | null
   qtd: number | null
   valor: number | null
   uf: string | null
@@ -25,6 +39,7 @@ interface Vencedor {
 interface ApiResponse {
   kpis: { valorTotal: number; ticketMedio: number; itensUnicos: number; convenios: number; consumidores: number }
   vencedores: Vencedor[]
+  categorias?: { categoria: string; n: number; valor: number }[]
   total: number
   error?: string
   instrucoes?: string
@@ -38,6 +53,7 @@ export default function VencedoresPage() {
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
   const [empresa, setEmpresa] = useState('')
   const [empresaQuery, setEmpresaQuery] = useState('')
+  const [catAtiva, setCatAtiva] = useState<string | null>(null)
 
   // debounce do campo empresa
   useEffect(() => { const t = setTimeout(() => setEmpresaQuery(empresa), 400); return () => clearTimeout(t) }, [empresa])
@@ -48,18 +64,20 @@ export default function VencedoresPage() {
       const params = new URLSearchParams({ limit: '500' })
       if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
       if (empresaQuery) params.set('empresa', empresaQuery)
+      if (catAtiva) params.set('categoria', catAtiva)
       const res = await fetch(`/api/resultados/vencedores?${params}`)
       const json: ApiResponse = await res.json()
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
       else setData(json)
     } catch (e) { setErro({ msg: String(e) }); setData(null) }
     finally { setLoading(false) }
-  }, [ufsAtivos, empresaQuery])
+  }, [ufsAtivos, empresaQuery, catAtiva])
 
   useEffect(() => { load() }, [load])
 
   const kpis = data?.kpis
   const vencedores = data?.vencedores ?? []
+  const catMap = new Map((data?.categorias ?? []).map((c) => [c.categoria, c.n]))
 
   const KPI_CARDS = [
     { label: 'Valor total homologado', value: kpis ? formatBRL(kpis.valorTotal) : '—' },
@@ -104,6 +122,28 @@ export default function VencedoresPage() {
                   {uf}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Filtros de categoria de mercado */}
+          <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
+            <div className="flex gap-1 flex-wrap items-center">
+              <button onClick={() => setCatAtiva(null)}
+                className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                  catAtiva === null ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                Todas categorias
+              </button>
+              {CATEGORIAS.map(({ key, label }) => {
+                const n = catMap.get(key)
+                return (
+                  <button key={key} onClick={() => setCatAtiva((p) => (p === key ? null : key))}
+                    className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all flex items-center gap-1',
+                      catAtiva === key ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                    {label}
+                    {n != null && <span className={clsx('text-[9px]', catAtiva === key ? 'text-black/60' : 'text-faint')}>{n}</span>}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
@@ -152,8 +192,15 @@ export default function VencedoresPage() {
                           {v.vencedor ?? '—'}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-[11px] text-muted max-w-[200px] truncate">
-                        {v.codigo_catmat ? <span className="font-mono-custom text-faint">{v.codigo_catmat} · </span> : null}{v.nome_catmat ?? '—'}
+                      <td className="px-4 py-2.5 max-w-[260px]">
+                        {v.categoria && (
+                          <span className={clsx('inline-block text-[8px] font-mono-custom uppercase tracking-wide px-1.5 py-0.5 rounded mb-0.5', CAT_COR[v.categoria] ?? CAT_COR.outros)}>
+                            {CATEGORIA_LABEL[v.categoria] ?? v.categoria}
+                          </span>
+                        )}
+                        <div className="text-[11px] text-muted truncate" title={v.nome_catmat ?? undefined}>
+                          {v.codigo_catmat ? <span className="font-mono-custom text-faint">{v.codigo_catmat} · </span> : null}{v.nome_catmat ?? '—'}
+                        </div>
                       </td>
                       <td className="px-2 py-2.5 text-center text-[11px] font-mono-custom text-faint">{v.uf ?? '—'}</td>
                       <td className="px-3 py-2.5 text-right text-[11px] font-mono-custom text-muted">{v.qtd ?? '—'}</td>
