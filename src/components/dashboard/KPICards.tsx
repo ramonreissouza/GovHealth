@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { clsx } from 'clsx'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
+import { publishDataStatus } from '@/lib/data-status'
 
 interface KPIs {
   oportunidadesQuentes: number
@@ -60,6 +61,7 @@ export default function KPICards() {
     fetch('/api/opportunities?limit=200&minScore=0')
       .then((r) => r.json())
       .then((data) => {
+        publishDataStatus(data)
         const opps = data.oportunidades ?? []
         setKpis({
           oportunidadesQuentes: opps.filter((o: any) => o.score >= 75).length,

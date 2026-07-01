@@ -9,6 +9,7 @@ import { clsx } from 'clsx'
 import { Trophy, Building2, Database, Filter } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { formatBRL } from '@/lib/format'
+import { CATEGORIAS } from '@/lib/categoria-mercado'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -17,12 +18,15 @@ const CORES = ['#00ff9d','#60a5fa','#f59e0b','#f87171','#c084fc','#4ade80','#22d
 interface Top3 { vencedor: string | null; valor: number; item: string | null }
 interface ItemDist { item: string; valor: number; qtd: number; pct: number }
 interface Entidade { entidade: string | null; valor: number; convenios: number }
+interface CatCount { categoria: string; n: number; valor: number }
 interface ApiResponse {
   uf: string | null
+  categoria: string | null
   top3: Top3[]
   distribuicaoItens: ItemDist[]
   entidades: Entidade[]
   ufsComDados: string[]
+  categorias?: CatCount[]
   valorTotal: number
   error?: string
   instrucoes?: string
@@ -36,6 +40,7 @@ export default function ConcorrentesEstadoPage() {
   const [uf, setUf] = useState<string>('CE')
   const [ano, setAno] = useState('todos')
   const [itemFiltro, setItemFiltro] = useState<string | null>(null)
+  const [catAtiva, setCatAtiva] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setErro(null)
@@ -43,13 +48,14 @@ export default function ConcorrentesEstadoPage() {
       const params = new URLSearchParams({ uf })
       if (ano !== 'todos') params.set('ano', ano)
       if (itemFiltro) params.set('item', itemFiltro)
+      if (catAtiva) params.set('categoria', catAtiva)
       const res = await fetch(`/api/resultados/concorrentes-estado?${params}`)
       const json: ApiResponse = await res.json()
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
       else setData(json)
     } catch (e) { setErro({ msg: String(e) }); setData(null) }
     finally { setLoading(false) }
-  }, [uf, ano, itemFiltro])
+  }, [uf, ano, itemFiltro, catAtiva])
 
   useEffect(() => { load() }, [load])
 
@@ -57,6 +63,7 @@ export default function ConcorrentesEstadoPage() {
   const dist = data?.distribuicaoItens ?? []
   const top3 = data?.top3 ?? []
   const entidades = data?.entidades ?? []
+  const catMap = new Map((data?.categorias ?? []).map((c) => [c.categoria, c.n]))
 
   const donutData = useMemo(() => dist.map((d, i) => ({ name: d.item, value: d.valor, pct: d.pct, fill: CORES[i % CORES.length] })), [dist])
 
@@ -80,6 +87,29 @@ export default function ConcorrentesEstadoPage() {
                       uf === u ? 'bg-accent text-black font-bold'
                         : temDados ? 'text-strong hover:bg-bg3 ring-1 ring-accent/30' : 'text-faint/50 hover:text-muted')}>
                     {u}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Categoria de mercado */}
+          <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
+            <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Categoria</div>
+            <div className="flex gap-1 flex-wrap items-center">
+              <button onClick={() => { setCatAtiva(null); setItemFiltro(null) }}
+                className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                  catAtiva === null ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                Todas
+              </button>
+              {CATEGORIAS.map(({ key, label }) => {
+                const n = catMap.get(key)
+                return (
+                  <button key={key} onClick={() => { setCatAtiva((p) => (p === key ? null : key)); setItemFiltro(null) }}
+                    className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all flex items-center gap-1',
+                      catAtiva === key ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                    {label}
+                    {n != null && <span className={clsx('text-[9px]', catAtiva === key ? 'text-black/60' : 'text-faint')}>{n}</span>}
                   </button>
                 )
               })}

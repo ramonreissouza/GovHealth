@@ -6,8 +6,8 @@ import React, { useState, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Search, Trophy, Database } from 'lucide-react'
-import { formatBRL } from '@/lib/format'
+import { Search, Trophy, Database, ChevronRight, ExternalLink, Building2, Users, ListTree } from 'lucide-react'
+import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
@@ -27,6 +27,7 @@ const CAT_COR: Record<string, string> = {
 interface Vencedor {
   proponente: string | null
   convenio: string
+  numero_item: number | null
   vencedor: string | null
   codigo_catmat: string | null
   nome_catmat: string | null
@@ -54,6 +55,7 @@ export default function VencedoresPage() {
   const [empresa, setEmpresa] = useState('')
   const [empresaQuery, setEmpresaQuery] = useState('')
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
+  const [expandida, setExpandida] = useState<string | null>(null) // linha aberta (chave única)
 
   // debounce do campo empresa
   useEffect(() => { const t = setTimeout(() => setEmpresaQuery(empresa), 400); return () => clearTimeout(t) }, [empresa])
@@ -182,36 +184,240 @@ export default function VencedoresPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {vencedores.map((v, i) => (
-                    <tr key={`${v.convenio}-${i}`} className="border-b border-subtle last:border-0 hover:bg-bg3 transition-colors">
-                      <td className="px-4 py-2.5 text-[11px] text-strong max-w-[200px] truncate">{v.proponente ?? '—'}</td>
-                      <td className="px-3 py-2.5 text-[10px] font-mono-custom text-faint max-w-[140px] truncate">{v.convenio}</td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-1.5 text-[12px] text-strong max-w-[200px] truncate">
-                          <Trophy size={11} className="text-amber flex-shrink-0" />
-                          {v.vencedor ?? '—'}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 max-w-[260px]">
-                        {v.categoria && (
-                          <span className={clsx('inline-block text-[8px] font-mono-custom uppercase tracking-wide px-1.5 py-0.5 rounded mb-0.5', CAT_COR[v.categoria] ?? CAT_COR.outros)}>
-                            {CATEGORIA_LABEL[v.categoria] ?? v.categoria}
-                          </span>
+                  {vencedores.map((v, i) => {
+                    const chave = `${v.convenio}::${v.numero_item ?? '-'}::${i}`
+                    const aberta = expandida === chave
+                    return (
+                      <React.Fragment key={chave}>
+                        <tr
+                          onClick={() => setExpandida(aberta ? null : chave)}
+                          className={clsx('border-b border-subtle last:border-0 cursor-pointer transition-colors',
+                            aberta ? 'bg-bg3' : 'hover:bg-bg3')}
+                        >
+                          <td className="px-4 py-2.5 text-[11px] text-strong max-w-[200px]">
+                            <div className="flex items-center gap-1.5">
+                              <ChevronRight size={12} className={clsx('text-faint flex-shrink-0 transition-transform', aberta && 'rotate-90')} />
+                              <span className="truncate">{v.proponente ?? '—'}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-[10px] font-mono-custom text-faint max-w-[140px] truncate">{v.convenio}</td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1.5 text-[12px] text-strong max-w-[200px] truncate">
+                              <Trophy size={11} className="text-amber flex-shrink-0" />
+                              {v.vencedor ?? '—'}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 max-w-[260px]">
+                            {v.categoria && (
+                              <span className={clsx('inline-block text-[8px] font-mono-custom uppercase tracking-wide px-1.5 py-0.5 rounded mb-0.5', CAT_COR[v.categoria] ?? CAT_COR.outros)}>
+                                {CATEGORIA_LABEL[v.categoria] ?? v.categoria}
+                              </span>
+                            )}
+                            <div className="text-[11px] text-muted truncate" title={v.nome_catmat ?? undefined}>
+                              {v.codigo_catmat ? <span className="font-mono-custom text-faint">{v.codigo_catmat} · </span> : null}{v.nome_catmat ?? '—'}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2.5 text-center text-[11px] font-mono-custom text-faint">{v.uf ?? '—'}</td>
+                          <td className="px-3 py-2.5 text-right text-[11px] font-mono-custom text-muted">{v.qtd ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-right text-[12px] font-mono-custom font-bold text-strong">{v.valor != null ? formatBRL(v.valor) : '—'}</td>
+                        </tr>
+                        {aberta && (
+                          <tr className="bg-bg/40">
+                            <td colSpan={7} className="px-4 py-4 border-b border-subtle">
+                              <DetalheResultado convenio={v.convenio} numeroItem={v.numero_item} vencedorAtual={v.vencedor} />
+                            </td>
+                          </tr>
                         )}
-                        <div className="text-[11px] text-muted truncate" title={v.nome_catmat ?? undefined}>
-                          {v.codigo_catmat ? <span className="font-mono-custom text-faint">{v.codigo_catmat} · </span> : null}{v.nome_catmat ?? '—'}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2.5 text-center text-[11px] font-mono-custom text-faint">{v.uf ?? '—'}</td>
-                      <td className="px-3 py-2.5 text-right text-[11px] font-mono-custom text-muted">{v.qtd ?? '—'}</td>
-                      <td className="px-4 py-2.5 text-right text-[12px] font-mono-custom font-bold text-strong">{v.valor != null ? formatBRL(v.valor) : '—'}</td>
-                    </tr>
-                  ))}
+                      </React.Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </main>
+      </div>
+    </div>
+  )
+}
+
+// ── Detalhe expandido de um resultado ────────────────────────────────────────
+interface Detalhe {
+  cabecalho: {
+    razao_social_orgao: string | null
+    cnpj_orgao: string | null
+    municipio: string | null
+    uf: string | null
+    modalidade_nome: string | null
+    objeto_compra: string | null
+    ano_compra: number | null
+    valor_total_estimado: number | null
+    data_publicacao: string | null
+    situacao_label: string | null
+    pncp_url: string | null
+  }
+  item: {
+    numero_item: number | null
+    descricao: string | null
+    codigo_catmat: string | null
+    quantidade: number | null
+    valor_unitario_estimado: number | null
+  } | null
+  concorrentes: {
+    ni_fornecedor: string | null
+    nome_fornecedor: string | null
+    porte_fornecedor: string | null
+    qtd: number | null
+    valor_unitario: number | null
+    valor: number | null
+    ordem: number | null
+  }[]
+  processoItens: {
+    numero_item: number | null
+    item: string | null
+    codigo_catmat: string | null
+    vencedor: string | null
+    valor: number | null
+  }[]
+  error?: string
+}
+
+function DetalheResultado({ convenio, numeroItem, vencedorAtual }: { convenio: string; numeroItem: number | null; vencedorAtual: string | null }) {
+  const [det, setDet] = useState<Detalhe | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [erro, setErro] = useState<string | null>(null)
+
+  useEffect(() => {
+    let vivo = true
+    setLoading(true); setErro(null)
+    const params = new URLSearchParams({ convenio })
+    if (numeroItem != null) params.set('item', String(numeroItem))
+    fetch(`/api/resultados/detalhe?${params}`)
+      .then(async (r) => {
+        const j: Detalhe = await r.json()
+        if (!vivo) return
+        if (!r.ok) setErro(j.error ?? 'Erro ao carregar detalhe')
+        else setDet(j)
+      })
+      .catch((e) => { if (vivo) setErro(String(e)) })
+      .finally(() => { if (vivo) setLoading(false) })
+    return () => { vivo = false }
+  }, [convenio, numeroItem])
+
+  if (loading) return <div className="text-[12px] text-faint py-2">Carregando detalhes do processo…</div>
+  if (erro) return <div className="text-[12px] text-amber py-2">{erro}</div>
+  if (!det) return null
+
+  const cab = det.cabecalho
+  const norm = (s: string | null) => (s ?? '').trim().toLowerCase()
+  const temMaisDeUm = det.concorrentes.length > 1
+
+  return (
+    <div className="grid grid-cols-3 gap-4">
+      {/* Convênio / processo */}
+      <div className="col-span-1 bg-bg2 border border-subtle2 rounded-lg p-3">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Building2 size={12} className="text-accent" />
+          <span className="text-[10px] font-mono-custom uppercase tracking-wider text-faint">Convênio / Processo</span>
+        </div>
+        <dl className="space-y-1.5 text-[11px]">
+          <div><dt className="text-faint">Órgão</dt><dd className="text-strong">{cab.razao_social_orgao ?? '—'}</dd></div>
+          <div className="flex gap-4">
+            <div><dt className="text-faint">CNPJ</dt><dd className="text-muted font-mono-custom">{cab.cnpj_orgao ?? '—'}</dd></div>
+            <div><dt className="text-faint">Local</dt><dd className="text-muted">{[cab.municipio, cab.uf].filter(Boolean).join(' / ') || '—'}</dd></div>
+          </div>
+          <div className="flex gap-4">
+            <div><dt className="text-faint">Modalidade</dt><dd className="text-muted">{cab.modalidade_nome ?? '—'}</dd></div>
+            <div><dt className="text-faint">Situação</dt><dd className="text-muted">{cab.situacao_label ?? '—'}</dd></div>
+          </div>
+          <div className="flex gap-4">
+            <div><dt className="text-faint">Publicação</dt><dd className="text-muted font-mono-custom">{formatDate(cab.data_publicacao)}</dd></div>
+            <div><dt className="text-faint">Valor estimado</dt><dd className="text-muted font-mono-custom">{formatBRL(cab.valor_total_estimado)}</dd></div>
+          </div>
+          {cab.objeto_compra && (
+            <div><dt className="text-faint">Objeto</dt><dd className="text-muted leading-snug">{cab.objeto_compra}</dd></div>
+          )}
+          <div className="font-mono-custom text-[10px] text-faint pt-1">Nº controle PNCP: {convenio}</div>
+        </dl>
+        {cab.pncp_url && (
+          <a href={cab.pncp_url} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 mt-2 text-[11px] text-accent hover:underline">
+            <ExternalLink size={11} /> Ver processo no PNCP
+          </a>
+        )}
+      </div>
+
+      {/* Concorrentes do item */}
+      <div className="col-span-1 bg-bg2 border border-subtle2 rounded-lg p-3">
+        <div className="flex items-center gap-1.5 mb-2">
+          <Users size={12} className="text-accent" />
+          <span className="text-[10px] font-mono-custom uppercase tracking-wider text-faint">
+            Concorrentes do item{det.item?.codigo_catmat ? ` (${det.item.codigo_catmat})` : ''}
+          </span>
+        </div>
+        {det.concorrentes.length === 0 ? (
+          <div className="text-[11px] text-faint">Nenhum fornecedor registrado para este item.</div>
+        ) : (
+          <>
+            <div className="space-y-1">
+              {det.concorrentes.map((f, idx) => {
+                const venceu = norm(f.nome_fornecedor) === norm(vencedorAtual) || (idx === 0 && !vencedorAtual)
+                return (
+                  <div key={`${f.ni_fornecedor}-${idx}`}
+                    className={clsx('flex items-center justify-between gap-2 rounded px-2 py-1',
+                      venceu ? 'bg-amber/10' : 'bg-bg3/40')}>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {venceu
+                        ? <Trophy size={10} className="text-amber flex-shrink-0" />
+                        : <span className="text-[9px] font-mono-custom text-faint w-2.5 text-center flex-shrink-0">{f.ordem ?? idx + 1}</span>}
+                      <div className="min-w-0">
+                        <div className="text-[11px] text-strong truncate">{f.nome_fornecedor ?? '—'}</div>
+                        <div className="text-[9px] text-faint font-mono-custom">
+                          {f.ni_fornecedor ?? '—'}{f.porte_fornecedor ? ` · ${f.porte_fornecedor}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-[11px] font-mono-custom font-bold text-strong flex-shrink-0">{formatBRL(f.valor)}</div>
+                  </div>
+                )
+              })}
+            </div>
+            {!temMaisDeUm && (
+              <div className="text-[10px] text-faint mt-2 leading-snug">
+                Apenas o vencedor foi homologado/registrado neste item pelo PNCP.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Itens do processo */}
+      <div className="col-span-1 bg-bg2 border border-subtle2 rounded-lg p-3">
+        <div className="flex items-center gap-1.5 mb-2">
+          <ListTree size={12} className="text-accent" />
+          <span className="text-[10px] font-mono-custom uppercase tracking-wider text-faint">Itens do processo ({det.processoItens.length})</span>
+        </div>
+        {det.processoItens.length === 0 ? (
+          <div className="text-[11px] text-faint">Sem itens homologados neste processo.</div>
+        ) : (
+          <div className="space-y-1 max-h-56 overflow-y-auto">
+            {det.processoItens.map((it, idx) => {
+              const atual = it.numero_item === numeroItem
+              return (
+                <div key={`${it.numero_item}-${idx}`}
+                  className={clsx('rounded px-2 py-1', atual ? 'bg-accent/10 border border-accent/30' : 'bg-bg3/40')}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-strong truncate">
+                      {it.codigo_catmat ? <span className="font-mono-custom text-faint">{it.codigo_catmat} · </span> : null}{it.item}
+                    </div>
+                    <div className="text-[10px] font-mono-custom font-bold text-strong flex-shrink-0">{formatBRL(it.valor)}</div>
+                  </div>
+                  <div className="text-[9px] text-faint truncate">Vencedor: {it.vencedor ?? '—'}</div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

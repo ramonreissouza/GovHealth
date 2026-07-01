@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { clsx } from 'clsx'
 import { Bell, RefreshCw } from 'lucide-react'
 import { IA_HABILITADA } from '@/lib/features'
+import { subscribeDataStatus, getDataStatus, tempoDesde, type DataStatus } from '@/lib/data-status'
 
 interface TopbarProps {
   title: string
@@ -14,13 +15,15 @@ interface TopbarProps {
 
 export default function Topbar({ title, subtitle }: TopbarProps) {
   const router = useRouter()
-  const [lastUpdate, setLastUpdate] = useState<string>('')
+  const [status, setStatus] = useState<DataStatus | null>(getDataStatus())
+  const [, forceTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    setLastUpdate(getRelativeTime(new Date()))
-    const interval = setInterval(() => setLastUpdate(getRelativeTime(new Date())), 60_000)
-    return () => clearInterval(interval)
+    const unsub = subscribeDataStatus(setStatus)
+    // re-renderiza a cada minuto para o "há Xh" avançar mesmo sem nova coleta
+    const interval = setInterval(() => forceTick((t) => t + 1), 60_000)
+    return () => { unsub(); clearInterval(interval) }
   }, [])
 
   function handleRefresh() {
@@ -39,11 +42,22 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Status */}
-        <div className="flex items-center gap-1.5 text-[11px] text-faint font-mono-custom">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-          <span>Atualizado {lastUpdate}</span>
-        </div>
+        {/* Selo de proveniência/atualidade — reflete a coleta REAL do dado (item 9).
+            Só aparece quando uma tela publicou o status; nunca inventa horário. */}
+        {status ? (
+          <div
+            className="flex items-center gap-1.5 text-[11px] text-faint font-mono-custom"
+            title={`Fonte: ${status.fonte} · coletado em ${new Date(status.atualizadoEm).toLocaleString('pt-BR')}`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
+            <span>{status.fonte} · {tempoDesde(status.atualizadoEm)}</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[11px] text-faint font-mono-custom">
+            <span className="w-1.5 h-1.5 rounded-full bg-bg4" />
+            <span>Dados ao vivo</span>
+          </div>
+        )}
 
         {/* Refresh */}
         <button
@@ -75,13 +89,4 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
       </div>
     </header>
   )
-}
-
-function getRelativeTime(date: Date): string {
-  const now = new Date()
-  const diff = Math.floor((now.getTime() - date.getTime()) / 60_000)
-  if (diff < 1) return 'agora'
-  if (diff === 1) return 'há 1 min'
-  if (diff < 60) return `há ${diff} min`
-  return `há ${Math.floor(diff / 60)}h`
 }

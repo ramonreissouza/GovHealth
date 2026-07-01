@@ -1,373 +1,353 @@
 'use client'
-// src/app/concorrentes/page.tsx — Principais Concorrentes (referencia3)
+// src/app/concorrentes/page.tsx — Radar de Concorrência
+// Explorador de concorrentes: filtra por categoria/estado/ano, lista fornecedores
+// e, ao clicar, mostra nº de contratos e as licitações que venceu — cada uma
+// expansível com instituição, itens vendidos (descrição, qtd, valores) e data.
+// Fonte: resultados homologados do PNCP (banco populado pelo ETL).
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis } from 'recharts'
-import { Search } from 'lucide-react'
-import type { LicitacaoEnriquecida } from '@/app/api/licitacoes/route'
-import type { VencedorAgregado } from '@/app/api/vencedores/route'
-import { CATEGORIA_LABEL as CAT_LABEL } from '@/lib/categorias'
-import { formatBRL } from '@/lib/format'
-
-// ── Constants ────────────────────────────────────────────────────────────────
+import { Search, Trophy, Database, Building2, ChevronRight, ExternalLink, MapPin, X } from 'lucide-react'
+import { formatBRL, formatDate } from '@/lib/format'
+import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
-const ANOS = ['2023','2024','2025']
-const PIE_COLORS = ['#60a5fa','#f87171','#f59e0b','#c084fc','#4ade80','#94a3b8']
+const ANOS = ['todos', '2026', '2025', '2024', '2023']
 
-const CAT_COLOR: Record<string, string> = {
-  imagem: 'bg-blue-500/20 text-blue-400', uti: 'bg-red-500/20 text-red-400',
-  laboratorio: 'bg-amber-500/20 text-amber-400', cirurgia: 'bg-purple-500/20 text-purple-400',
-  oncologia: 'bg-green-500/20 text-green-400', medicamento: 'bg-cyan-500/20 text-cyan-400', outros: 'bg-bg4 text-faint',
+interface Ranking { fornecedor: string | null; cnpj: string | null; valor: number; itens: number; convenios: number; ufs: number }
+interface CatCount { categoria: string; n: number; valor: number }
+interface RankResponse {
+  kpis: { valorTotal: number; fornecedores: number; itens: number; convenios: number }
+  ranking: Ranking[]
+  categorias?: CatCount[]
+  error?: string
+  instrucoes?: string
 }
 
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-interface ApiResponse {
-  licitacoes: LicitacaoEnriquecida[]
-  kpis: { total: number; valorTotal: number; ticketMedio: number }
-  porCategoria: Record<string, { count: number; valor: number }>
-  topProponentes: { cnpj: string; proponente: string; uf: string; municipio: string; valor: number; count: number }[]
+interface ContratoItem { numero_item: number | null; nome_catmat: string | null; codigo_catmat: string | null; categoria: string | null; qtd: number | null; valor_unitario: number | null; valor: number | null }
+interface Contrato {
+  convenio: string
+  proponente: string | null
+  municipio: string | null
+  uf: string | null
+  modalidade_nome: string | null
+  objeto_compra: string | null
+  data: string | null
+  pncp_url: string | null
+  valorTotal: number
+  itens: ContratoItem[]
+}
+interface ContratosResponse {
+  fornecedor: string
+  resumo: { valorTotal: number; convenios: number; itens: number; ufs: number; ufsAtuacao: string[] }
+  contratos: Contrato[]
+  error?: string
 }
 
 export default function ConcorrentesPage() {
-  const [data, setData] = useState<ApiResponse | null>(null)
+  const [rank, setRank] = useState<RankResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [vencedores, setVencedores] = useState<VencedorAgregado[]>([])
-  const [vencLoading, setVencLoading] = useState(true)
-  const [vencFallback, setVencFallback] = useState(false)
-  const [vencFallbackMsg, setVencFallbackMsg] = useState('')
+  const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
 
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
-  const [categoriasAtivas, setCategoriasAtivas] = useState<Set<string>>(new Set())
-  const [anosAtivos, setAnosAtivos] = useState<Set<string>>(new Set(['2024', '2025']))
-  const [situacao, setSituacao] = useState('todos')
-  const [queryProponente, setQueryProponente] = useState('')
+  const [ano, setAno] = useState('2026') // default leve: evita varrer a base inteira no 1º load
+  const [catAtiva, setCatAtiva] = useState<string | null>(null)
+  const [busca, setBusca] = useState('')
+  const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor
+
+  const [selecionado, setSelecionado] = useState<string | null>(null)
+  const [contratos, setContratos] = useState<ContratosResponse | null>(null)
+  const [contratosLoading, setContratosLoading] = useState(false)
+  const [convAberto, setConvAberto] = useState<string | null>(null)
+
+  const filtrosParams = useCallback(() => {
+    const params = new URLSearchParams()
+    if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
+    if (ano !== 'todos') params.set('ano', ano)
+    if (catAtiva) params.set('categoria', catAtiva)
+    return params
+  }, [ufsAtivos, ano, catAtiva])
 
   const load = useCallback(async () => {
-    setLoading(true)
-    setVencLoading(true)
+    setLoading(true); setErro(null)
     try {
-      const [licitRes, vencRes] = await Promise.allSettled([
-        fetch('/api/licitacoes?limit=500'),
-        fetch('/api/vencedores'),
-      ])
-      if (licitRes.status === 'fulfilled') setData(await licitRes.value.json())
-      if (vencRes.status === 'fulfilled') {
-        const json = await vencRes.value.json()
-        setVencedores(json.vencedores ?? [])
-        setVencFallback(json.fallback ?? false)
-        setVencFallbackMsg(json.fallbackMsg ?? '')
-      }
-    } catch (e) { console.error(e) }
-    finally { setLoading(false); setVencLoading(false) }
-  }, [])
+      const params = filtrosParams(); params.set('limit', '100')
+      if (buscaQuery) params.set('q', buscaQuery)
+      const res = await fetch(`/api/resultados/fornecedores?${params}`)
+      const json: RankResponse = await res.json()
+      if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setRank(null) }
+      else setRank(json)
+    } catch (e) { setErro({ msg: String(e) }); setRank(null) }
+    finally { setLoading(false) }
+  }, [filtrosParams, buscaQuery])
 
   useEffect(() => { load() }, [load])
 
-  const all = data?.licitacoes ?? []
+  // debounce da busca por nome (server-side): acha qualquer fornecedor, não só o top 100.
+  useEffect(() => { const t = setTimeout(() => setBuscaQuery(busca.trim()), 350); return () => clearTimeout(t) }, [busca])
 
-  // Apply filters
-  const filtered = all.filter((l) => {
-    if (anosAtivos.size > 0 && !anosAtivos.has(l.ano)) return false
-    if (categoriasAtivas.size > 0 && !categoriasAtivas.has(l.categoria)) return false
-    if (ufsAtivos.size > 0 && !ufsAtivos.has(l.uf)) return false
-    if (situacao === 'aberto' && l.situacaoId !== 1) return false
-    if (situacao === 'encerrado' && l.situacaoId === 1) return false
-    return true
-  })
+  // Contratos do fornecedor selecionado.
+  useEffect(() => {
+    if (!selecionado) { setContratos(null); return }
+    let vivo = true
+    setContratosLoading(true); setConvAberto(null)
+    const params = filtrosParams()
+    params.set('fornecedor', selecionado)
+    fetch(`/api/resultados/fornecedor-contratos?${params}`)
+      .then(async (r) => { const j: ContratosResponse = await r.json(); if (vivo) setContratos(r.ok ? j : null) })
+      .catch(() => { if (vivo) setContratos(null) })
+      .finally(() => { if (vivo) setContratosLoading(false) })
+    return () => { vivo = false }
+  }, [selecionado, filtrosParams])
 
-  // Top 3 vencedores (fornecedores reais) — filtrados por categoria se selecionada
-  const top3 = (categoriasAtivas.size > 0
-    ? vencedores.filter((v) => v.categorias.some((c) => categoriasAtivas.has(c)))
-    : vencedores
-  ).slice(0, 3)
+  const kpis = rank?.kpis
+  const ranking = rank?.ranking ?? []
+  const catMap = new Map((rank?.categorias ?? []).map((c) => [c.categoria, c.n]))
+  const maxValor = ranking.length ? Math.max(...ranking.map((r) => r.valor || 0)) : 0
+  const escopoLabel = ufsAtivos.size === 0 ? 'Brasil (todos os estados)' : [...ufsAtivos].sort().join(', ')
 
-  // Pie chart — by categoria from filtered
-  const pieMap: Record<string, { count: number; valor: number }> = {}
-  for (const l of filtered) {
-    if (!pieMap[l.categoria]) pieMap[l.categoria] = { count: 0, valor: 0 }
-    pieMap[l.categoria].count++
-    pieMap[l.categoria].valor += l.valor
-  }
-  const pieData = Object.entries(pieMap)
-    .sort((a, b) => b[1].valor - a[1].valor)
-    .map(([key, { count, valor }]) => ({ name: CAT_LABEL[key] ?? key, value: valor, count, key }))
+  const toggleUf = (uf: string) => setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })
 
-  // Entities (unique orgs with search filter)
-  const entidades = [...new Map(
-    filtered
-      .filter((l) => !queryProponente || l.proponente.toLowerCase().includes(queryProponente.toLowerCase()))
-      .map((l) => [l.cnpj, { proponente: l.proponente, uf: l.uf }])
-  ).entries()].slice(0, 30)
-
-  const pieTotal = pieData.reduce((s, d) => s + d.value, 0)
+  const KPI_CARDS = [
+    { label: 'Valor total homologado', value: kpis ? formatBRL(kpis.valorTotal) : '—' },
+    { label: 'Concorrentes', value: kpis ? String(kpis.fornecedores) : '—' },
+    { label: 'Itens únicos', value: kpis ? String(kpis.itens) : '—' },
+    { label: 'Licitações', value: kpis ? String(kpis.convenios) : '—' },
+  ]
 
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Topbar title="Radar de Concorrência" subtitle={loading ? 'Carregando…' : `${filtered.length} licitações · ${formatBRL(filtered.reduce((s, l) => s + l.valor, 0))}`} />
-        <main className="flex-1 overflow-y-auto p-6 bg-bg space-y-4">
+        <Topbar
+          title="Radar de Concorrência"
+          subtitle={loading ? 'Carregando…' : `${escopoLabel}${catAtiva ? ' · ' + (CATEGORIA_LABEL[catAtiva] ?? catAtiva) : ''}`}
+        />
+        <main className="flex-1 overflow-y-auto p-6 bg-bg">
 
-          {/* ── TOP 3 TABLE ──────────────────────────────────────────────── */}
-          <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-subtle bg-bg3/30 flex items-center justify-between">
-              <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">
-                {vencFallback
-                  ? 'Ranking Top 3 — Maiores Compradores de Equipamentos (proxy)'
-                  : 'Ranking Top 3 — Principais Fornecedores Vencedores de Equipamentos de Saúde'}
-              </span>
-              {vencFallback && (
-                <span className="text-[9px] font-mono-custom text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full">
-                  Dados de fornecedores indisponíveis — exibindo compradores
-                </span>
-              )}
-            </div>
-            {vencFallback && vencFallbackMsg && (
-              <div className="px-4 py-2 text-[10px] text-faint font-mono-custom border-b border-subtle bg-bg3/10">
-                {vencFallbackMsg}
+          {/* KPIs */}
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            {KPI_CARDS.map(({ label, value }) => (
+              <div key={label} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">
+                <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">{label}</div>
+                <div className="text-[18px] font-mono-custom font-bold text-strong mt-0.5 leading-tight">{value}</div>
               </div>
-            )}
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-subtle">
-                  <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5 w-8">#</th>
-                  <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Fornecedor</th>
-                  <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Valor homologado</th>
-                  <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Contratos</th>
-                  <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Categorias</th>
-                  <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">UFs atuação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vencLoading ? (
-                  <tr><td colSpan={6} className="text-center py-6 text-faint text-[12px]">Buscando vencedores no PNCP… (pode levar ~15s)</td></tr>
-                ) : top3.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center py-6 text-faint text-[12px]">Sem dados de vencedores disponíveis. O PNCP pode não ter homologações neste período.</td></tr>
-                ) : top3.map((v, i) => (
-                  <tr key={v.id} className="border-b border-subtle last:border-0 hover:bg-bg3 transition-colors">
-                    <td className="px-4 py-3">
-                      <span className={clsx('w-6 h-6 rounded-full inline-flex items-center justify-center font-mono-custom text-[11px] font-bold',
-                        i === 0 ? 'bg-amber-400/20 text-amber-400' : i === 1 ? 'bg-zinc-500/20 text-zinc-400' : 'bg-bg4 text-faint')}>
-                        {i + 1}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="text-[12px] text-strong max-w-[280px]">{v.nome}</div>
-                      {v.cnpj && <div className="text-[9px] font-mono-custom text-faint mt-0.5">{v.cnpj}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-right text-[13px] font-mono-custom font-bold text-accent">{formatBRL(v.valor)}</td>
-                    <td className="px-4 py-3 text-center text-[12px] font-mono-custom text-muted">{v.contratos}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1 flex-wrap">
-                        {v.categorias.map((c) => (
-                          <span key={c} className={clsx('text-[8px] font-mono-custom px-1.5 py-0.5 rounded-full uppercase', CAT_COLOR[c])}>
-                            {CAT_LABEL[c] ?? c}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1 flex-wrap">
-                        {v.ufs.map((uf) => (
-                          <span key={uf} className="text-[9px] font-mono-custom text-faint bg-bg3 px-1.5 py-0.5 rounded">{uf}</span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            ))}
           </div>
 
-          {/* ── BAR CHART vencedores ──────────────────────────────────────── */}
-          {!vencLoading && vencedores.length > 0 && (
-            <div className="bg-bg2 border border-subtle rounded-xl p-4">
-              <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-3">
-                Top {Math.min(vencedores.length, 8)} fornecedores — valor homologado
-              </div>
-              <ResponsiveContainer width="100%" height={160}>
-                <BarChart
-                  data={vencedores.slice(0, 8).map((v) => ({
-                    nome: v.nome.length > 22 ? v.nome.substring(0, 22) + '…' : v.nome,
-                    valor: v.valor / 1_000_000,
-                  }))}
-                  layout="vertical"
-                  margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
-                >
-                  <XAxis
-                    type="number"
-                    tick={{ fontSize: 9, fill: '#666' }}
-                    tickLine={false} axisLine={false}
-                    tickFormatter={(v) => `R$${v.toFixed(0)}M`}
-                  />
-                  <YAxis
-                    dataKey="nome" type="category"
-                    tick={{ fontSize: 9, fill: '#aaa' }}
-                    tickLine={false} axisLine={false}
-                    width={140}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a4a', borderRadius: 8, fontSize: 11 }}
-                    formatter={(v) => [`R$ ${Number(v ?? 0).toFixed(2).replace('.', ',')}M`, 'Valor']}
-                  />
-                  <Bar dataKey="valor" fill="var(--accent)" radius={[0, 4, 4, 0]} maxBarSize={14} />
-                </BarChart>
-              </ResponsiveContainer>
+          {/* Estados (multiseleção) */}
+          <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
+            <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">
+              Estados {ufsAtivos.size > 0 && <span className="text-accent">· {ufsAtivos.size} selecionado{ufsAtivos.size !== 1 ? 's' : ''}</span>}
             </div>
-          )}
-
-          {/* ── UF BAR ────────────────────────────────────────────────────── */}
-          <div className="bg-bg2 border border-subtle2 rounded-xl p-3">
-            <div className="flex gap-1 flex-wrap">
+            <div className="flex gap-1 flex-wrap items-center">
               <button onClick={() => setUfsAtivos(new Set())}
                 className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                   ufsAtivos.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
-                Todos
+                País todo
               </button>
-              {UFS.map((uf) => {
-                const hasData = all.some((l) => l.uf === uf)
-                if (!hasData) return null
+              {UFS.map((uf) => (
+                <button key={uf} onClick={() => toggleUf(uf)}
+                  className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                    ufsAtivos.has(uf) ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                  {uf}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Categoria */}
+          <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
+            <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Categoria</div>
+            <div className="flex gap-1 flex-wrap items-center">
+              <button onClick={() => setCatAtiva(null)}
+                className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                  catAtiva === null ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                Todas
+              </button>
+              {CATEGORIAS.map(({ key, label }) => {
+                const n = catMap.get(key)
                 return (
-                  <button key={uf}
-                    onClick={() => setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })}
-                    className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
-                      ufsAtivos.has(uf) ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
-                    {uf}
+                  <button key={key} onClick={() => setCatAtiva((p) => (p === key ? null : key))}
+                    className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all flex items-center gap-1',
+                      catAtiva === key ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                    {label}
+                    {n != null && <span className={clsx('text-[9px]', catAtiva === key ? 'text-black/60' : 'text-faint')}>{n}</span>}
                   </button>
                 )
               })}
             </div>
           </div>
 
-          {/* ── 3 COLUMNS ─────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-12 gap-4">
-
-            {/* Left: item filter + situação + ano */}
-            <div className="col-span-3 space-y-3">
-              <div className="bg-bg2 border border-subtle rounded-xl p-3">
-                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Filtro por Item</div>
-                <div className="space-y-1">
-                  {Object.entries(CAT_LABEL).map(([key, label]) => {
-                    const count = all.filter((l) => l.categoria === key).length
-                    const filtCount = filtered.filter((l) => l.categoria === key).length
-                    return (
-                      <button key={key}
-                        onClick={() => setCategoriasAtivas((p) => { const s = new Set(p); s.has(key) ? s.delete(key) : s.add(key); return s })}
-                        className={clsx('w-full flex items-center gap-2 px-2 py-2 rounded-md transition-all text-left',
-                          categoriasAtivas.has(key) ? 'bg-accent/15 border border-accent/30' : 'hover:bg-bg3')}>
-                        <div className={clsx('w-2 h-2 rounded-full flex-shrink-0 transition-colors',
-                          categoriasAtivas.has(key) ? 'bg-accent' : 'bg-bg4')} />
-                        <span className="text-[11px] text-strong flex-1">{label}</span>
-                        <span className="text-[9px] font-mono-custom text-faint">{filtCount}/{count}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              <div className="bg-bg2 border border-subtle rounded-xl p-3">
-                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Situação do Aceite</div>
-                {[{ k: 'todos', l: 'Todos' }, { k: 'aberto', l: 'Em Aberto' }, { k: 'encerrado', l: 'Encerrado' }].map(({ k, l }) => (
-                  <button key={k} onClick={() => setSituacao(k)}
-                    className={clsx('w-full text-left px-2 py-1.5 rounded-md text-[11px] transition-all',
-                      situacao === k ? 'bg-accent/15 text-accent' : 'text-muted hover:text-strong hover:bg-bg3')}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-
-              <div className="bg-bg2 border border-subtle rounded-xl p-3">
-                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Ano</div>
-                <div className="flex gap-1">
-                  {ANOS.map((ano) => (
-                    <button key={ano}
-                      onClick={() => setAnosAtivos((p) => { const s = new Set(p); s.has(ano) ? s.delete(ano) : s.add(ano); return s })}
-                      className={clsx('flex-1 text-[11px] font-mono-custom py-1.5 rounded-md transition-all',
-                        anosAtivos.has(ano) ? 'bg-accent text-black font-bold' : 'bg-bg3 text-muted hover:text-strong')}>
-                      {ano}
-                    </button>
-                  ))}
-                </div>
-              </div>
+          {/* Ano + busca */}
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <div className="flex gap-0.5 bg-bg2 border border-subtle2 rounded-lg p-1 w-fit">
+              {ANOS.map((a) => (
+                <button key={a} onClick={() => setAno(a)}
+                  className={clsx('text-[11px] font-mono-custom px-3 py-1.5 rounded-md transition-all',
+                    ano === a ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong')}>
+                  {a === 'todos' ? 'Todos anos' : a}
+                </button>
+              ))}
             </div>
-
-            {/* Center: pie chart */}
-            <div className="col-span-5">
-              <div className="bg-bg2 border border-subtle rounded-xl p-4 h-full">
-                <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider text-center mb-3">
-                  Porcentagem de Itens Adquiridos
-                </div>
-                {!loading && pieData.length > 0 ? (
-                  <>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <PieChart>
-                        <Pie data={pieData} cx="50%" cy="50%" outerRadius={90} innerRadius={40} dataKey="value" paddingAngle={2}>
-                          {pieData.map((_, i) => (
-                            <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="transparent" />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          formatter={(value) => [formatBRL(Number(value)), 'Valor']}
-                          contentStyle={{ background: '#1a1a2e', border: '1px solid #2a2a4a', borderRadius: 8, fontSize: 11 }}
-                          labelStyle={{ color: '#aaa' }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    {/* Legend */}
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-2">
-                      {pieData.map(({ name, value, key }, i) => (
-                        <div key={key} className="flex items-center gap-2">
-                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                          <span className="text-[10px] text-muted flex-1 truncate">{name}</span>
-                          <span className="text-[10px] font-mono-custom text-faint">
-                            {pieTotal > 0 ? `${((value / pieTotal) * 100).toFixed(0)}%` : '—'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="h-[280px] flex items-center justify-center text-faint text-[12px]">
-                    {loading ? 'Carregando…' : 'Sem dados com os filtros atuais.'}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right: entities */}
-            <div className="col-span-4">
-              <div className="bg-bg2 border border-subtle rounded-xl p-3 h-full flex flex-col">
-                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Entidades Beneficiadas</div>
-                <div className="flex items-center gap-1.5 bg-bg3 border border-subtle2 rounded-lg px-2 py-1.5 mb-2">
-                  <Search size={11} className="text-faint flex-shrink-0" />
-                  <input value={queryProponente} onChange={(e) => setQueryProponente(e.target.value)}
-                    placeholder="Buscar proponente…"
-                    className="flex-1 bg-transparent text-[10px] text-strong placeholder:text-faint outline-none" />
-                </div>
-                <div className="flex-1 space-y-0.5 overflow-y-auto max-h-[340px]">
-                  {loading ? (
-                    <div className="text-center text-faint text-[11px] py-4">Carregando…</div>
-                  ) : entidades.length === 0 ? (
-                    <div className="text-center text-faint text-[11px] py-4">Nenhuma entidade encontrada.</div>
-                  ) : entidades.map(([cnpj, { proponente, uf }]) => (
-                    <div key={cnpj} className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-bg3 transition-colors">
-                      <span className="text-[9px] font-mono-custom text-faint flex-shrink-0 mt-0.5 w-5">{uf}</span>
-                      <span className="text-[10px] font-mono-custom text-muted leading-tight">
-                        {proponente.substring(0, 45)}{proponente.length > 45 ? '…' : ''}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            <div className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2 flex-1 max-w-xs">
+              <Search size={13} className="text-faint flex-shrink-0" />
+              <input value={busca} onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar concorrente por nome…"
+                className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
             </div>
           </div>
 
+          {erro ? (
+            <div className="bg-bg2 border border-amber/30 rounded-xl p-8 text-center">
+              <Database size={28} className="text-amber mx-auto mb-3" />
+              <div className="text-[13px] text-strong mb-1">{erro.msg}</div>
+              {erro.instrucoes && <div className="text-[12px] text-muted font-mono-custom">{erro.instrucoes}</div>}
+            </div>
+          ) : (
+            <div className={clsx('grid gap-3', selecionado ? 'grid-cols-[minmax(320px,1fr)_1.4fr]' : 'grid-cols-1')}>
+              {/* Lista de concorrentes */}
+              <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden self-start">
+                <div className="px-4 py-2.5 border-b border-subtle bg-bg3/30 text-[10px] font-mono-custom text-faint uppercase tracking-wider">
+                  Concorrentes {catAtiva ? `· ${CATEGORIA_LABEL[catAtiva] ?? catAtiva}` : ''} — clique para ver as licitações
+                </div>
+                {loading ? (
+                  <div className="p-10 text-center text-faint text-[13px]">Carregando concorrentes…</div>
+                ) : ranking.length === 0 ? (
+                  <div className="p-10 text-center text-faint text-[13px]">
+                    {buscaQuery ? `Nenhum concorrente encontrado para “${buscaQuery}” com os filtros atuais.` : 'Nenhum concorrente com os filtros atuais.'}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-subtle max-h-[70vh] overflow-y-auto">
+                    {ranking.map((r, i) => {
+                      const ativo = selecionado === r.fornecedor
+                      const pct = maxValor > 0 ? (r.valor / maxValor) * 100 : 0
+                      return (
+                        <button key={`${r.fornecedor}-${i}`}
+                          onClick={() => setSelecionado(ativo ? null : r.fornecedor)}
+                          className={clsx('w-full text-left px-4 py-2.5 transition-colors relative', ativo ? 'bg-bg3' : 'hover:bg-bg3')}>
+                          <span className="absolute left-0 top-0 bottom-0 bg-accent/5" style={{ width: `${pct}%` }} />
+                          <div className="relative flex items-center gap-3">
+                            <ChevronRight size={13} className={clsx('text-faint flex-shrink-0 transition-transform', ativo && 'rotate-90')} />
+                            <span className={clsx('w-5 text-center text-[11px] font-mono-custom font-bold flex-shrink-0',
+                              i === 0 ? 'text-amber' : i < 3 ? 'text-strong' : 'text-faint')}>{i + 1}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 text-[12px] text-strong truncate">
+                                {i === 0 && <Trophy size={11} className="text-amber flex-shrink-0" />}
+                                {r.fornecedor ?? '—'}
+                              </div>
+                              <div className="text-[9px] font-mono-custom text-faint mt-0.5">
+                                {r.convenios} licitação{r.convenios !== 1 ? 'ões' : ''} · {r.itens} item{r.itens !== 1 ? 's' : ''} · {r.ufs} UF{r.ufs !== 1 ? 's' : ''}
+                              </div>
+                            </div>
+                            <div className="text-[13px] font-mono-custom font-bold text-accent flex-shrink-0">{formatBRL(r.valor)}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Drill-down: licitações do concorrente */}
+              {selecionado && (
+                <div className="bg-bg2 border border-subtle rounded-xl p-4 self-start">
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="min-w-0">
+                      <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider">Concorrente</div>
+                      <div className="text-[15px] font-semibold text-strong leading-tight">{selecionado}</div>
+                      {contratos?.resumo && (
+                        <div className="text-[10px] font-mono-custom text-faint mt-1">
+                          <span className="text-accent">{formatBRL(contratos.resumo.valorTotal)}</span>
+                          {' · '}{contratos.resumo.convenios} licitação{contratos.resumo.convenios !== 1 ? 'ões' : ''}
+                          {' · '}{contratos.resumo.itens} itens
+                          {contratos.resumo.ufsAtuacao.length > 0 && <> · {contratos.resumo.ufsAtuacao.join(', ')}</>}
+                        </div>
+                      )}
+                    </div>
+                    <button onClick={() => setSelecionado(null)} className="text-faint hover:text-strong flex-shrink-0"><X size={16} /></button>
+                  </div>
+
+                  {contratosLoading ? (
+                    <div className="text-[12px] text-faint py-6 text-center">Carregando licitações vencidas…</div>
+                  ) : !contratos || contratos.contratos.length === 0 ? (
+                    <div className="text-[12px] text-faint py-6 text-center">Nenhuma licitação encontrada com os filtros atuais.</div>
+                  ) : (
+                    <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+                      {contratos.contratos.map((c) => {
+                        const aberto = convAberto === c.convenio
+                        return (
+                          <div key={c.convenio} className="border border-subtle2 rounded-lg overflow-hidden">
+                            <button onClick={() => setConvAberto(aberto ? null : c.convenio)}
+                              className={clsx('w-full text-left px-3 py-2.5 transition-colors', aberto ? 'bg-bg3' : 'hover:bg-bg3')}>
+                              <div className="flex items-center gap-2">
+                                <ChevronRight size={12} className={clsx('text-faint flex-shrink-0 transition-transform', aberto && 'rotate-90')} />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 text-[12px] text-strong">
+                                    <Building2 size={11} className="text-faint flex-shrink-0" />
+                                    <span className="truncate">{c.proponente ?? '—'}</span>
+                                  </div>
+                                  <div className="text-[9px] font-mono-custom text-faint mt-0.5 flex items-center gap-2 flex-wrap">
+                                    {(c.municipio || c.uf) && <span className="flex items-center gap-0.5"><MapPin size={9} />{[c.municipio, c.uf].filter(Boolean).join('/')}</span>}
+                                    {c.modalidade_nome && <span>{c.modalidade_nome}</span>}
+                                    {c.data && <span>{formatDate(c.data)}</span>}
+                                    <span>{c.itens.length} item{c.itens.length !== 1 ? 's' : ''}</span>
+                                  </div>
+                                </div>
+                                <div className="text-[12px] font-mono-custom font-bold text-accent flex-shrink-0">{formatBRL(c.valorTotal)}</div>
+                              </div>
+                            </button>
+                            {aberto && (
+                              <div className="border-t border-subtle2 bg-bg/40 px-3 py-2.5">
+                                {c.objeto_compra && (
+                                  <div className="text-[10px] text-muted mb-2 leading-snug"><span className="text-faint">Objeto: </span>{c.objeto_compra}</div>
+                                )}
+                                <table className="w-full">
+                                  <thead>
+                                    <tr className="border-b border-subtle2">
+                                      <th className="text-left text-[8px] font-mono-custom text-faint uppercase tracking-wider py-1.5">Item vendido</th>
+                                      <th className="text-right text-[8px] font-mono-custom text-faint uppercase tracking-wider py-1.5 px-2">Qtd</th>
+                                      <th className="text-right text-[8px] font-mono-custom text-faint uppercase tracking-wider py-1.5 px-2">Unit.</th>
+                                      <th className="text-right text-[8px] font-mono-custom text-faint uppercase tracking-wider py-1.5">Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {c.itens.map((it, idx) => (
+                                      <tr key={idx} className="border-b border-subtle2/50 last:border-0">
+                                        <td className="py-1.5 pr-2 text-[10px] text-strong">
+                                          {it.codigo_catmat ? <span className="font-mono-custom text-faint">{it.codigo_catmat} · </span> : null}
+                                          {it.nome_catmat ?? '—'}
+                                          {it.categoria && <span className="ml-1 text-[8px] text-faint">[{CATEGORIA_LABEL[it.categoria] ?? it.categoria}]</span>}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-right text-[10px] font-mono-custom text-muted">{it.qtd ?? '—'}</td>
+                                        <td className="py-1.5 px-2 text-right text-[10px] font-mono-custom text-muted">{it.valor_unitario != null ? formatBRL(it.valor_unitario) : '—'}</td>
+                                        <td className="py-1.5 text-right text-[10px] font-mono-custom font-bold text-strong">{formatBRL(it.valor)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                <div className="flex items-center justify-between mt-2">
+                                  <span className="text-[9px] font-mono-custom text-faint">Nº controle PNCP: {c.convenio}</span>
+                                  {c.pncp_url && (
+                                    <a href={c.pncp_url} target="_blank" rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-[10px] text-accent hover:underline">
+                                      <ExternalLink size={10} /> Ver no PNCP
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
     </div>

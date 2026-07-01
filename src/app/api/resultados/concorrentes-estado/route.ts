@@ -3,29 +3,42 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
 
 export const runtime = 'nodejs'
+
+const CAT_SQL = categoriaCaseSql('r.nome_catmat')
 
 interface Top3Row { vencedor: string | null; valor: number; item: string | null }
 interface ItemRow { item: string; valor: number; qtd: number }
 interface EntidadeRow { entidade: string | null; valor: number; convenios: number }
 interface UfRow { uf: string }
+interface CatCountRow { categoria: string; n: number; valor: number }
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const uf = searchParams.get('uf')?.toUpperCase().trim() || undefined
   const item = searchParams.get('item')?.trim() || undefined
   const ano = searchParams.get('ano') ? Number(searchParams.get('ano')) : undefined
+  const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
+  const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
 
-  const where: string[] = ['r.valor_total_homologado IS NOT NULL']
-  const params: unknown[] = []
-  if (uf) { params.push(uf); where.push(`r.uf = $${params.length}`) }
-  if (ano) { params.push(ano); where.push(`r.ano = $${params.length}`) }
-  if (item) { params.push(`%${item}%`); where.push(`r.nome_catmat ILIKE $${params.length}`) }
+  // WHERE base (uf/ano/item) — usado nas contagens por categoria.
+  const whereBase: string[] = ['r.valor_total_homologado IS NOT NULL']
+  const baseParams: unknown[] = []
+  if (uf) { baseParams.push(uf); whereBase.push(`r.uf = $${baseParams.length}`) }
+  if (ano) { baseParams.push(ano); whereBase.push(`r.ano = $${baseParams.length}`) }
+  if (item) { baseParams.push(`%${item}%`); whereBase.push(`r.nome_catmat ILIKE $${baseParams.length}`) }
+  const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
+
+  // WHERE com a categoria aplicada (todo o resto da tela).
+  const where = [...whereBase]
+  const params = [...baseParams]
+  if (categoria) { params.push(categoria); where.push(`(${CAT_SQL}) = $${params.length}`) }
   const whereSql = `WHERE ${where.join(' AND ')}`
 
   try {
-    const [top3, distribuicaoItens, entidades, ufsComDados] = await Promise.all([
+    const [top3, distribuicaoItens, entidades, ufsComDados, catCounts] = await Promise.all([
       query<Top3Row>(
         `SELECT r.nome_fornecedor AS vencedor,
                 SUM(r.valor_total_homologado)::float8 AS valor,
@@ -53,6 +66,10 @@ export async function GET(req: NextRequest) {
          ORDER BY valor DESC NULLS LAST
          LIMIT 30`, params),
       query<UfRow>(`SELECT DISTINCT uf FROM resultados WHERE uf IS NOT NULL ORDER BY uf`),
+      query<CatCountRow>(
+        `SELECT (${CAT_SQL}) AS categoria, COUNT(*)::int AS n,
+                COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor
+         FROM resultados r ${whereBaseSql} GROUP BY 1`, baseParams),
     ])
 
     const totalDist = distribuicaoItens.reduce((s, d) => s + (d.valor ?? 0), 0)
@@ -63,10 +80,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       uf: uf ?? null,
+      categoria: categoria ?? null,
       top3,
       distribuicaoItens: distribuicao,
       entidades,
       ufsComDados: ufsComDados.map((u) => u.uf),
+      categorias: catCounts,
       valorTotal: entidades.reduce((s, e) => s + (e.valor ?? 0), 0),
       atualizadoEm: new Date().toISOString(),
     })

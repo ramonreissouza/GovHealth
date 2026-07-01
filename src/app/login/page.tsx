@@ -97,7 +97,7 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="demo@govhealth.ai"
+                placeholder="voce@empresa.com.br"
                 className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors"
               />
             </div>
@@ -130,7 +130,7 @@ export default function LoginPage() {
           </form>
 
           <p className="text-[11px] text-faint text-center mt-5 font-mono-custom">
-            Demo: demo@govhealth.ai / demo123
+            Acesso restrito · <a href="mailto:contato@govhealth.ai?subject=Solicitação%20de%20acesso%20—%20GovHealth%20AI" className="text-accent hover:underline">Solicitar acesso</a>
           </p>
         </div>
       </div>
