@@ -1,0 +1,133 @@
+19:12:58.504 Running build in Washington, D.C., USA (East) – iad1
+19:12:58.505 Build machine configuration: 2 cores, 8 GB
+19:12:58.527 Cloning github.com/ramonreissouza/GovHealth (Branch: main, Commit: a4405f7)
+19:12:58.529 Skipping build cache, deployment was triggered without cache.
+19:12:59.323 Cloning completed: 795.000ms
+19:12:59.736 Running "vercel build"
+19:12:59.764 Vercel CLI 54.14.0
+19:13:00.211 Running "install" command: `npm install`...
+19:13:04.862 npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+19:13:06.121 npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+19:13:08.408 npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead
+19:13:08.477 npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead
+19:13:08.533 npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+19:13:09.274 npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+19:13:10.782 npm warn deprecated uuid@8.3.2: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+19:13:11.476 npm warn deprecated glob@10.3.10: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+19:13:16.903 npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+19:14:13.898 
+19:14:13.899 added 612 packages, and audited 613 packages in 1m
+19:14:13.899 
+19:14:13.900 168 packages are looking for funding
+19:14:13.900   run `npm fund` for details
+19:14:14.132 
+19:14:14.133 21 vulnerabilities (6 low, 7 moderate, 8 high)
+19:14:14.133 
+19:14:14.134 To address issues that do not require attention, run:
+19:14:14.134   npm audit fix
+19:14:14.135 
+19:14:14.135 To address all issues possible (including breaking changes), run:
+19:14:14.135   npm audit fix --force
+19:14:14.136 
+19:14:14.136 Some issues need review, and may require choosing
+19:14:14.136 a different dependency.
+19:14:14.136 
+19:14:14.136 Run `npm audit` for details.
+19:14:14.247 Detected Next.js version: 16.2.6
+19:14:14.249 Running "next build"
+19:14:14.952   Applying modifyConfig from Vercel
+19:14:14.959 Attention: Next.js now collects completely anonymous telemetry regarding usage.
+19:14:14.960 This information is used to shape Next.js' roadmap and prioritize features.
+19:14:14.960 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+19:14:14.961 https://nextjs.org/telemetry
+19:14:14.961 
+19:14:15.005 ▲ Next.js 16.2.6 (Turbopack)
+19:14:15.006 
+19:14:15.009 ⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+19:14:15.064   Creating an optimized production build ...
+19:14:43.718 ✓ Compiled successfully in 28.2s
+19:14:43.740   Running TypeScript ...
+19:14:56.145   Finished TypeScript in 12.4s ...
+19:14:56.151   Collecting page data using 1 worker ...
+19:14:57.047   Generating static pages using 1 worker (0/49) ...
+19:14:57.298   Generating static pages using 1 worker (12/49) 
+19:14:57.314 [opportunities] Error: Dynamic server usage: Route /api/opportunities couldn't be rendered statically because it used `nextUrl.searchParams`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error
+19:14:57.316     at P (.next/server/chunks/[root-of-the-server]__0-qm~zk._.js:1:16177) {
+19:14:57.316   description: "Route /api/opportunities couldn't be rendered statically because it used `nextUrl.searchParams`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error",
+19:14:57.317   digest: 'DYNAMIC_SERVER_USAGE'
+19:14:57.317 }
+19:14:57.321 [PNCP licitacoes] Error: Dynamic server usage: Route /api/pncp/licitacoes couldn't be rendered statically because it used `nextUrl.searchParams`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error
+19:14:57.322     at w (.next/server/chunks/[root-of-the-server]__0~pmpi~._.js:1:5979) {
+19:14:57.322   description: "Route /api/pncp/licitacoes couldn't be rendered statically because it used `nextUrl.searchParams`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error",
+19:14:57.323   digest: 'DYNAMIC_SERVER_USAGE'
+19:14:57.323 }
+19:14:57.325   Generating static pages using 1 worker (24/49) 
+19:14:57.330 [TransfereGov convenios] Error: Dynamic server usage: Route /api/transferegov/convenios couldn't be rendered statically because it used `nextUrl.searchParams`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error
+19:14:57.331     at x (.next/server/chunks/[root-of-the-server]__0rtr72g._.js:1:4784) {
+19:14:57.331   description: "Route /api/transferegov/convenios couldn't be rendered statically because it used `nextUrl.searchParams`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error",
+19:14:57.332   digest: 'DYNAMIC_SERVER_USAGE'
+19:14:57.333 }
+19:14:57.666   Generating static pages using 1 worker (36/49) 
+19:14:57.913 ✓ Generating static pages using 1 worker (49/49) in 866ms
+19:14:57.943   Finalizing page optimization ...
+19:14:58.097   Running onBuildComplete from Vercel
+19:14:58.551 
+19:14:58.567 Route (app)
+19:14:58.567 ┌ ○ /
+19:14:58.567 ├ ○ /_not-found
+19:14:58.567 ├ ○ /alertas
+19:14:58.568 ├ ○ /analise
+19:14:58.568 ├ ƒ /api/alertas/email
+19:14:58.568 ├ ƒ /api/alerts
+19:14:58.568 ├ ƒ /api/auth/[...nextauth]
+19:14:58.568 ├ ƒ /api/cnes/estabelecimentos
+19:14:58.568 ├ ƒ /api/comprasgov/catmat
+19:14:58.568 ├ ƒ /api/comprasgov/precos
+19:14:58.568 ├ ƒ /api/contratos
+19:14:58.568 ├ ƒ /api/copiloto
+19:14:58.568 ├ ƒ /api/cron/sync-pncp
+19:14:58.569 ├ ƒ /api/debug
+19:14:58.569 ├ ƒ /api/dou/avisos
+19:14:58.569 ├ ƒ /api/edital/analise
+19:14:58.569 ├ ƒ /api/emendas
+19:14:58.569 ├ ƒ /api/emendas/detalhe
+19:14:58.569 ├ ƒ /api/itens
+19:14:58.569 ├ ƒ /api/licitacoes
+19:14:58.569 ├ ƒ /api/oportunidades-convenios
+19:14:58.569 ├ ƒ /api/opportunities
+19:14:58.569 ├ ƒ /api/pncp/licitacoes
+19:14:58.569 ├ ƒ /api/portais-estaduais
+19:14:58.569 ├ ƒ /api/repasses
+19:14:58.569 ├ ƒ /api/resultados/breakdown
+19:14:58.570 ├ ƒ /api/resultados/concorrentes-estado
+19:14:58.570 ├ ƒ /api/resultados/vencedores
+19:14:58.570 ├ ƒ /api/transferegov/convenios
+19:14:58.570 ├ ƒ /api/vencedores
+19:14:58.570 ├ ○ /breakdown
+19:14:58.570 ├ ○ /concorrentes
+19:14:58.570 ├ ○ /concorrentes-estado
+19:14:58.570 ├ ○ /contratos
+19:14:58.570 ├ ○ /copiloto
+19:14:58.571 ├ ○ /crm
+19:14:58.571 ├ ○ /editais
+19:14:58.571 ├ ○ /edital
+19:14:58.571 ├ ○ /emendas
+19:14:58.571 ├ ○ /estados
+19:14:58.571 ├ ○ /login
+19:14:58.571 ├ ○ /manual
+19:14:58.571 ├ ○ /mapa
+19:14:58.571 ├ ○ /oportunidades
+19:14:58.571 ├ ○ /perfil
+19:14:58.571 ├ ○ /portfolio
+19:14:58.571 ├ ○ /precos
+19:14:58.571 ├ ○ /timeline
+19:14:58.571 └ ○ /vencedores
+19:14:58.571 
+19:14:58.571 
+19:14:58.572 ƒ Proxy (Middleware)
+19:14:58.573 
+19:14:58.573 ○  (Static)   prerendered as static content
+19:14:58.573 ƒ  (Dynamic)  server-rendered on demand
+19:14:58.573 
+19:14:59.223 Build Completed in /vercel/output [2m]
+19:15:00.292 Deploying outputs...

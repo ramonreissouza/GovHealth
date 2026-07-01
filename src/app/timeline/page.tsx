@@ -10,6 +10,7 @@ import type { Oportunidade } from '@/lib/types'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
+import { publishDataStatus } from '@/lib/data-status'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,7 @@ export default function TimelinePage() {
     try {
       const r = await fetch('/api/opportunities?limit=400&minScore=0')
       const d = await r.json()
+      publishDataStatus(d)
       setOpps(d.oportunidades ?? [])
     } catch { /* silent */ }
     finally { setLoading(false) }

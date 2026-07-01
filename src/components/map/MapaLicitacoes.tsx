@@ -9,6 +9,7 @@ import { clsx } from 'clsx'
 import type { Oportunidade } from '@/lib/types'
 import { CATEGORIA_CHART_COLOR as CAT_COLOR, CATEGORIA_LABEL as CAT_LABEL } from '@/lib/categorias'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
+import { publishDataStatus } from '@/lib/data-status'
 
 // ── Estado → coordenadas da capital ──────────────────────────────────────────
 
@@ -48,6 +49,7 @@ export default function MapaLicitacoes() {
     try {
       const r = await fetch('/api/opportunities?limit=400&minScore=0')
       const d = await r.json()
+      publishDataStatus(d)
       const raw: Oportunidade[] = d.oportunidades ?? []
       const pins: PinData[] = raw
         .filter((o) => o.uf && ESTADO_COORDS[o.uf])

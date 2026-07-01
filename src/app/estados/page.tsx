@@ -13,6 +13,7 @@ import type { ResultadoEstado, KPIsEstado, UFEstadual, LicitacaoEstadual } from 
 import { PORTAIS_CONFIG, ENTIDADES_SAUDE, TODAS_UFS } from '@/lib/portais-estaduais'
 import { CATEGORIA_COLOR as CAT_COLOR } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
+import { publishDataStatus } from '@/lib/data-status'
 
 // ── Types from API response ───────────────────────────────────────────────────
 
@@ -586,7 +587,7 @@ export default function EstadosPage() {
   useEffect(() => {
     fetch('/api/portais-estaduais?all=1')
       .then((r) => r.json())
-      .then((d) => setResumo(d))
+      .then((d) => { publishDataStatus(d); setResumo(d) })
       .catch(() => {})
       .finally(() => setResumoLoading(false))
   }, [])

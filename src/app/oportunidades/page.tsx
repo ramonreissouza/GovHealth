@@ -17,6 +17,7 @@ import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/portfolio'
+import { publishDataStatus } from '@/lib/data-status'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -175,6 +176,7 @@ function OportunidadesInner() {
       if (categoria !== 'todos') params.set('categoria', categoria)
       const res = await fetch(`/api/opportunities?${params}`)
       const data = await res.json()
+      publishDataStatus(data)
       setOpps(data.oportunidades ?? [])
     } catch (e) { console.error(e) }
     finally { setLoading(false) }

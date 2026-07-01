@@ -12,6 +12,7 @@ const CAT_SQL = categoriaCaseSql('r.nome_catmat')
 interface VencedorRow {
   proponente: string | null
   convenio: string
+  numero_item: number | null
   vencedor: string | null
   codigo_catmat: string | null
   nome_catmat: string | null
@@ -87,6 +88,7 @@ export async function GET(req: NextRequest) {
       `SELECT
          c.razao_social_orgao        AS proponente,
          r.numero_controle_pncp      AS convenio,
+         r.numero_item               AS numero_item,
          r.nome_fornecedor           AS vencedor,
          r.codigo_catmat,
          r.nome_catmat,

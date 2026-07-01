@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
       const payload = {
         ...resumo,
         portais: PORTAIS_CONFIG,
+        fonte: 'PNCP (nacional)',
+        atualizadoEm: new Date().toISOString(),
       }
       setCached(cacheKey, payload, TTL.SHORT)
       return NextResponse.json(payload)
