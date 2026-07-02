@@ -1,25 +1,21 @@
 'use client'
 // src/components/dashboard/OpportunityList.tsx
 
-import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Oportunidade } from '@/lib/types'
 import { clsx } from 'clsx'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
+import type { OpportunitiesData } from './DashboardView'
 
 interface Props {
-  uf?: string
+  data: OpportunitiesData | null
+  loading: boolean
+  error?: boolean
   limit?: number
 }
 
-import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL } from '@/lib/categorias'
+import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR } from '@/lib/categorias'
 import { formatBRLCompact as formatBRL, diasRestantes } from '@/lib/format'
-
-// Filtro por tipo de fornecimento (Dashboard): 'todos' + os TipoFornecimento.
-const TIPOS_FILTRO: { key: string; label: string }[] = [
-  { key: 'todos', label: 'Todos' },
-  ...Object.entries(TIPO_LABEL).map(([key, label]) => ({ key, label })),
-]
 
 const SITUACAO_CLASS: Record<number, string> = {
   1: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
@@ -28,36 +24,10 @@ const SITUACAO_CLASS: Record<number, string> = {
   4: 'bg-bg4 text-faint border border-subtle2',
 }
 
-export default function OpportunityList({ uf, limit = 6 }: Props) {
+export default function OpportunityList({ data, loading, error, limit = 6 }: Props) {
   const router = useRouter()
-  const [opps, setOpps] = useState<Oportunidade[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [tipo, setTipo] = useState('todos')
-
-  useEffect(() => {
-    async function load() {
-      try {
-        setLoading(true)
-        // Usa os MESMOS parâmetros da tela /oportunidades (limit=300, sem minScore)
-        // para compartilhar a mesma entrada de cache — garante que a oportunidade
-        // clicada exista lá quando o usuário fizer o deep-link. Recorta no cliente.
-        const params = new URLSearchParams({ limit: '300' })
-        if (uf) params.set('uf', uf)
-        const res = await fetch(`/api/opportunities?${params}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-        const lista: Oportunidade[] = (data.oportunidades ?? []).filter((o: Oportunidade) => o.score >= 40)
-        setOpps(lista)
-      } catch (e) {
-        setError('Erro ao carregar oportunidades. Verifique a configuração das APIs.')
-        console.error(e)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [uf, limit])
+  // Recorta score >= 40 (oportunidades relevantes). Dados vêm do DashboardView.
+  const opps: Oportunidade[] = (data?.oportunidades ?? []).filter((o) => o.score >= 40)
 
   if (loading) {
     return (
@@ -79,7 +49,7 @@ export default function OpportunityList({ uf, limit = 6 }: Props) {
   if (error) {
     return (
       <div className="py-6 text-center">
-        <p className="text-[12px] text-brand-red mb-2">{error}</p>
+        <p className="text-[12px] text-brand-red mb-2">Erro ao carregar oportunidades. Verifique a configuração das APIs.</p>
         <p className="text-[11px] text-faint">Configure as variáveis no .env.local</p>
       </div>
     )
@@ -93,24 +63,10 @@ export default function OpportunityList({ uf, limit = 6 }: Props) {
     )
   }
 
-  const visiveis = (tipo === 'todos' ? opps : opps.filter((o) => (o.tipoFornecimento ?? 'outros') === tipo)).slice(0, limit)
+  const visiveis = opps.slice(0, limit)
 
   return (
     <div>
-      {/* Filtro por tipo */}
-      <div className="flex gap-1 mb-2 overflow-x-auto pb-1">
-        {TIPOS_FILTRO.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTipo(t.key)}
-            className={clsx('text-[10px] font-mono-custom px-2 py-0.5 rounded-full whitespace-nowrap transition-all border',
-              tipo === t.key ? 'bg-accent text-black border-accent font-bold' : 'border-subtle2 text-faint hover:text-strong')}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       {visiveis.length === 0 && (
         <div className="py-4 text-center text-faint text-[11px]">Nenhuma oportunidade deste tipo.</div>
       )}

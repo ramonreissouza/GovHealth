@@ -1,10 +1,11 @@
 'use client'
 // src/components/dashboard/KPICards.tsx
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { clsx } from 'clsx'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
+import type { OpportunitiesData } from './DashboardView'
 
 interface KPIs {
   oportunidadesQuentes: number
@@ -48,31 +49,19 @@ const CARDS = [
   },
 ]
 
-export default function KPICards() {
-  const [kpis, setKpis] = useState<KPIs>({
-    oportunidadesQuentes: 0,
-    valorTotalEstimado: 0,
-    editaisPrevisos60d: 0,
-    municipiosMonitorados: 0,
-  })
-  const [loading, setLoading] = useState(true)
+export default function KPICards({ data, loading }: { data: OpportunitiesData | null; loading: boolean }) {
+  const opps = data?.oportunidades ?? []
+  const kpis: KPIs = {
+    oportunidadesQuentes: opps.filter((o) => o.score >= 75).length,
+    valorTotalEstimado: opps.reduce((s, o) => s + o.valorEstimado, 0),
+    editaisPrevisos60d: opps.filter((o) => o.janelaEmDias <= 60 && o.janelaEmDias > 0).length,
+    municipiosMonitorados: new Set(opps.map((o) => `${o.municipio}-${o.uf}`)).size,
+  }
 
+  // Publica o status da fonte (selo de proveniência) quando os dados chegam.
   useEffect(() => {
-    fetch('/api/opportunities?limit=200&minScore=0')
-      .then((r) => r.json())
-      .then((data) => {
-        publishDataStatus(data)
-        const opps = data.oportunidades ?? []
-        setKpis({
-          oportunidadesQuentes: opps.filter((o: any) => o.score >= 75).length,
-          valorTotalEstimado: opps.reduce((s: number, o: any) => s + o.valorEstimado, 0),
-          editaisPrevisos60d: opps.filter((o: any) => o.janelaEmDias <= 60 && o.janelaEmDias > 0).length,
-          municipiosMonitorados: new Set(opps.map((o: any) => `${o.municipio}-${o.uf}`)).size,
-        })
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false))
-  }, [])
+    if (data) publishDataStatus(data)
+  }, [data])
 
   return (
     <div className="grid grid-cols-4 gap-3 mb-4">
