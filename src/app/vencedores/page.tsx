@@ -9,6 +9,7 @@ import { clsx } from 'clsx'
 import { Search, Trophy, Database, ChevronRight, ExternalLink, Building2, Users, ListTree } from 'lucide-react'
 import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
+import { publishDataStatus } from '@/lib/data-status'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
@@ -42,6 +43,8 @@ interface ApiResponse {
   vencedores: Vencedor[]
   categorias?: { categoria: string; n: number; valor: number }[]
   total: number
+  atualizadoEm?: string
+  fonte?: string
   error?: string
   instrucoes?: string
 }
@@ -70,7 +73,7 @@ export default function VencedoresPage() {
       const res = await fetch(`/api/resultados/vencedores?${params}`)
       const json: ApiResponse = await res.json()
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
-      else setData(json)
+      else { setData(json); publishDataStatus(json) }
     } catch (e) { setErro({ msg: String(e) }); setData(null) }
     finally { setLoading(false) }
   }, [ufsAtivos, empresaQuery, catAtiva])

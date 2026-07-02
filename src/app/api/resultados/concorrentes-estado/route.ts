@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
+import { ultimaColetaResultados } from '@/lib/coleta-meta'
 
 export const runtime = 'nodejs'
 
@@ -87,7 +88,8 @@ export async function GET(req: NextRequest) {
       ufsComDados: ufsComDados.map((u) => u.uf),
       categorias: catCounts,
       valorTotal: entidades.reduce((s, e) => s + (e.valor ?? 0), 0),
-      atualizadoEm: new Date().toISOString(),
+      atualizadoEm: (await ultimaColetaResultados()) ?? new Date().toISOString(),
+      fonte: 'PNCP · resultados homologados',
     })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error)
