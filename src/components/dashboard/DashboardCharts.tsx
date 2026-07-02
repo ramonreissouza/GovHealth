@@ -39,7 +39,7 @@ export default function DashboardCharts({ data, loading }: { data: Opportunities
 
   if (loading) {
     return (
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div className="bg-bg2 border border-subtle rounded-xl p-4 h-[220px] animate-pulse" />
         <div className="bg-bg2 border border-subtle rounded-xl p-4 h-[220px] animate-pulse" />
       </div>
@@ -52,7 +52,7 @@ export default function DashboardCharts({ data, loading }: { data: Opportunities
   }
 
   return (
-    <div className="grid grid-cols-2 gap-3 mb-3">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
       {/* Area chart: tendência mensal */}
       <div className="bg-bg2 border border-subtle rounded-xl p-4">
         <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-3">

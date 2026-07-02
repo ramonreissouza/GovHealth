@@ -202,7 +202,7 @@ export default function DashboardView() {
       <KPICards data={oppData} loading={oppLoading} tipo={filtros.tipo} />
 
       {/* Oportunidades + Alertas/Concorrentes */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div className="bg-bg2 border border-subtle rounded-xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <span className="w-1.5 h-1.5 rounded-full bg-accent" />

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
-  LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle,
+  LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle, Menu, X,
   Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
@@ -74,6 +74,10 @@ export default function Sidebar() {
     if (pathname === '/alertas') setAlertCount(0)
   }, [pathname])
 
+  // Drawer no mobile (T25): a sidebar vira off-canvas com hamburger.
+  const [open, setOpen] = useState(false)
+  useEffect(() => { setOpen(false) }, [pathname])
+
   const userName = session?.user?.name ?? 'Usuário'
   const userEmail = session?.user?.email ?? ''
   const userImage = session?.user?.image
@@ -97,9 +101,27 @@ export default function Sidebar() {
   })).filter((section) => section.items.length > 0)
 
   return (
-    <aside className="w-[220px] min-w-[220px] bg-bg2 border-r border-subtle flex flex-col h-screen">
+    <>
+      {/* Hamburger — só no mobile */}
+      <button
+        onClick={() => setOpen(true)}
+        aria-label="Abrir menu"
+        className="md:hidden fixed top-3 left-3 z-[60] w-9 h-9 rounded-lg bg-bg2 border border-subtle flex items-center justify-center text-strong shadow-lg"
+      >
+        <Menu size={18} />
+      </button>
+
+      {/* Backdrop */}
+      {open && <div className="md:hidden fixed inset-0 bg-black/50 z-[55]" onClick={() => setOpen(false)} />}
+
+      <aside className={clsx(
+        'w-[220px] min-w-[220px] bg-bg2 border-r border-subtle flex flex-col h-screen z-[58]',
+        'fixed inset-y-0 left-0 transition-transform duration-200 md:static md:translate-x-0',
+        open ? 'translate-x-0' : '-translate-x-full',
+      )}>
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-5 border-b border-subtle">
+      <div className="flex items-center gap-2.5 px-5 py-5 border-b border-subtle relative">
+        <button onClick={() => setOpen(false)} aria-label="Fechar menu" className="md:hidden absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-strong"><X size={16} /></button>
         <div className="w-7 h-7 bg-accent rounded-md flex items-center justify-center flex-shrink-0">
           <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4">
             <path d="M8 2L14 5.5V10.5L8 14L2 10.5V5.5L8 2Z" stroke="#000" strokeWidth="1.5" strokeLinejoin="round"/>
@@ -126,6 +148,7 @@ export default function Sidebar() {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => setOpen(false)}
                   className={clsx(
                     'flex items-center gap-2.5 mx-1 px-3 py-2 rounded-md text-[13px] transition-all relative',
                     active
@@ -186,6 +209,7 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }
