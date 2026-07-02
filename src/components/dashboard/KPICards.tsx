@@ -2,7 +2,9 @@
 // src/components/dashboard/KPICards.tsx
 
 import { useEffect } from 'react'
+import Link from 'next/link'
 import { clsx } from 'clsx'
+import { ArrowUpRight } from 'lucide-react'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
 import type { OpportunitiesData } from './DashboardView'
@@ -49,7 +51,7 @@ const CARDS = [
   },
 ]
 
-export default function KPICards({ data, loading }: { data: OpportunitiesData | null; loading: boolean }) {
+export default function KPICards({ data, loading, tipo }: { data: OpportunitiesData | null; loading: boolean; tipo?: string }) {
   const opps = data?.oportunidades ?? []
   const kpis: KPIs = {
     oportunidadesQuentes: opps.filter((o) => o.score >= 75).length,
@@ -63,15 +65,29 @@ export default function KPICards({ data, loading }: { data: OpportunitiesData | 
     if (data) publishDataStatus(data)
   }, [data])
 
+  // Cada KPI leva à lista correspondente (não é número morto). Carrega o tipo ativo.
+  const tParam = tipo && tipo !== 'todos' ? `tipo=${tipo}` : ''
+  const opUrl = (extra = '') => `/oportunidades${[extra, tParam].filter(Boolean).length ? '?' + [extra, tParam].filter(Boolean).join('&') : ''}`
+  const HREFS: Record<keyof KPIs, string> = {
+    oportunidadesQuentes: opUrl('minScore=70'),
+    valorTotalEstimado: opUrl(),
+    editaisPrevisos60d: opUrl(),
+    municipiosMonitorados: '/estados',
+  }
+
   return (
     <div className="grid grid-cols-4 gap-3 mb-4">
       {CARDS.map((card) => (
-        <div
+        <Link
           key={card.key}
-          className="bg-bg2 border border-subtle rounded-xl p-4"
+          href={HREFS[card.key]}
+          className="group bg-bg2 border border-subtle rounded-xl p-4 hover:border-accent/40 hover:bg-bg2/80 transition-colors block"
         >
-          <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">
-            {card.label}
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">
+              {card.label}
+            </div>
+            <ArrowUpRight size={13} className="text-faint opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
           <div className={clsx('font-heading font-bold text-[28px] text-strong leading-none', loading && 'opacity-30')}>
             {loading ? '—' : card.format(kpis[card.key])}
@@ -82,7 +98,7 @@ export default function KPICards({ data, loading }: { data: OpportunitiesData | 
               <span className="text-[10px] text-accent font-mono-custom">{card.delta}</span>
             )}
           </div>
-        </div>
+        </Link>
       ))}
     </div>
   )

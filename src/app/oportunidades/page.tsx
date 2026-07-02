@@ -137,7 +137,7 @@ function OportunidadesInner() {
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
   const [anoFiltro, setAnoFiltro] = useState('todos')
   const [statusFiltro, setStatusFiltro] = useState('todos')
-  const [minScore, setMinScore] = useState(0)
+  const [minScore, setMinScore] = useState(Number(searchParams.get('minScore') ?? 0) || 0)
   const [viewMode, setViewMode] = useState<'tabela' | 'cards'>('tabela')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([])

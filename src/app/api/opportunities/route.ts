@@ -11,6 +11,7 @@ import { classificarTipo } from '@/lib/score-engine'
 import { query } from '@/lib/db'
 import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
+import { ultimaColetaResultados } from '@/lib/coleta-meta'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -326,7 +327,9 @@ export async function GET(req: NextRequest) {
       porCategoria,
       fonte,
       avisos,
-      atualizadoEm: agora,
+      // Selo de proveniência: quando vem do banco, usa a data REAL da última coleta
+      // do ETL (não a hora do request) — corrige o "atualizado agora" genérico.
+      atualizadoEm: fonte.startsWith('Banco') ? ((await ultimaColetaResultados()) ?? agora) : agora,
     })
   } catch (error) {
     console.error('[opportunities]', error)
