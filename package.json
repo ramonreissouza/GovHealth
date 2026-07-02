@@ -10,7 +10,8 @@
     "type-check": "tsc --noEmit",
     "db:setup": "node scripts/db-setup.mjs",
     "etl": "node scripts/etl-pncp.mjs",
-    "etl:overnight": "node scripts/etl-overnight.mjs"
+    "etl:overnight": "node scripts/etl-overnight.mjs",
+    "audit": "node audit/run-audit.mjs"
   },
   "dependencies": {
     "@types/mapbox-gl": "^3.1.0",
@@ -44,6 +45,7 @@
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.5",
+    "playwright": "^1.61.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
