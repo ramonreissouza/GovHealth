@@ -3,6 +3,7 @@ import type { Metadata } from 'next'
 import { DM_Sans, Syne, DM_Mono } from 'next/font/google'
 import './globals.css'
 import SessionProvider from '@/components/providers/SessionProvider'
+import NotificationsWatcher from '@/components/NotificationsWatcher'
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -41,7 +42,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR" className={`${dmSans.variable} ${syne.variable} ${dmMono.variable}`}>
       <body className="bg-bg text-strong antialiased font-sans">
-          <SessionProvider>{children}</SessionProvider>
+          <SessionProvider>
+          <NotificationsWatcher />
+          {children}
+        </SessionProvider>
         </body>
     </html>
   )
