@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle,
-  Boxes, FileSearch, FolderKanban, FileSignature, Landmark, Trophy, PieChart, Layers, Store,
+  Boxes, FileSearch, FolderKanban, FileSignature, Landmark, Trophy, PieChart, Layers, Store, CalendarClock,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
@@ -39,6 +39,7 @@ const NAV_STATIC = [
       { href: '/timeline', label: 'Timeline', icon: GitBranch, badge: '3' as string | null },
       { href: '/precos', label: 'Preços Ref.', icon: TrendingDown, badge: null as string | null },
       { href: '/crm', label: 'Pipeline CRM', icon: Kanban, badge: null as string | null },
+      { href: '/agenda', label: 'Agenda de Prazos', icon: CalendarClock, badge: null as string | null },
       { href: '/editais', label: 'Dossiês de Edital', icon: FolderKanban, badge: null as string | null },
       { href: '/contratos', label: 'Contratos.gov', icon: FileSignature, badge: null as string | null },
       { href: '/estados', label: 'Portais Estaduais', icon: Globe2, badge: '27' as string | null },
