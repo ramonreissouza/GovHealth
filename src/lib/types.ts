@@ -121,6 +121,7 @@ export interface Alert {
   urgencia: 'alta' | 'media' | 'normal'
   createdAt: string
   lida: boolean
+  href?: string // destino ao clicar no alerta (drill-down)
 }
 
 export interface DashboardKPIs {

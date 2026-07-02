@@ -69,3 +69,31 @@ CREATE INDEX IF NOT EXISTS idx_res_fornec    ON resultados (ni_fornecedor);
 CREATE INDEX IF NOT EXISTS idx_res_catmat    ON resultados (codigo_catmat);
 CREATE INDEX IF NOT EXISTS idx_res_ano       ON resultados (ano);
 CREATE INDEX IF NOT EXISTS idx_res_valor     ON resultados (valor_total_homologado DESC);
+
+-- Tipo de fornecimento MATERIALIZADO como coluna GERADA (STORED) — troca o regex
+-- full-scan por igualdade indexada (dashboard "cold" cai de ~5,5s para <1s).
+-- Preenchida automaticamente para linhas existentes e novas (sem mudar o ETL).
+-- Espelha lib/tipo-sql.ts / score-engine.classificarTipo — manter em sincronia.
+-- (O mesmo CASE roda em scripts/migrate-tipo-fornecimento.mjs para bancos ja criados.)
+ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS tipo_fornecimento TEXT
+  GENERATED ALWAYS AS (CASE
+    WHEN coalesce(objeto_compra, '') ~* '(manuten[çc]|reparo|conserto|instala[çc]|reforma|loca[çc][ãa]o|aluguel|presta[çc][ãa]o de servi|servi[çc]os? de|m[ãa]o de obra|limpeza|higieniz|esteriliza[çc]|lavanderia|dedetiz|res[íi]duo|transporte de pacient|remo[çc][ãa]o de pacient|servi[çc]o.*ambul[âa]nc|calibra[çc]|gases medicinais|oxig[êe]nio medicinal)' THEN 'servico'
+    WHEN coalesce(objeto_compra, '') ~* '([óo]rtese|pr[óo]tese|opme|implante|stent|marca-?passo|osteoss[íi]ntese|haste (femoral|intramedular)|placa (de )?tit[âa]nio|parafuso (ortop|pedicular)|lente intraocular|enxerto [óo]sseo|fio de kirschner)' THEN 'opme'
+    WHEN coalesce(objeto_compra, '') ~* '(medicament|f[áa]rmaco|farmac[êe]ut|antibi[óo]tic|insumo farmac|princ[íi]pio ativo|vacina|soro fisiol|injet[áa]vel|comprimido|ampola|quimioter[áa]pico)' THEN 'medicamento'
+    WHEN coalesce(objeto_compra, '') ~* '(tom[óo]grafo|resson[âa]ncia|ultrassom|ultrassonograf|raio-?x|mam[óo]grafo|ventilador|respirador|monitor (multi|card|de )|desfibrilador|eletrocardi[óo]grafo|ox[íi]metro|autoclave|equipamento m[ée]dic|equipamento hospitalar|equipamento odontol|mesa cir[úu]rg|foco cir[úu]rg|maca|cama hospitalar|incubadora|bomba de infus|aparelho de|cadeira odontol)' THEN 'equipamento'
+    WHEN coalesce(objeto_compra, '') ~* '(acess[óo]rio|insumo|descart[áa]vel|seringa|agulha|luva|gaze|atadura|cateter|sonda|equipo|eletrodo|m[áa]scara|avental|compressa|curativo|fralda|material m[ée]dic|material hospitalar|material de consumo|reagente|kit (para|de) (teste|diagn))' THEN 'acessorio'
+    ELSE 'outros'
+  END) STORED;
+CREATE INDEX IF NOT EXISTS idx_contr_tipo    ON contratacoes (tipo_fornecimento);
+CREATE INDEX IF NOT EXISTS idx_contr_uf_tipo ON contratacoes (uf, tipo_fornecimento);
+
+ALTER TABLE resultados ADD COLUMN IF NOT EXISTS tipo_fornecimento TEXT
+  GENERATED ALWAYS AS (CASE
+    WHEN coalesce(nome_catmat, '') ~* '(manuten[çc]|reparo|conserto|instala[çc]|reforma|loca[çc][ãa]o|aluguel|presta[çc][ãa]o de servi|servi[çc]os? de|m[ãa]o de obra|limpeza|higieniz|esteriliza[çc]|lavanderia|dedetiz|res[íi]duo|transporte de pacient|remo[çc][ãa]o de pacient|servi[çc]o.*ambul[âa]nc|calibra[çc]|gases medicinais|oxig[êe]nio medicinal)' THEN 'servico'
+    WHEN coalesce(nome_catmat, '') ~* '([óo]rtese|pr[óo]tese|opme|implante|stent|marca-?passo|osteoss[íi]ntese|haste (femoral|intramedular)|placa (de )?tit[âa]nio|parafuso (ortop|pedicular)|lente intraocular|enxerto [óo]sseo|fio de kirschner)' THEN 'opme'
+    WHEN coalesce(nome_catmat, '') ~* '(medicament|f[áa]rmaco|farmac[êe]ut|antibi[óo]tic|insumo farmac|princ[íi]pio ativo|vacina|soro fisiol|injet[áa]vel|comprimido|ampola|quimioter[áa]pico)' THEN 'medicamento'
+    WHEN coalesce(nome_catmat, '') ~* '(tom[óo]grafo|resson[âa]ncia|ultrassom|ultrassonograf|raio-?x|mam[óo]grafo|ventilador|respirador|monitor (multi|card|de )|desfibrilador|eletrocardi[óo]grafo|ox[íi]metro|autoclave|equipamento m[ée]dic|equipamento hospitalar|equipamento odontol|mesa cir[úu]rg|foco cir[úu]rg|maca|cama hospitalar|incubadora|bomba de infus|aparelho de|cadeira odontol)' THEN 'equipamento'
+    WHEN coalesce(nome_catmat, '') ~* '(acess[óo]rio|insumo|descart[áa]vel|seringa|agulha|luva|gaze|atadura|cateter|sonda|equipo|eletrodo|m[áa]scara|avental|compressa|curativo|fralda|material m[ée]dic|material hospitalar|material de consumo|reagente|kit (para|de) (teste|diagn))' THEN 'acessorio'
+    ELSE 'outros'
+  END) STORED;
+CREATE INDEX IF NOT EXISTS idx_res_tipo ON resultados (tipo_fornecimento);

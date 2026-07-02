@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
+import { isTipoFornecimento } from '@/lib/tipo-sql'
+import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 
 export const runtime = 'nodejs'
@@ -34,15 +36,23 @@ export async function GET(req: NextRequest) {
   const ano = searchParams.get('ano') ? Number(searchParams.get('ano')) : undefined
   const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
   const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
+  const tipoParam = searchParams.get('tipo')?.trim().toLowerCase() || undefined
+  const tipo = tipoParam && tipoParam !== 'todos' && isTipoFornecimento(tipoParam) ? tipoParam : undefined
   const fornecedor = searchParams.get('fornecedor')?.trim() || undefined
   const q = searchParams.get('q')?.trim() || undefined // busca por nome (ILIKE) no ranking
   const limit = Math.min(Number(searchParams.get('limit') ?? 50), 500)
 
-  // WHERE base: uf/ano (usado nas contagens por categoria e no drill-down).
+  // Cache por assinatura de parâmetros (repetir o mesmo filtro fica instantâneo).
+  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categoria ?? ''}:${tipo ?? ''}:${fornecedor ?? ''}:${q ?? ''}:${limit}`
+  const cachedResp = getCached<object>(cacheKey)
+  if (cachedResp) return NextResponse.json(cachedResp)
+
+  // WHERE base: uf/ano/tipo (usado nas contagens por categoria e no drill-down).
   const whereBase: string[] = ['r.valor_total_homologado IS NOT NULL']
   const baseParams: unknown[] = []
   if (ufs) { baseParams.push(ufs); whereBase.push(`r.uf = ANY($${baseParams.length})`) }
   if (ano) { baseParams.push(ano); whereBase.push(`r.ano = $${baseParams.length}`) }
+  if (tipo) { baseParams.push(tipo); whereBase.push(`r.tipo_fornecimento = $${baseParams.length}`) }
   const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
 
   // WHERE com categoria (KPIs).
@@ -112,7 +122,7 @@ export async function GET(req: NextRequest) {
     }
 
     const kpi = kpiRows[0]
-    return NextResponse.json({
+    const payload = {
       escopo: ufs ? ufs.join(',') : 'BR',
       categoria: categoria ?? null,
       kpis: {
@@ -127,7 +137,9 @@ export async function GET(req: NextRequest) {
       detalhe,
       atualizadoEm: (await ultimaColetaResultados()) ?? new Date().toISOString(),
       fonte: 'PNCP · resultados homologados',
-    })
+    }
+    setCached(cacheKey, payload, TTL.SHORT)
+    return NextResponse.json(payload)
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error)
     if (msg.includes('DATABASE_URL') || /relation .* does not exist/i.test(msg)) {
