@@ -50,7 +50,7 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
             title={`Fonte: ${status.fonte} · coletado em ${new Date(status.atualizadoEm).toLocaleString('pt-BR')}`}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse-dot" />
-            <span>{status.fonte} · {tempoDesde(status.atualizadoEm)}</span>
+            <span>{status.fonte} · coletado {tempoDesde(status.atualizadoEm)}</span>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 text-[11px] text-faint font-mono-custom">
