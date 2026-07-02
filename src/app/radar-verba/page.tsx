@@ -214,15 +214,21 @@ export default function RadarVerbaPage() {
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono-custom text-muted">{formatBRL(e.empenhado)}</td>
-                          <td className="px-3 py-2.5 text-right font-mono-custom text-muted">{formatBRL(e.pago)}</td>
+                          <td className="px-3 py-2.5 text-right font-mono-custom text-muted">
+                            {e.execucaoInformada ? formatBRL(e.pago) : <span className="text-faint italic" title="O Portal não informou pagamento/liquidação — diferente de pago R$0">n/inf.</span>}
+                          </td>
                           <td className="px-3 py-2.5 text-right font-mono-custom font-bold text-strong">{formatBRL(e.disponivel)}</td>
                           <td className="px-3 py-2.5">
-                            <div className="flex items-center gap-1.5">
-                              <div className="flex-1 h-1.5 bg-bg4 rounded-full overflow-hidden min-w-[36px]">
-                                <div className="h-full bg-accent rounded-full" style={{ width: `${Math.min(e.percentualExecutado, 100)}%` }} />
+                            {e.execucaoInformada ? (
+                              <div className="flex items-center gap-1.5">
+                                <div className="flex-1 h-1.5 bg-bg4 rounded-full overflow-hidden min-w-[36px]">
+                                  <div className="h-full bg-accent rounded-full" style={{ width: `${Math.min(e.percentualExecutado, 100)}%` }} />
+                                </div>
+                                <span className="text-[10px] text-faint font-mono-custom w-8 text-right">{e.percentualExecutado}%</span>
                               </div>
-                              <span className="text-[10px] text-faint font-mono-custom w-8 text-right">{e.percentualExecutado}%</span>
-                            </div>
+                            ) : (
+                              <span className="text-[10px] text-faint font-mono-custom italic" title="Execução não informada pelo Portal (≠ pago R$0)">não informado</span>
+                            )}
                           </td>
                           <td className="px-3 py-2.5" onClick={(ev) => ev.stopPropagation()}>
                             <div className="flex items-center justify-end gap-2">
@@ -251,7 +257,7 @@ export default function RadarVerbaPage() {
 
           {data && (
             <p className="text-[10px] text-faint mt-3">
-              Fonte: Portal da Transparência (emendas de saúde, ano {data.ano}). Clique numa emenda para ver os empenhos (para onde o dinheiro vai). O score é auxílio de priorização, não previsão. ⚠️ = emenda PIX (baixa rastreabilidade do destino).
+              Fonte: Portal da Transparência (emendas de saúde, ano {data.ano}). Clique numa emenda para ver os empenhos (para onde o dinheiro vai). O score é auxílio de priorização, não previsão. ⚠️ = emenda PIX (baixa rastreabilidade do destino). "n/inf." = Portal não informou pagamento (≠ pago R$0).
             </p>
           )}
         </main>

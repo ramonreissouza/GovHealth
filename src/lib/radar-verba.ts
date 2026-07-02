@@ -20,9 +20,16 @@ export interface EmendaRadar {
   pago: number
   disponivel: number          // empenhado − pago = "dinheiro em cima da mesa"
   percentualExecutado: number // 0-100
+  execucaoInformada: boolean  // false = Portal não informou pago/liquidado (≠ "pago 0")
   score: number               // 0-100
   temperatura: Temperatura
   baixaRastreabilidade: boolean // emenda PIX / transferência especial
+}
+
+// O Portal às vezes NÃO informa liquidação/pagamento (campo vazio), o que é diferente
+// de "pago = R$0,00". Distinguir os dois evita ler ausência de dado como não-execução.
+function foiInformado(valor: string | undefined): boolean {
+  return typeof valor === 'string' && valor.trim() !== ''
 }
 
 // Extrai a sigla da UF da localidade do gasto ("São Paulo (SP)", "MG", "Belo Campo/BA").
@@ -104,6 +111,7 @@ export function toEmendaRadar(e: EmendaParlamentar): EmendaRadar {
     pago,
     disponivel,
     percentualExecutado: empenhado > 0 ? Math.round((pago / empenhado) * 100) : 0,
+    execucaoInformada: foiInformado(e.valorPago) || foiInformado(e.valorLiquidado),
     score,
     temperatura: temperaturaDe(score),
     baixaRastreabilidade: eBaixaRastreabilidade(e.tipoEmenda),
