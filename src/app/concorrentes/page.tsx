@@ -12,6 +12,7 @@ import { clsx } from 'clsx'
 import { Search, Trophy, Database, Building2, ChevronRight, ExternalLink, MapPin, X } from 'lucide-react'
 import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
+import { publishDataStatus } from '@/lib/data-status'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -22,6 +23,8 @@ interface RankResponse {
   kpis: { valorTotal: number; fornecedores: number; itens: number; convenios: number }
   ranking: Ranking[]
   categorias?: CatCount[]
+  atualizadoEm?: string
+  fonte?: string
   error?: string
   instrucoes?: string
 }
@@ -78,7 +81,7 @@ export default function ConcorrentesPage() {
       const res = await fetch(`/api/resultados/fornecedores?${params}`)
       const json: RankResponse = await res.json()
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setRank(null) }
-      else setRank(json)
+      else { setRank(json); publishDataStatus(json) }
     } catch (e) { setErro({ msg: String(e) }); setRank(null) }
     finally { setLoading(false) }
   }, [filtrosParams, buscaQuery])

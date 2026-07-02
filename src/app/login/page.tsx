@@ -132,6 +132,9 @@ export default function LoginPage() {
           <p className="text-[11px] text-faint text-center mt-5 font-mono-custom">
             Acesso restrito · <a href="mailto:contato@govhealth.ai?subject=Solicitação%20de%20acesso%20—%20GovHealth%20AI" className="text-accent hover:underline">Solicitar acesso</a>
           </p>
+          <p className="text-[11px] text-faint text-center mt-2 font-mono-custom">
+            <a href="/metodologia" className="text-muted hover:text-accent hover:underline">Fontes e metodologia</a>
+          </p>
         </div>
       </div>
     </div>

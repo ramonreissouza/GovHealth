@@ -11,6 +11,7 @@ import { clsx } from 'clsx'
 import { Search, Trophy, Database, MapPin, Boxes, Package, X } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
+import { publishDataStatus } from '@/lib/data-status'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -29,6 +30,8 @@ interface ApiResponse {
   categorias?: CatCount[]
   ufsComDados: string[]
   detalhe: Detalhe | null
+  atualizadoEm?: string
+  fonte?: string
   error?: string
   instrucoes?: string
 }
@@ -64,7 +67,7 @@ export default function FornecedoresPage() {
       const res = await fetch(`/api/resultados/fornecedores?${params}`)
       const json: ApiResponse = await res.json()
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
-      else setData(json)
+      else { setData(json); publishDataStatus(json) }
     } catch (e) { setErro({ msg: String(e) }); setData(null) }
     finally { setLoading(false) }
   }, [filtrosParams, buscaQuery])
