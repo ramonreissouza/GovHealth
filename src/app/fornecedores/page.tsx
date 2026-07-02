@@ -12,6 +12,8 @@ import { Search, Trophy, Database, MapPin, Boxes, Package, X } from 'lucide-reac
 import { formatBRL } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
+import { ExportButton } from '@/components/ui/ExportButton'
+import type { ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -35,6 +37,15 @@ interface ApiResponse {
   error?: string
   instrucoes?: string
 }
+
+const COLS_EXPORT: ExportColumn<Ranking>[] = [
+  { key: 'fornecedor', label: 'Fornecedor' },
+  { key: 'cnpj', label: 'CNPJ' },
+  { key: 'valor', label: 'Valor homologado (R$)' },
+  { key: 'itens', label: 'Itens únicos' },
+  { key: 'convenios', label: 'Convênios' },
+  { key: 'ufs', label: 'UFs de atuação' },
+]
 
 export default function FornecedoresPage() {
   const [data, setData] = useState<ApiResponse | null>(null)
@@ -187,6 +198,9 @@ export default function FornecedoresPage() {
               <input value={busca} onChange={(e) => setBusca(e.target.value)}
                 placeholder="Buscar fornecedor por nome…"
                 className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
+            </div>
+            <div className="ml-auto">
+              <ExportButton data={ranking} columns={COLS_EXPORT} filename="govhealth-fornecedores" title="Ranking de Fornecedores — GovHealth AI" />
             </div>
           </div>
 

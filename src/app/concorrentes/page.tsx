@@ -13,6 +13,8 @@ import { Search, Trophy, Database, Building2, ChevronRight, ExternalLink, MapPin
 import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
+import { ExportButton } from '@/components/ui/ExportButton'
+import type { ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -48,6 +50,26 @@ interface ContratosResponse {
   contratos: Contrato[]
   error?: string
 }
+
+const COLS_RANKING: ExportColumn<Ranking>[] = [
+  { key: 'fornecedor', label: 'Concorrente' },
+  { key: 'cnpj', label: 'CNPJ' },
+  { key: 'valor', label: 'Valor homologado (R$)' },
+  { key: 'convenios', label: 'Licitações vencidas' },
+  { key: 'itens', label: 'Itens' },
+  { key: 'ufs', label: 'UFs de atuação' },
+]
+
+const COLS_CONTRATOS: ExportColumn<Contrato>[] = [
+  { key: 'proponente', label: 'Instituição' },
+  { key: 'municipio', label: 'Município' },
+  { key: 'uf', label: 'UF' },
+  { key: 'modalidade_nome', label: 'Modalidade' },
+  { key: 'data', label: 'Data', format: (v) => (v ? formatDate(String(v)) : '') },
+  { key: 'itens', label: 'Nº de itens', format: (v) => String(Array.isArray(v) ? v.length : '') },
+  { key: 'valorTotal', label: 'Valor total (R$)' },
+  { key: 'convenio', label: 'Nº controle PNCP' },
+]
 
 export default function ConcorrentesPage() {
   const [rank, setRank] = useState<RankResponse | null>(null)
@@ -201,6 +223,9 @@ export default function ConcorrentesPage() {
                 placeholder="Buscar concorrente por nome…"
                 className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
             </div>
+            <div className="ml-auto">
+              <ExportButton data={ranking} columns={COLS_RANKING} filename="govhealth-concorrentes" title="Radar de Concorrência — GovHealth AI" />
+            </div>
           </div>
 
           {erro ? (
@@ -270,7 +295,14 @@ export default function ConcorrentesPage() {
                         </div>
                       )}
                     </div>
-                    <button onClick={() => setSelecionado(null)} className="text-faint hover:text-strong flex-shrink-0"><X size={16} /></button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {contratos && contratos.contratos.length > 0 && (
+                        <ExportButton data={contratos.contratos} columns={COLS_CONTRATOS}
+                          filename={`govhealth-licitacoes-${(selecionado ?? '').slice(0, 30).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}
+                          title={`Licitações vencidas — ${selecionado}`} />
+                      )}
+                      <button onClick={() => setSelecionado(null)} className="text-faint hover:text-strong"><X size={16} /></button>
+                    </div>
                   </div>
 
                   {contratosLoading ? (
