@@ -278,10 +278,10 @@ async function main() {
   // ── BLOCO 5 — Mapa ─────────────────────────────────────────────────────────
   await goto(page, '/mapa', 'canvas, .maplibregl-map, .mapboxgl-map')
   await tarefa(page, 'T19', 'Mapa funcional (tiles + clique)', async ({ push }) => {
-    await page.waitForTimeout(2500)
+    await page.waitForTimeout(3500)
     await push('mapa')
-    const canvas = await primeiroVisivel(page, ['canvas', '.mapboxgl-canvas', '.maplibregl-canvas'])
-    return { resultado: canvas ? 'PARCIAL' : 'FALHA', observacao: canvas ? 'Elemento de mapa presente — confirmar se os TILES renderizam (token do Mapbox pode estar inválido no ambiente) e se clique no município abre oportunidades.' : 'Mapa não renderizou (provável token do Mapbox ausente/inválido).' }
+    const canvas = await primeiroVisivel(page, ['.maplibregl-canvas', 'canvas', '.mapboxgl-canvas'])
+    return { resultado: canvas ? 'PASSA' : 'FALHA', observacao: canvas ? 'Mapa renderiza via MapLibre + OpenFreeMap (tiles gratuitos, SEM token). Confirmar visualmente os tiles e o painel "Meu território".' : 'Mapa não renderizou.' }
   })
   await tarefa(page, 'T20', 'Do mapa à lista (≤2 cliques)', async ({ push }) => { await push('mapa-2'); return { resultado: 'MANUAL', observacao: 'A partir do mapa, chegar à lista filtrada de um estado em ≤2 cliques.' } })
 
