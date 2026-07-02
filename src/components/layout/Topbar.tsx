@@ -33,7 +33,7 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
   }
 
   return (
-    <header className="h-[52px] border-b border-subtle bg-bg2 flex items-center px-6 gap-4 flex-shrink-0">
+    <header className="h-[52px] border-b border-subtle bg-bg2 flex items-center px-6 pl-16 md:pl-6 gap-4 flex-shrink-0">
       <div className="flex-1 min-w-0">
         <span className="font-heading font-semibold text-[15px] text-strong">{title}</span>
         {subtitle && (

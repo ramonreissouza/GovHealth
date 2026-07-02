@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Trophy, Building2, Database, Filter } from 'lucide-react'
+import { Trophy, Building2, Database, Filter, X, Loader2, MapPin, Package } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { formatBRL } from '@/lib/format'
 import { CATEGORIAS } from '@/lib/categoria-mercado'
@@ -18,6 +18,9 @@ const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','P
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
 const CORES = ['#00ff9d','#60a5fa','#f59e0b','#f87171','#c084fc','#4ade80','#22d3ee','#fb923c','#a78bfa','#34d399','#f472b6','#94a3b8','#fbbf24','#38bdf8']
 
+interface PorRow { chave: string | null; valor: number; qtd: number }
+interface PorCatRow { categoria: string; valor: number; qtd: number }
+interface PorItemRow { item: string; codigo_catmat: string | null; valor: number; qtd: number }
 interface Top3 { vencedor: string | null; valor: number; item: string | null }
 interface ItemDist { item: string; valor: number; qtd: number; pct: number }
 interface Entidade { entidade: string | null; valor: number; convenios: number }
@@ -52,6 +55,23 @@ export default function ConcorrentesEstadoPage() {
   const [ano, setAno] = useState('todos')
   const [itemFiltro, setItemFiltro] = useState<string | null>(null)
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
+
+  // Drill-down de um concorrente (T18): histórico por estado/categoria/item.
+  const [drill, setDrill] = useState<string | null>(null)
+  const [drillData, setDrillData] = useState<{ porEstado: PorRow[]; porCategoria: PorCatRow[]; porItem: PorItemRow[] } | null>(null)
+  const [drillLoading, setDrillLoading] = useState(false)
+
+  const abrirDrill = useCallback((nome: string | null) => {
+    if (!nome) return
+    setDrill(nome); setDrillData(null); setDrillLoading(true)
+    const p = new URLSearchParams({ fornecedor: nome })
+    if (ano !== 'todos') p.set('ano', ano)
+    fetch(`/api/resultados/fornecedores?${p}`)
+      .then((r) => r.json())
+      .then((d) => setDrillData(d.detalhe ?? null))
+      .catch(() => {})
+      .finally(() => setDrillLoading(false))
+  }, [ano])
 
   const load = useCallback(async () => {
     setLoading(true); setErro(null)
@@ -157,15 +177,20 @@ export default function ConcorrentesEstadoPage() {
                     Sem resultados para {uf}. Rode <span className="font-mono-custom">npm run etl -- --uf={uf}</span>.
                   </div>
                 ) : top3.map((t, i) => (
-                  <div key={i} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">
+                  <button
+                    key={i}
+                    onClick={() => abrirDrill(t.vencedor)}
+                    className="bg-bg2 border border-subtle rounded-xl px-4 py-3 text-left hover:border-accent/40 hover:bg-bg3 transition-colors group"
+                  >
                     <div className="flex items-center gap-1.5 mb-1">
                       <Trophy size={13} className={clsx(i === 0 ? 'text-amber' : i === 1 ? 'text-faint' : 'text-[#cd7f32]')} />
                       <span className="text-[10px] font-mono-custom text-faint">#{i + 1} concorrente</span>
+                      <span className="ml-auto text-[9px] font-mono-custom text-faint opacity-0 group-hover:opacity-100 transition-opacity">ver perfil →</span>
                     </div>
-                    <div className="text-[13px] font-semibold text-strong leading-tight truncate">{t.vencedor ?? '—'}</div>
+                    <div className="text-[13px] font-semibold text-strong leading-tight truncate group-hover:text-accent transition-colors">{t.vencedor ?? '—'}</div>
                     <div className="text-[16px] font-mono-custom font-bold text-accent mt-1">{formatBRL(t.valor)}</div>
                     <div className="text-[10px] text-faint truncate mt-0.5">{t.item ?? '—'}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
 
@@ -233,6 +258,68 @@ export default function ConcorrentesEstadoPage() {
             </>
           )}
         </main>
+      </div>
+
+      {/* Drill-down do concorrente (T18) */}
+      {drill && (
+        <div className="fixed inset-0 z-40" onClick={() => setDrill(null)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div onClick={(e) => e.stopPropagation()} className="absolute right-0 top-0 h-full w-full max-w-[460px] bg-bg2 border-l border-subtle shadow-2xl overflow-y-auto">
+            <div className="sticky top-0 bg-bg2 border-b border-subtle px-5 py-4 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">Perfil do concorrente</div>
+                <h2 className="font-heading font-bold text-[15px] text-strong mt-1 leading-tight">{drill}</h2>
+              </div>
+              <button onClick={() => setDrill(null)} className="text-faint hover:text-strong transition-colors flex-shrink-0"><X size={18} /></button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {drillLoading ? (
+                <div className="flex items-center gap-2 text-[12px] text-faint py-8 justify-center"><Loader2 size={14} className="animate-spin" /> Carregando histórico…</div>
+              ) : !drillData ? (
+                <p className="text-[12px] text-muted py-4">Sem histórico detalhado para este concorrente.</p>
+              ) : (
+                <>
+                  <div className="bg-bg3 border border-subtle rounded-lg p-3">
+                    <div className="text-[10px] font-mono-custom text-faint uppercase">Total homologado{ano !== 'todos' ? ` (${ano})` : ''}</div>
+                    <div className="text-[18px] font-mono-custom font-bold text-accent">{formatBRL(drillData.porEstado.reduce((s, r) => s + r.valor, 0))}</div>
+                    <div className="text-[10px] text-faint">{drillData.porEstado.length} estado(s) · {drillData.porItem.length} item(ns)</div>
+                  </div>
+
+                  <DrillBloco titulo="Onde vende (estados)" icon={<MapPin size={12} className="text-accent" />}
+                    linhas={drillData.porEstado.slice(0, 10).map((r) => ({ rotulo: r.chave ?? '—', valor: r.valor, qtd: r.qtd }))} />
+                  <DrillBloco titulo="O que vende (categorias)" icon={<Package size={12} className="text-accent" />}
+                    linhas={drillData.porCategoria.slice(0, 8).map((r) => ({ rotulo: r.categoria, valor: r.valor, qtd: r.qtd }))} />
+                  <DrillBloco titulo="Principais itens" icon={<Trophy size={12} className="text-accent" />}
+                    linhas={drillData.porItem.slice(0, 10).map((r) => ({ rotulo: r.item, valor: r.valor, qtd: r.qtd }))} />
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DrillBloco({ titulo, icon, linhas }: { titulo: string; icon: React.ReactNode; linhas: { rotulo: string; valor: number; qtd: number }[] }) {
+  if (linhas.length === 0) return null
+  const max = Math.max(...linhas.map((l) => l.valor), 1)
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-2">{icon}<span className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">{titulo}</span></div>
+      <div className="space-y-1.5">
+        {linhas.map((l, i) => (
+          <div key={i}>
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="text-strong truncate">{l.rotulo}</span>
+              <span className="font-mono-custom text-accent flex-shrink-0">{formatBRL(l.valor)}</span>
+            </div>
+            <div className="h-1 bg-bg4 rounded-full overflow-hidden mt-0.5">
+              <div className="h-full bg-accent/50 rounded-full" style={{ width: `${(l.valor / max) * 100}%` }} />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )

@@ -31,10 +31,13 @@ export const authOptions: NextAuthOptions = {
             name: 'Demo User',
           },
           { email: 'teste@govhealth.ai', password: 'Teste@2026', name: 'Usuário de Teste' },
+          { email: 'pedro.moreira@techealth.com.br', password: 'pedrotec123', name: 'Pedro Moreira' },
         ]
 
+        // E-mail comparado sem diferenciar maiúsculas/minúsculas; senha exata.
+        const emailInformado = credentials?.email?.trim().toLowerCase()
         const conta = contas.find(
-          (c) => c.email === credentials?.email && c.password === credentials?.password,
+          (c) => c.email.toLowerCase() === emailInformado && c.password === credentials?.password,
         )
         if (conta) {
           return { id: conta.email, name: conta.name, email: conta.email, image: null }
