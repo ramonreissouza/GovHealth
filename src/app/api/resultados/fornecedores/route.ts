@@ -6,14 +6,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
-import { tipoFornecimentoCaseSql, isTipoFornecimento } from '@/lib/tipo-sql'
+import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 
 export const runtime = 'nodejs'
 
 const CAT_SQL = categoriaCaseSql('r.nome_catmat')
-const TIPO_SQL = tipoFornecimentoCaseSql('r.nome_catmat')
 
 interface RankingRow {
   fornecedor: string | null
@@ -53,7 +52,7 @@ export async function GET(req: NextRequest) {
   const baseParams: unknown[] = []
   if (ufs) { baseParams.push(ufs); whereBase.push(`r.uf = ANY($${baseParams.length})`) }
   if (ano) { baseParams.push(ano); whereBase.push(`r.ano = $${baseParams.length}`) }
-  if (tipo) { baseParams.push(tipo); whereBase.push(`(${TIPO_SQL}) = $${baseParams.length}`) }
+  if (tipo) { baseParams.push(tipo); whereBase.push(`r.tipo_fornecimento = $${baseParams.length}`) }
   const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
 
   // WHERE com categoria (KPIs).

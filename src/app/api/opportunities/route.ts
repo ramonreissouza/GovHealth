@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
 import { classificarTipo } from '@/lib/score-engine'
 import { query } from '@/lib/db'
-import { tipoFornecimentoCaseSql, isTipoFornecimento } from '@/lib/tipo-sql'
+import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
@@ -101,8 +101,6 @@ interface ContratacaoRow {
   tipo_fornecimento: string | null
 }
 
-const TIPO_SQL = tipoFornecimentoCaseSql('objeto_compra')
-
 // Fonte primária: banco. Retorna null quando indisponível/vazio (sinal p/ fallback PNCP).
 async function buscarDoBanco(params: {
   uf?: string
@@ -116,15 +114,14 @@ async function buscarDoBanco(params: {
   const where: string[] = ['valor_total_estimado >= 10000', "objeto_compra IS NOT NULL"]
   const args: unknown[] = []
   if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
-  if (params.tipo) { args.push(params.tipo); where.push(`(${TIPO_SQL}) = $${args.length}`) }
+  if (params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
 
   const rows = await query<ContratacaoRow>(
     `SELECT numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
             modalidade_nome, objeto_compra, ano_compra, sequencial_compra,
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
-            situacao_id, categoria_saude,
-            (${TIPO_SQL}) AS tipo_fornecimento
+            situacao_id, categoria_saude, tipo_fornecimento
      FROM contratacoes
      WHERE ${where.join(' AND ')}
      ORDER BY data_publicacao DESC NULLS LAST
@@ -192,7 +189,7 @@ async function agregadosDoBanco(params: { uf?: string; tipo?: TipoFornecimento }
   const where: string[] = ['valor_total_estimado >= 10000']
   const args: unknown[] = []
   if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
-  if (params.tipo) { args.push(params.tipo); where.push(`(${TIPO_SQL}) = $${args.length}`) }
+  if (params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
   const whereSql = `WHERE ${where.join(' AND ')}`
 
   const [serie, cats] = await Promise.all([

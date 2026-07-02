@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
 import { buscarEmendasSaudeAno, parseValorBR, type EmendaParlamentar } from '@/lib/emendas'
 import { query } from '@/lib/db'
-import { tipoFornecimentoCaseSql, isTipoFornecimento } from '@/lib/tipo-sql'
+import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { Alert } from '@/lib/types'
 import { randomUUID } from 'crypto'
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     const where: string[] = ['valor_total_estimado >= 10000', 'objeto_compra IS NOT NULL']
     const args: unknown[] = []
     if (uf) { args.push(uf.toUpperCase()); where.push(`uf = $${args.length}`) }
-    if (tipo) { args.push(tipo); where.push(`(${tipoFornecimentoCaseSql('objeto_compra')}) = $${args.length}`) }
+    if (tipo) { args.push(tipo); where.push(`tipo_fornecimento = $${args.length}`) }
     const editais = await query<EditalRow>(
       `SELECT numero_controle_pncp, razao_social_orgao, municipio, uf, objeto_compra,
               valor_total_estimado::float8 AS valor_total_estimado,
