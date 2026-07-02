@@ -20,19 +20,24 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Senha', type: 'password' },
       },
       async authorize(credentials) {
-        const demoEmail = process.env.AUTH_DEMO_EMAIL ?? 'demo@govhealth.ai'
-        const demoPassword = process.env.AUTH_DEMO_PASSWORD ?? 'demo123'
-
-        if (
-          credentials?.email === demoEmail &&
-          credentials?.password === demoPassword
-        ) {
-          return {
-            id: '1',
+        // Contas aceitas no login por credenciais. A conta "demo" pode ser
+        // sobrescrita por env vars; a conta de teste é fixa no código para
+        // garantir um acesso conhecido em qualquer ambiente (local e Vercel),
+        // sem depender de configurar variáveis no painel da Vercel.
+        const contas = [
+          {
+            email: process.env.AUTH_DEMO_EMAIL ?? 'demo@govhealth.ai',
+            password: process.env.AUTH_DEMO_PASSWORD ?? 'demo123',
             name: 'Demo User',
-            email: demoEmail,
-            image: null,
-          }
+          },
+          { email: 'teste@govhealth.ai', password: 'Teste@2026', name: 'Usuário de Teste' },
+        ]
+
+        const conta = contas.find(
+          (c) => c.email === credentials?.email && c.password === credentials?.password,
+        )
+        if (conta) {
+          return { id: conta.email, name: conta.name, email: conta.email, image: null }
         }
         return null
       },
