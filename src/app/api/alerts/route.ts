@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
         urgencia: 'media',
         createdAt: agora,
         lida: false,
-        href: '/emendas',
+        href: '/radar-verba',
       })
     }
   } catch (e) {
