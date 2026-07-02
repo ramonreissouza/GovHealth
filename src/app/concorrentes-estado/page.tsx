@@ -11,6 +11,8 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { formatBRL } from '@/lib/format'
 import { CATEGORIAS } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
+import { ExportButton } from '@/components/ui/ExportButton'
+import type { ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -34,6 +36,12 @@ interface ApiResponse {
   error?: string
   instrucoes?: string
 }
+
+const COLS_ENTIDADES: ExportColumn<Entidade>[] = [
+  { key: 'entidade', label: 'Entidade beneficiada' },
+  { key: 'valor', label: 'Valor homologado (R$)' },
+  { key: 'convenios', label: 'Convênios' },
+]
 
 export default function ConcorrentesEstadoPage() {
   const [data, setData] = useState<ApiResponse | null>(null)
@@ -119,8 +127,9 @@ export default function ConcorrentesEstadoPage() {
             </div>
           </div>
 
-          {/* Ano */}
-          <div className="flex gap-0.5 bg-bg2 border border-subtle2 rounded-lg p-1 mb-4 w-fit">
+          {/* Ano + exportar */}
+          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex gap-0.5 bg-bg2 border border-subtle2 rounded-lg p-1 w-fit">
             {ANOS.map((a) => (
               <button key={a} onClick={() => setAno(a)}
                 className={clsx('text-[11px] font-mono-custom px-3 py-1.5 rounded-md transition-all',
@@ -128,6 +137,9 @@ export default function ConcorrentesEstadoPage() {
                 {a === 'todos' ? 'Todos anos' : a}
               </button>
             ))}
+          </div>
+            <ExportButton data={entidades} columns={COLS_ENTIDADES}
+              filename={`govhealth-entidades-${uf}`} title={`Entidades beneficiadas ${uf} — GovHealth AI`} />
           </div>
 
           {erro ? (

@@ -10,6 +10,8 @@ import { Search, Trophy, Database, ChevronRight, ExternalLink, Building2, Users,
 import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
+import { ExportButton } from '@/components/ui/ExportButton'
+import type { ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
@@ -24,6 +26,19 @@ const CAT_COR: Record<string, string> = {
   laboratorio: 'bg-pink-500/15 text-pink-400',
   outros: 'bg-faint/10 text-faint',
 }
+
+const COLS_EXPORT: ExportColumn<Vencedor>[] = [
+  { key: 'proponente', label: 'Proponente' },
+  { key: 'convenio', label: 'Convênio' },
+  { key: 'vencedor', label: 'Vencedor' },
+  { key: 'codigo_catmat', label: 'Cód. CATMAT' },
+  { key: 'nome_catmat', label: 'Item' },
+  { key: 'categoria', label: 'Categoria', format: (v) => (v ? (CATEGORIA_LABEL[String(v)] ?? String(v)) : '') },
+  { key: 'uf', label: 'UF' },
+  { key: 'ano', label: 'Ano' },
+  { key: 'qtd', label: 'Qtd' },
+  { key: 'valor', label: 'Valor homologado (R$)' },
+]
 
 interface Vencedor {
   proponente: string | null
@@ -152,11 +167,14 @@ export default function VencedoresPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2 mb-4 max-w-md">
-            <Search size={13} className="text-faint flex-shrink-0" />
-            <input value={empresa} onChange={(e) => setEmpresa(e.target.value)}
-              placeholder="Buscar empresa vencedora…"
-              className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
+          <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2 max-w-md flex-1">
+              <Search size={13} className="text-faint flex-shrink-0" />
+              <input value={empresa} onChange={(e) => setEmpresa(e.target.value)}
+                placeholder="Buscar empresa vencedora…"
+                className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
+            </div>
+            <ExportButton data={vencedores} columns={COLS_EXPORT} filename="govhealth-vencedores" title="Vencedores — GovHealth AI" />
           </div>
 
           {/* Conteúdo */}
