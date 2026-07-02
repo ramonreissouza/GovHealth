@@ -17,6 +17,7 @@ import {
 } from '@/lib/alertas'
 import type { Alert } from '@/lib/types'
 import { formatBRL } from '@/lib/format'
+import NotificationToggle from '@/components/ui/NotificationToggle'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -390,13 +391,16 @@ export default function AlertasPage() {
                 Configure monitoramentos e acompanhe notificações de novas licitações.
               </p>
             </div>
-            <button
-              onClick={() => { setEditing(null); setModalOpen(true) }}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors"
-            >
-              <Plus size={14} />
-              Novo Monitor
-            </button>
+            <div className="flex items-center gap-2">
+              <NotificationToggle />
+              <button
+                onClick={() => { setEditing(null); setModalOpen(true) }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors"
+              >
+                <Plus size={14} />
+                Novo Monitor
+              </button>
+            </div>
           </div>
 
           {/* Tabs */}
