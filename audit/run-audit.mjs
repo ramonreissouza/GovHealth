@@ -45,13 +45,30 @@ async function shot(page, id, nome = '') {
 
 function log(...a) { console.log(...a) }
 
-// Vai para uma rota e espera o conteúdo client-side popular (a app faz fetch no cliente).
+// Vai para uma rota e espera o conteúdo client-side popular. Robusto a latência:
+// aguarda networkidle + o seletor esperado (timeouts folgados p/ cold-start serverless).
 async function goto(page, pathname, esperaSeletor) {
-  await page.goto(BASE + pathname, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {})
+  await page.goto(BASE + pathname, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {})
+  await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
   if (esperaSeletor) {
-    await page.locator(esperaSeletor).first().waitFor({ timeout: 12000 }).catch(() => {})
+    await page.locator(esperaSeletor).first().waitFor({ timeout: 25000 }).catch(() => {})
   }
-  await page.waitForTimeout(1800) // deixa os fetches do dashboard/listas assentarem
+  await page.waitForTimeout(1500)
+}
+
+// Espera o DASHBOARD carregar dados de verdade (um KPI com valor "R$..." ou "Score ≥"),
+// não só o esqueleto — evita falso-negativo por cold-start da API/DB.
+async function esperarDashboard(page, timeout = 30000) {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    const pronto = await page.evaluate(() => {
+      const txt = document.body.innerText || ''
+      return /R\$\s?\d/.test(txt) && /prioritárias/i.test(txt)
+    }).catch(() => false)
+    if (pronto) return true
+    await page.waitForTimeout(1000)
+  }
+  return false
 }
 
 async function primeiroVisivel(page, seletores) {
@@ -105,21 +122,16 @@ async function main() {
     await page.locator('input[type="email"]').fill(EMAIL)
     await page.locator('input[type="password"]').fill(PASSWORD)
     await page.getByRole('button', { name: /^Entrar$/ }).click()
-    await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000 }).catch(() => {})
-    await page.waitForTimeout(2500)
-    const dt = (Date.now() - t0) / 1000
+    await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 30000 }).catch(() => {})
+    const dt = (Date.now() - t0) / 1000 // tempo do LOGIN (redirect), separado da carga de dados
     tempos.login = dt.toFixed(1) + 's'
-    await push('dashboard')
     const naDash = new URL(page.url()).pathname === '/'
-    // "tem dados?" — procura KPIs numéricos ou linhas de oportunidade
-    const temConteudo = await primeiroVisivel(page, [
-      'text=/Oportunidades prioritárias/i', 'text=/Dashboard executivo/i', 'text=/Alertas inteligentes/i',
-    ])
+    const temConteudo = await esperarDashboard(page) // espera dados reais (robusto a cold-start)
+    await push('dashboard')
     const onboarding = await primeiroVisivel(page, ['text=/tour|onboarding|bem-vindo|começar aqui/i'])
-    const passou = naDash && !!temConteudo && dt < 5
     return {
       resultado: naDash && temConteudo ? (dt < 5 ? 'PASSA' : 'PARCIAL') : 'FALHA',
-      observacao: `login=${dt.toFixed(1)}s, caiu em ${new URL(page.url()).pathname}, dashboard com conteúdo=${!!temConteudo}. Onboarding/tour para novo usuário: ${onboarding ? 'sim' : 'não detectado'}.`,
+      observacao: `login=${dt.toFixed(1)}s (redirect), caiu em ${new URL(page.url()).pathname}, dashboard com dados=${temConteudo}. Onboarding/tour: ${onboarding ? 'sim' : 'não detectado'}. Obs.: 1ª carga pode sofrer cold-start do serverless/DB.`,
     }
   })
 
@@ -132,6 +144,7 @@ async function main() {
   })
 
   // ── T03 Atualidade do dado ─────────────────────────────────────────────────
+  await esperarDashboard(page)
   await tarefa(page, 'T03', 'Atualidade do dado', async ({ push }) => {
     const selo = await primeiroVisivel(page, [
       'text=/coletad/i', 'text=/atualizado/i', 'text=/coleta/i', 'text=/há \\d+\\s*(min|h|d)/i', 'text=/\\d{2}\\/\\d{2}\\/\\d{4}/',
@@ -144,10 +157,11 @@ async function main() {
 
   // ── T04 Do KPI ao detalhe ──────────────────────────────────────────────────
   await tarefa(page, 'T04', 'KPI clicável → lista', async ({ push }) => {
+    await esperarDashboard(page)
     const urlAntes = page.url()
     const kpi = await primeiroVisivel(page, ['text=/Oportunidades quentes/i'])
-    if (kpi) await kpi.click({ timeout: 3000 }).catch(() => {})
-    await page.waitForTimeout(1200)
+    if (kpi) await kpi.click({ timeout: 5000 }).catch(() => {})
+    await page.waitForTimeout(2500)
     await push('apos-clique')
     const mudou = page.url() !== urlAntes
     return { resultado: mudou ? 'PASSA' : 'FALHA', observacao: mudou ? `Navegou para ${new URL(page.url()).pathname}` : 'Clicar no KPI "Oportunidades quentes" não navegou — card é número morto (não é link).' }
