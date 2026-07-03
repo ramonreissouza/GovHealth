@@ -17,6 +17,7 @@
     "@types/mapbox-gl": "^3.1.0",
     "ai": "^3.3.0",
     "axios": "^1.7.3",
+    "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "lucide-react": "^0.408.0",
@@ -39,6 +40,7 @@
     "zustand": "^4.5.4"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^18",
