@@ -60,6 +60,21 @@ interface ScoreBadgeProps {
 export function ScoreBadge({ score, status, subScores, acaoRecomendada, size = 'md', side = 'right' }: ScoreBadgeProps) {
   const resolvedStatus = status ?? (score >= 75 ? 'quente' : score >= 50 ? 'morno' : 'frio')
 
+  // Lado do tooltip: mede o espaço no hover e vira de lado se não couber à direita
+  // (evita o tooltip sair da tela quando o badge está no canto direito).
+  const wrapperRef = React.useRef<HTMLDivElement>(null)
+  const [ladoTip, setLadoTip] = React.useState<'left' | 'right'>(side)
+  function ajustarLado() {
+    const el = wrapperRef.current
+    if (!el || typeof window === 'undefined') return
+    const rect = el.getBoundingClientRect()
+    const espacoDireita = window.innerWidth - rect.right
+    const espacoEsquerda = rect.left
+    // ~264px de tooltip + margem; se não couber à direita, abre à esquerda (se lá couber).
+    if (espacoDireita < 290 && espacoEsquerda > espacoDireita) setLadoTip('left')
+    else setLadoTip('right')
+  }
+
   // When tooltip props are not provided, render simple badge (backward compatible)
   if (!acaoRecomendada) {
     return (
@@ -74,7 +89,7 @@ export function ScoreBadge({ score, status, subScores, acaoRecomendada, size = '
   }
 
   return (
-    <div className="group relative flex-shrink-0">
+    <div ref={wrapperRef} onMouseEnter={ajustarLado} className="group relative flex-shrink-0">
       {/* Badge */}
       <span className={clsx(
         'inline-flex items-center justify-center rounded-lg font-mono-custom font-bold cursor-help select-none',
@@ -84,15 +99,15 @@ export function ScoreBadge({ score, status, subScores, acaoRecomendada, size = '
         {score}
       </span>
 
-      {/* Tooltip — floats left or right of badge */}
+      {/* Tooltip — vira de lado conforme o espaço na tela (ladoTip) */}
       <div className={clsx(
-        side === 'left'
+        ladoTip === 'left'
           ? 'absolute right-12 top-1/2 -translate-y-1/2 w-64'
           : 'absolute left-12 top-1/2 -translate-y-1/2 w-64',
         'bg-bg2 border border-subtle2 rounded-xl shadow-2xl p-3.5',
         'opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-[200]',
       )}>
-        {side === 'left' ? (
+        {ladoTip === 'left' ? (
           <>
             <div className="absolute left-full top-1/2 -translate-y-1/2 w-0 h-0
               border-t-[6px] border-b-[6px] border-l-[6px]
