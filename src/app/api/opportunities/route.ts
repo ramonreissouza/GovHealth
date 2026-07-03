@@ -105,30 +105,37 @@ interface ContratacaoRow {
 // Fonte primária: banco. Retorna null quando indisponível/vazio (sinal p/ fallback PNCP).
 async function buscarDoBanco(params: {
   uf?: string
+  ufs?: string[]
   tipo?: TipoFornecimento
+  porUf?: number // amostra por UF (mapa): top-N por UF, cobertura geográfica
   agora: string
 }): Promise<Oportunidade[] | null> {
-  const cacheKey = `opp:banco:${params.uf ?? ''}:${params.tipo ?? ''}`
+  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}`
   const cached = getCached<Oportunidade[]>(cacheKey)
   if (cached) return cached
 
   const where: string[] = ['valor_total_estimado >= 10000', "objeto_compra IS NOT NULL"]
   const args: unknown[] = []
-  if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
+  if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
+  else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
   if (params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
 
-  const rows = await query<ContratacaoRow>(
-    `SELECT numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
+  const cols = `numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
             modalidade_nome, objeto_compra, ano_compra, sequencial_compra,
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
-            situacao_id, categoria_saude, tipo_fornecimento
-     FROM contratacoes
-     WHERE ${where.join(' AND ')}
-     ORDER BY data_publicacao DESC NULLS LAST
-     LIMIT 4000`,
-    args,
-  )
+            situacao_id, categoria_saude, tipo_fornecimento`
+
+  // Modo mapa: top-N por UF (janela) → toda UF com dado aparece, sem viés de recência.
+  // Caso contrário: os 4000 mais recentes (o dashboard/lista querem prioridade temporal).
+  const sql = params.porUf
+    ? `SELECT ${cols} FROM (
+         SELECT *, ROW_NUMBER() OVER (PARTITION BY uf ORDER BY valor_total_estimado DESC NULLS LAST) AS rn
+         FROM contratacoes WHERE ${where.join(' AND ')}
+       ) c WHERE rn <= ${Math.min(Math.max(Math.floor(params.porUf), 1), 100)}`
+    : `SELECT ${cols} FROM contratacoes WHERE ${where.join(' AND ')} ORDER BY data_publicacao DESC NULLS LAST LIMIT 4000`
+
+  const rows = await query<ContratacaoRow>(sql, args)
 
   if (!rows.length) return null
 
@@ -179,17 +186,18 @@ async function buscarDoBanco(params: {
 interface SerieMensalRow { mes: string; count: number; valor: number }
 interface PorCategoriaRow { categoria: string; count: number; valor: number }
 
-async function agregadosDoBanco(params: { uf?: string; tipo?: TipoFornecimento }): Promise<{
+async function agregadosDoBanco(params: { uf?: string; ufs?: string[]; tipo?: TipoFornecimento }): Promise<{
   serieMensal: SerieMensalRow[]
   porCategoria: PorCategoriaRow[]
 }> {
-  const cacheKey = `opp:agg:${params.uf ?? ''}:${params.tipo ?? ''}`
+  const cacheKey = `opp:agg:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.tipo ?? ''}`
   const cached = getCached<{ serieMensal: SerieMensalRow[]; porCategoria: PorCategoriaRow[] }>(cacheKey)
   if (cached) return cached
 
   const where: string[] = ['valor_total_estimado >= 10000']
   const args: unknown[] = []
-  if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
+  if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
+  else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
   if (params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
   const whereSql = `WHERE ${where.join(' AND ')}`
 
@@ -242,6 +250,9 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl
     const uf = searchParams.get('uf') ?? undefined
+    const ufsParam = searchParams.get('ufs') ?? undefined // território multi-UF ("CE,BA,PE")
+    const ufs = ufsParam ? ufsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean) : undefined
+    const porUf = searchParams.get('porUf') ? Number(searchParams.get('porUf')) : undefined // amostra por UF (mapa)
     const minScore = Number(searchParams.get('minScore') ?? 0)
     const categoria = searchParams.get('categoria') ?? undefined
     const regiao = searchParams.get('regiao') ?? undefined
@@ -258,10 +269,10 @@ export async function GET(req: NextRequest) {
     let porCategoria: PorCategoriaRow[] = []
 
     try {
-      const doBanco = await buscarDoBanco({ uf, tipo, agora })
+      const doBanco = await buscarDoBanco({ uf, ufs, tipo, porUf, agora })
       if (doBanco && doBanco.length) {
         oportunidades = doBanco
-        const agg = await agregadosDoBanco({ uf, tipo }) // gráficos sobre o dataset completo
+        const agg = await agregadosDoBanco({ uf, ufs, tipo }) // gráficos sobre o dataset completo
         serieMensal = agg.serieMensal
         porCategoria = agg.porCategoria
       } else {

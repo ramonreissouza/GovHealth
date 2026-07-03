@@ -52,7 +52,9 @@ export default function MapaLicitacoes() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await fetch('/api/opportunities?limit=400&minScore=0')
+      // Amostra por UF (porUf) → toda UF com dado aparece no mapa, sem viés de recência
+      // (SP/MG/RJ têm dados de meados/2025 que não entravam no "top-400 mais recente").
+      const r = await fetch('/api/opportunities?porUf=30&limit=1500&minScore=0')
       const d = await r.json()
       publishDataStatus(d)
       const raw: Oportunidade[] = d.oportunidades ?? []

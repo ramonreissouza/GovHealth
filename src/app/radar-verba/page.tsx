@@ -12,6 +12,8 @@ import { formatBRL } from '@/lib/format'
 import { createDeal, dealExists } from '@/lib/crm'
 import { parseValorBR, type EmendaDetalhe } from '@/lib/emendas'
 import type { EmendaRadar, Temperatura } from '@/lib/radar-verba'
+import { getTerritorio } from '@/lib/territorio'
+import TerritorioToggle from '@/components/ui/TerritorioToggle'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const PORTAL_URL = 'https://portaldatransparencia.gov.br/emendas'
@@ -38,6 +40,10 @@ export default function RadarVerbaPage() {
   const [ano, setAno] = useState('')
   const [subfuncao, setSubfuncao] = useState('')
   const [soQuentes, setSoQuentes] = useState(false)
+  const [terrAtivo, setTerrAtivo] = useState(false)
+  const [terr, setTerr] = useState<string[]>([])
+  useEffect(() => { setTerr(getTerritorio()) }, [])
+  const usandoTerritorio = terrAtivo && terr.length > 0
   const [data, setData] = useState<Resposta | null>(null)
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState<Resposta | null>(null)
@@ -61,7 +67,8 @@ export default function RadarVerbaPage() {
     setLoading(true)
     setErro(null)
     const p = new URLSearchParams()
-    if (uf) p.set('uf', uf)
+    if (usandoTerritorio) p.set('ufs', terr.join(','))
+    else if (uf) p.set('uf', uf)
     if (ano) p.set('ano', ano)
     if (subfuncao) p.set('subfuncao', subfuncao)
     if (soQuentes) p.set('soQuentes', '1')
@@ -70,7 +77,7 @@ export default function RadarVerbaPage() {
       .then((d: Resposta) => { if (d.error) setErro(d); else setData(d) })
       .catch(() => setErro({ error: 'Falha ao carregar o radar.' } as Resposta))
       .finally(() => setLoading(false))
-  }, [uf, ano, subfuncao, soQuentes])
+  }, [uf, ano, subfuncao, soQuentes, usandoTerritorio, terr])
 
   useEffect(() => { carregar() }, [carregar])
 
@@ -120,11 +127,12 @@ export default function RadarVerbaPage() {
           <div className="flex items-center gap-2 mb-4 flex-wrap">
             <div className="flex items-center gap-1.5">
               <MapPin size={13} className="text-faint" />
-              <select value={uf} onChange={(e) => setUf(e.target.value)} className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none">
+              <select value={uf} onChange={(e) => setUf(e.target.value)} disabled={usandoTerritorio} title={usandoTerritorio ? 'Território ativo comanda as UFs' : undefined} className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none disabled:opacity-50">
                 <option value="">Todas UFs</option>
                 {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
+            <TerritorioToggle ativo={terrAtivo} onToggle={setTerrAtivo} />
             <select value={ano} onChange={(e) => setAno(e.target.value)} className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none">
               <option value="">Ano (auto)</option>
               {[anoAtual, anoAtual - 1, anoAtual - 2, anoAtual - 3].map((a) => <option key={a} value={a}>{a}</option>)}
