@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { emailExiste, criarUsuario } from '@/lib/users'
 import { planoPorId } from '@/lib/planos'
+import { enviarBoasVindasTrial } from '@/lib/email'
 
 export const runtime = 'nodejs'
 
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
     }
 
     const plano = planoPorId(d.plano)!
+    const trialAte = dataMais(DIAS_TRIAL)
     await criarUsuario({
       email,
       nome: d.nome,
@@ -50,10 +52,17 @@ export async function POST(req: NextRequest) {
       telefone: d.telefone,
       plano: plano.id,
       status_assinatura: 'trial',
-      expira_em: dataMais(DIAS_TRIAL),
+      expira_em: trialAte,
     })
 
-    return NextResponse.json({ ok: true, plano: plano.id, trialAte: dataMais(DIAS_TRIAL), diasTrial: DIAS_TRIAL })
+    // E-mail de boas-vindas do trial — best-effort, não bloqueia o cadastro.
+    try {
+      await enviarBoasVindasTrial({ email, nome: d.nome, plano: plano.id, expiraEm: trialAte })
+    } catch (e) {
+      console.warn('[cadastro] falha ao enviar boas-vindas:', e)
+    }
+
+    return NextResponse.json({ ok: true, plano: plano.id, trialAte, diasTrial: DIAS_TRIAL })
   } catch (e) {
     console.error('[cadastro POST]', e)
     return NextResponse.json({ error: 'Não foi possível criar a conta.' }, { status: 500 })
