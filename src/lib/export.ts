@@ -43,6 +43,35 @@ export function exportToXLSX<T>(data: T[], columns: ExportColumn<T>[], filename:
   XLSX.writeFile(wb, `${filename}.xlsx`)
 }
 
+export interface ExportSheet {
+  name: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  columns: ExportColumn<any>[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any[]
+}
+
+/** Exporta várias tabelas como um único .xlsx (uma aba por conjunto). */
+export function exportSheetsToXLSX(sheets: ExportSheet[], filename: string) {
+  const wb = XLSX.utils.book_new()
+  const usados = new Set<string>()
+  for (const s of sheets) {
+    const ws_data = [
+      s.columns.map((c) => c.label),
+      ...s.data.map((row) => s.columns.map((col) => applyFormat(col, row))),
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(ws_data)
+    ws['!cols'] = s.columns.map(() => ({ wch: 24 }))
+    // Nome da aba: máx 31 chars e único.
+    let nome = s.name.slice(0, 31)
+    let i = 2
+    while (usados.has(nome)) { nome = `${s.name.slice(0, 28)} ${i++}` }
+    usados.add(nome)
+    XLSX.utils.book_append_sheet(wb, ws, nome)
+  }
+  XLSX.writeFile(wb, `${filename}.xlsx`)
+}
+
 export function printTable<T>(data: T[], columns: ExportColumn<T>[], title: string) {
   const rows = data.map((row) =>
     `<tr>${columns.map((col) => `<td>${applyFormat(col, row)}</td>`).join('')}</tr>`
