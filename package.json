@@ -13,7 +13,9 @@
     "etl:overnight": "node scripts/etl-overnight.mjs",
     "audit": "node audit/run-audit.mjs",
     "admin:seed": "node scripts/seed-admin.mjs",
-    "admin:set-password": "node scripts/set-master-password.mjs"
+    "admin:set-password": "node scripts/set-master-password.mjs",
+    "stripe:migrate": "node scripts/migrate-stripe.mjs",
+    "stripe:setup": "node scripts/stripe-setup.mjs"
   },
   "dependencies": {
     "@types/mapbox-gl": "^3.1.0",
@@ -35,6 +37,7 @@
     "react-map-gl": "^8.1.1",
     "recharts": "^3.8.1",
     "resend": "^6.12.3",
+    "stripe": "^18.5.0",
     "swr": "^2.2.5",
     "tailwind-merge": "^2.4.0",
     "xlsx": "^0.18.5",
