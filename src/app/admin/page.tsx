@@ -12,6 +12,7 @@ import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ba
 import { formatarPreco, planoPorId } from '@/lib/planos'
 
 const AdminMapa = dynamic(() => import('@/components/admin/AdminMapa'), { ssr: false, loading: () => <div className="h-[560px] rounded-xl border border-subtle flex items-center justify-center text-faint text-[13px]">Carregando mapa…</div> })
+const AdminAnalytics = dynamic(() => import('@/components/admin/AdminAnalytics'), { ssr: false, loading: () => <div className="py-10 text-center text-faint text-[13px]">Carregando análise…</div> })
 
 type Tab = 'contas' | 'assinaturas' | 'dashboard' | 'acessos' | 'mapa'
 
@@ -306,6 +307,10 @@ function TabDashboard() {
         <Kpi label="Novas no mês" v={d.novasMes} />
         <Kpi label="Acessos hoje" v={d.acessosHoje} />
       </div>
+
+      {/* Análise de acessos: quem acessa & o que é mais acessado (filtros + gráficos) */}
+      <div className="mb-6"><AdminAnalytics /></div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="bg-bg2 border border-subtle rounded-xl p-4">
           <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-3">Distribuição por plano</div>

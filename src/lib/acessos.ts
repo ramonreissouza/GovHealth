@@ -92,6 +92,74 @@ export async function pontosMapa(opts: { dias?: number; userId?: string } = {}):
   )
 }
 
+/**
+ * Análise de acessos para o dashboard do admin: quem acessa e o que é mais
+ * acessado, com filtro por período e por estado (UF = coluna regiao).
+ */
+export interface AnaliseAcessos {
+  kpis: { total: number; unicos: number; logins: number; pageviews: number }
+  serie: { dia: string; logins: number; pageviews: number }[]
+  porUf: { uf: string; n: number }[]
+  topRotas: { rota: string; n: number }[]
+  topUsuarios: { email: string | null; nome: string | null; n: number }[]
+  topCidades: { cidade: string; n: number }[]
+  dispositivos: { tipo: string; n: number }[]
+  ufs: string[]
+}
+
+export async function analiseAcessos(opts: { dias?: number; uf?: string } = {}): Promise<AnaliseAcessos> {
+  const dias = Math.min(Math.max(opts.dias ?? 30, 1), 365)
+  const uf = opts.uf && opts.uf !== 'todos' ? opts.uf : null
+
+  // Conjunto filtrado (período + UF opcional) — usado na maioria das agregações.
+  const wf = `criado_em > now() - ($1 || ' days')::interval` + (uf ? ` AND regiao = $2` : '')
+  const pf: unknown[] = uf ? [dias, uf] : [dias]
+  // Conjunto só por período (para a distribuição por UF e o seletor de estados).
+  const wp = `criado_em > now() - ($1 || ' days')::interval`
+  const pp: unknown[] = [dias]
+
+  const [kpisR, serie, porUf, topRotas, topUsuarios, topCidades, dispositivos, ufsR] = await Promise.all([
+    queryOne<{ total: number; unicos: number; logins: number; pageviews: number }>(
+      `SELECT count(*)::int total, count(DISTINCT coalesce(user_id, ip))::int unicos,
+              count(*) FILTER (WHERE evento='login')::int logins,
+              count(*) FILTER (WHERE evento='page_view')::int pageviews
+       FROM acessos WHERE ${wf}`, pf),
+    query<{ dia: string; logins: number; pageviews: number }>(
+      `SELECT to_char(date_trunc('day', criado_em),'YYYY-MM-DD') dia,
+              count(*) FILTER (WHERE evento='login')::int logins,
+              count(*) FILTER (WHERE evento='page_view')::int pageviews
+       FROM acessos WHERE ${wf} GROUP BY 1 ORDER BY 1`, pf),
+    query<{ uf: string; n: number }>(
+      `SELECT regiao uf, count(*)::int n FROM acessos
+       WHERE ${wp} AND regiao IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT 27`, pp),
+    query<{ rota: string; n: number }>(
+      `SELECT rota, count(*)::int n FROM acessos
+       WHERE ${wf} AND evento='page_view' AND rota IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT 12`, pf),
+    query<{ email: string | null; nome: string | null; n: number }>(
+      `SELECT email, max(nome) nome, count(*)::int n FROM acessos
+       WHERE ${wf} AND email IS NOT NULL GROUP BY email ORDER BY n DESC LIMIT 10`, pf),
+    query<{ cidade: string; n: number }>(
+      `SELECT cidade, count(*)::int n FROM acessos
+       WHERE ${wf} AND cidade IS NOT NULL AND cidade <> 'local/dev' GROUP BY 1 ORDER BY n DESC LIMIT 8`, pf),
+    query<{ tipo: string; n: number }>(
+      `SELECT CASE
+                WHEN user_agent ~* 'bot|crawl|spider|http' THEN 'bot'
+                WHEN user_agent ~* 'Mobile|Android|iPhone|iPad' THEN 'mobile'
+                WHEN user_agent IS NULL THEN 'desconhecido'
+                ELSE 'desktop' END tipo,
+              count(*)::int n
+       FROM acessos WHERE ${wf} GROUP BY 1 ORDER BY n DESC`, pf),
+    query<{ regiao: string }>(
+      `SELECT DISTINCT regiao FROM acessos WHERE ${wp} AND regiao IS NOT NULL ORDER BY 1`, pp),
+  ])
+
+  return {
+    kpis: kpisR ?? { total: 0, unicos: 0, logins: 0, pageviews: 0 },
+    serie, porUf, topRotas, topUsuarios, topCidades, dispositivos,
+    ufs: ufsR.map((r) => r.regiao),
+  }
+}
+
 /** Expurgo LGPD: remove acessos com mais de 90 dias. Retorna quantos removeu. */
 export async function expurgarAcessosAntigos(dias = 90): Promise<number> {
   const r = await query<{ id: number }>(`DELETE FROM acessos WHERE criado_em < now() - ($1 || ' days')::interval RETURNING id`, [dias])
