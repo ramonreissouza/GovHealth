@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
+import Image from 'next/image'
 import { signOut } from 'next-auth/react'
 import { clsx } from 'clsx'
 import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, ShieldCheck, Copy, CreditCard } from 'lucide-react'
@@ -32,8 +33,8 @@ export default function AdminPage() {
       <header className="border-b border-subtle bg-bg2 sticky top-0 z-20">
         <div className="max-w-[1200px] mx-auto px-5 h-14 flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <ShieldCheck size={18} className="text-accent" />
-            <span className="font-heading font-bold text-[15px]">GovHealth <span className="text-accent">Admin</span></span>
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={130} height={59} className="h-6 w-auto" />
+            <span className="font-mono-custom text-[11px] font-semibold text-accent border border-accent/30 rounded px-1.5 py-0.5">Admin</span>
           </div>
           <nav className="flex items-center gap-1 ml-4">
             {([['contas', 'Contas', Users], ['assinaturas', 'Assinaturas', CreditCard], ['dashboard', 'Dashboard', LayoutDashboard], ['acessos', 'Acessos', ScrollText], ['mapa', 'Mapa', MapIcon]] as [Tab, string, React.ElementType][]).map(([k, label, Icon]) => (

@@ -26,8 +26,8 @@ function moldura(titulo: string, corpo: string): string {
     <body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;">
       <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
         <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
-          <tr><td style="padding:22px 26px;border-bottom:1px solid #eef2f7;">
-            <span style="font-size:16px;font-weight:700;color:#0f172a;">GovHealth<span style="color:#059669;">.ai</span></span>
+          <tr><td style="padding:20px 26px;border-bottom:1px solid #eef2f7;">
+            <img src="${appUrl()}/logo-govhealth.png" alt="GovHealth" height="26" style="height:26px;width:auto;display:block;" />
           </td></tr>
           <tr><td style="padding:26px;">
             <h1 style="font-size:19px;color:#0f172a;margin:0 0 12px;">${titulo}</h1>
@@ -42,7 +42,7 @@ function moldura(titulo: string, corpo: string): string {
 }
 
 const btn = (href: string, label: string) =>
-  `<a href="${href}" style="display:inline-block;margin-top:14px;background:#059669;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px;">${label}</a>`
+  `<a href="${href}" style="display:inline-block;margin-top:14px;background:#2f80ed;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px;">${label}</a>`
 
 /** Formata 'YYYY-MM-DD' → 'DD/MM/YYYY'. */
 function dataBR(iso?: string | null): string {

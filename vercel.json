@@ -5,7 +5,7 @@
   "installCommand": "npm install",
   "regions": ["gru1"],
   "env": {
-    "NEXT_PUBLIC_APP_URL": "https://govhealth-ai.vercel.app"
+    "NEXT_PUBLIC_APP_URL": "https://gov-health.vercel.app"
   },
   "crons": [
     {

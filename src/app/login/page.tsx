@@ -6,6 +6,7 @@ import { signIn, getSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useEffect, Suspense, FormEvent } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { clsx } from 'clsx'
 import { Loader2, Check } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
@@ -34,17 +35,9 @@ function Auth() {
     <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-10">
       <div className={clsx('w-full', modo === 'criar' ? 'max-w-[860px]' : 'max-w-[380px]')}>
         {/* Logo */}
-        <div className="flex items-center gap-3 justify-center mb-8">
-          <div className="w-9 h-9 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
-            <svg viewBox="0 0 16 16" fill="none" className="w-5 h-5">
-              <path d="M8 2L14 5.5V10.5L8 14L2 10.5V5.5L8 2Z" stroke="#000" strokeWidth="1.5" strokeLinejoin="round"/>
-              <circle cx="8" cy="8" r="2" fill="#000"/>
-            </svg>
-          </div>
-          <div>
-            <div className="font-heading font-bold text-[18px] text-strong leading-none">GovHealth.ai</div>
-            <div className="font-mono-custom text-[11px] text-faint mt-0.5 tracking-wide">Sales Intelligence</div>
-          </div>
+        <div className="flex flex-col items-center gap-2 mb-8">
+          <Image src="/logo-govhealth.png" alt="GovHealth" width={170} height={77} priority className="h-9 w-auto" />
+          <span className="font-mono-custom text-[11px] text-faint tracking-wide">Sales Intelligence</span>
         </div>
 
         {/* Toggle Entrar / Criar conta */}
