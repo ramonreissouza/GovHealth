@@ -3,13 +3,14 @@
 // quem está acessando (usuários, estados, cidades, dispositivos) e o que é mais
 // acessado (páginas), com filtro por período e por estado. Gráficos: recharts.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { clsx } from 'clsx'
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
   BarChart, Bar, Cell, PieChart, Pie,
 } from 'recharts'
-import { Users, MousePointerClick, LogIn, Activity } from 'lucide-react'
+import { Users, MousePointerClick, LogIn, Activity, Download, ChevronDown, FileText, Table2 } from 'lucide-react'
+import { exportSheetsToXLSX, exportToCSV, type ExportSheet } from '@/lib/export'
 
 interface Analise {
   kpis: { total: number; unicos: number; logins: number; pageviews: number }
@@ -49,6 +50,41 @@ export default function AdminAnalytics() {
     fetch(`/api/admin/analytics?${p}`).then((r) => r.json()).then(setD).catch(() => {}).finally(() => setLoading(false))
   }, [dias, uf])
 
+  // ── Exportação ──────────────────────────────────────────────────────────────
+  const [expOpen, setExpOpen] = useState(false)
+  const expRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (expRef.current && !expRef.current.contains(e.target as Node)) setExpOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+  const sufixo = `${dias}d${uf !== 'todos' ? `_${uf}` : ''}_${new Date().toISOString().slice(0, 10)}`
+  const rotasFmt = () => (d?.topRotas ?? []).map((r) => ({ pagina: rotulo(r.rota), rota: r.rota, n: r.n }))
+
+  function exportarExcel() {
+    if (!d) return
+    const sheets: ExportSheet[] = [
+      { name: 'Resumo', columns: [{ key: 'm', label: 'Métrica' }, { key: 'v', label: 'Valor' }],
+        data: [{ m: 'Acessos', v: d.kpis.total }, { m: 'Visitantes únicos', v: d.kpis.unicos }, { m: 'Logins', v: d.kpis.logins }, { m: 'Páginas vistas', v: d.kpis.pageviews }] },
+      { name: 'Acessos por dia', columns: [{ key: 'dia', label: 'Dia' }, { key: 'logins', label: 'Logins' }, { key: 'pageviews', label: 'Páginas vistas' }], data: d.serie },
+      { name: 'Por estado', columns: [{ key: 'uf', label: 'Estado (UF)' }, { key: 'n', label: 'Acessos' }], data: d.porUf },
+      { name: 'Quem acessa', columns: [{ key: 'nome', label: 'Nome' }, { key: 'email', label: 'E-mail' }, { key: 'n', label: 'Acessos' }], data: d.topUsuarios },
+      { name: 'Mais acessado', columns: [{ key: 'pagina', label: 'Página' }, { key: 'rota', label: 'Rota' }, { key: 'n', label: 'Acessos' }], data: rotasFmt() },
+      { name: 'Cidades', columns: [{ key: 'cidade', label: 'Cidade' }, { key: 'n', label: 'Acessos' }], data: d.topCidades },
+      { name: 'Dispositivos', columns: [{ key: 'tipo', label: 'Tipo' }, { key: 'n', label: 'Acessos' }], data: d.dispositivos },
+    ]
+    exportSheetsToXLSX(sheets, `analise-acessos_${sufixo}`)
+    setExpOpen(false)
+  }
+  function csvQuem() {
+    exportToCSV(d?.topUsuarios ?? [], [{ key: 'nome', label: 'Nome' }, { key: 'email', label: 'E-mail' }, { key: 'n', label: 'Acessos' }], `quem-acessa_${sufixo}`)
+    setExpOpen(false)
+  }
+  function csvRotas() {
+    exportToCSV(rotasFmt(), [{ key: 'pagina', label: 'Página' }, { key: 'rota', label: 'Rota' }, { key: 'n', label: 'Acessos' }], `mais-acessado_${sufixo}`)
+    setExpOpen(false)
+  }
+
   return (
     <div>
       {/* Filtros */}
@@ -65,6 +101,27 @@ export default function AdminAnalytics() {
           <select value={dias} onChange={(e) => setDias(e.target.value)} className="text-[12px] bg-bg2 border border-subtle rounded-lg px-2.5 py-2 focus:border-accent outline-none">
             <option value="7">7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option>
           </select>
+          {/* Exportar */}
+          <div className="relative" ref={expRef}>
+            <button onClick={() => setExpOpen((p) => !p)} disabled={!d || d.kpis.total === 0}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent text-white text-[12px] font-semibold hover:bg-accent-2 transition-colors disabled:opacity-40">
+              <Download size={13} /> Exportar <ChevronDown size={11} className={expOpen ? 'rotate-180' : ''} />
+            </button>
+            {expOpen && (
+              <div className="absolute right-0 top-full mt-1 w-56 bg-bg2 border border-subtle rounded-lg shadow-lg z-50 py-1 overflow-hidden">
+                <button onClick={exportarExcel} className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left">
+                  <Table2 size={13} /> Excel completo <span className="ml-auto text-[10px] font-mono-custom text-faint">.xlsx</span>
+                </button>
+                <div className="my-1 border-t border-subtle" />
+                <button onClick={csvQuem} className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left">
+                  <FileText size={13} /> CSV — Quem acessa
+                </button>
+                <button onClick={csvRotas} className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left">
+                  <FileText size={13} /> CSV — Mais acessado
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
