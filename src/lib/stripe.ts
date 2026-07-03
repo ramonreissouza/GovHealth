@@ -8,6 +8,7 @@
 
 import Stripe from 'stripe'
 import { type Plano } from '@/lib/planos'
+import { siteUrl } from '@/lib/site'
 
 let _stripe: Stripe | null = null
 
@@ -25,12 +26,9 @@ export function stripeConfigurado(): boolean {
   return !!process.env.STRIPE_SECRET_KEY
 }
 
-/** URL base pública p/ success/cancel (Vercel injeta VERCEL_URL sem protocolo). */
+/** URL base pública p/ success/cancel, e-mails e OG. Domínio canônico (lib/site). */
 export function appUrl(): string {
-  const explicit = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL
-  if (explicit) return explicit.replace(/\/$/, '')
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
-  return 'http://localhost:3000'
+  return siteUrl()
 }
 
 /** Price ID configurado para o plano (se houver). */
