@@ -14,9 +14,9 @@ import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
 type Metodo = 'pix' | 'cartao' | 'boleto'
 
 const METODOS: { key: Metodo; label: string; icon: React.ElementType; nota: string }[] = [
-  { key: 'pix', label: 'PIX', icon: QrCode, nota: 'QR Code gerado no pagamento (aprovação imediata).' },
-  { key: 'cartao', label: 'Cartão de crédito', icon: CreditCard, nota: 'Cobrança mensal recorrente. O cartão é inserido no checkout seguro do provedor de pagamento — nunca passa pelos nossos servidores.' },
-  { key: 'boleto', label: 'Boleto (30 dias)', icon: FileText, nota: 'Boleto com vencimento em 30 dias, comum em compras institucionais/saúde.' },
+  { key: 'cartao', label: 'Cartão de crédito', icon: CreditCard, nota: 'Cobrança mensal recorrente automática. O cartão é inserido no checkout seguro do Stripe (PCI-DSS) — nunca passa pelos nossos servidores. Você é redirecionado para concluir o pagamento.' },
+  { key: 'pix', label: 'PIX', icon: QrCode, nota: 'Ideal para compras institucionais. Registramos sua solicitação e nossa equipe envia o QR Code / cobrança e conclui a ativação com nota fiscal.' },
+  { key: 'boleto', label: 'Boleto (30 dias)', icon: FileText, nota: 'Comum em compras institucionais/saúde. Registramos sua solicitação e nossa equipe emite o boleto (30 dias) com nota fiscal.' },
 ]
 
 export default function AssinarPage() {
@@ -32,7 +32,7 @@ function Checkout() {
   const plano = planoPorId(sp.get('plano')) ?? PLANOS.find((p) => p.destaque) ?? PLANOS[0]
 
   const [f, setF] = useState({ nome: '', email: '', empresa: '', instituicao: '', cpfCnpj: '', telefone: '', endereco: '' })
-  const [metodo, setMetodo] = useState<Metodo>('pix')
+  const [metodo, setMetodo] = useState<Metodo>('cartao')
   const [erro, setErro] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [ok, setOk] = useState(false)
@@ -41,6 +41,20 @@ function Checkout() {
     setErro('')
     if (!f.nome.trim() || !f.email.trim()) { setErro('Preencha nome e e-mail.'); return }
     setEnviando(true)
+
+    // Cartão → Stripe Checkout hospedado (recorrente). Redireciona para o Stripe.
+    if (metodo === 'cartao') {
+      const res = await fetch('/api/assinaturas/checkout', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...f, plano: plano.id }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (res.ok && d.url) { window.location.href = d.url; return }
+      // Stripe ainda não configurado (503): não quebra — registra como lead abaixo.
+      if (res.status !== 503) { setEnviando(false); setErro(d.error ?? 'Não foi possível iniciar o pagamento.'); return }
+    }
+
+    // PIX/Boleto → registra a intenção (lead institucional); equipe conclui.
     const res = await fetch('/api/assinaturas', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ...f, plano: plano.id, metodo }),
@@ -115,7 +129,8 @@ function Checkout() {
               {erro && <p className="text-[12px] text-red mt-3">{erro}</p>}
               <button onClick={assinar} disabled={enviando}
                 className="mt-5 w-full flex items-center justify-center gap-2 text-[15px] font-semibold bg-accent text-black py-3 rounded-lg hover:bg-accent2 disabled:opacity-60">
-                {enviando && <Loader2 size={16} className="animate-spin" />} Concluir assinatura · {formatarPreco(plano.preco)}/{plano.ciclo}
+                {enviando && <Loader2 size={16} className="animate-spin" />}
+                {metodo === 'cartao' ? 'Ir para pagamento seguro' : 'Enviar solicitação'} · {formatarPreco(plano.preco)}/{plano.ciclo}
               </button>
               <p className="text-[10.5px] text-faint text-center mt-2 flex items-center justify-center gap-1"><ShieldCheck size={11} /> Dados de cartão processados por gateway certificado (PCI-DSS) — não armazenamos o cartão.</p>
             </div>

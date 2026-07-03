@@ -43,15 +43,18 @@ export async function middleware(req: NextRequest) {
     if (pathname === '/api/auth/callback/credentials') {
       const r = rateLimit(`login:${ip}`, 10, 60_000) // brute force de login: 10/min
       if (!r.ok) return resp429(r)
-    } else if (!pathname.startsWith('/api/auth/') && !pathname.startsWith('/api/cron/')) {
+    } else if (!pathname.startsWith('/api/auth/') && !pathname.startsWith('/api/cron/') && !pathname.startsWith('/api/stripe/')) {
+      // /api/stripe/webhook: o Stripe pode enviar rajadas de eventos — não limitar
+      // (é autenticado pela assinatura HMAC do payload na própria rota).
       const r = rateLimit(`api:${ip}`, 150, 60_000) // APIs de dados: 150/min
       if (!r.ok) return resp429(r)
     }
   }
 
-  // ── NextAuth e cron não passam pela auth de sessão do middleware ─────────────
-  // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET na rota.
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/assinaturas')) {
+  // ── NextAuth, cron e Stripe não passam pela auth de sessão do middleware ──────
+  // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET; o
+  // webhook do Stripe é validado pela assinatura HMAC na própria rota.
+  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas')) {
     return NextResponse.next()
   }
 

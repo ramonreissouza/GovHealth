@@ -135,6 +135,54 @@ export async function kpisAdmin() {
   }
 }
 
+/**
+ * Provisiona/atualiza a conta ao ativar uma assinatura paga (webhook Stripe).
+ * - Conta nova: cria com senha temporária (retornada p/ envio ao cliente).
+ * - Conta existente: só atualiza plano/status/expiração (mantém a senha).
+ * Nunca mexe em conta master. Idempotente.
+ */
+export async function provisionarPorAssinatura(data: {
+  email: string; nome?: string | null; plano: string; empresa?: string | null
+  telefone?: string | null; instituicao?: string | null; stripeCustomerId?: string | null
+  expira_em?: string | null
+}): Promise<{ criada: boolean; senhaTemporaria?: string }> {
+  const id = norm(data.email)
+  const existente = await queryOne<{ role: Role }>(`SELECT role FROM usuarios WHERE id=$1`, [id])
+
+  if (existente) {
+    // Não rebaixa nem toca no master; reativa e atualiza o plano.
+    await query(
+      `UPDATE usuarios
+          SET plano=$2, status_assinatura='ativa', suspenso=false, deleted_at=NULL,
+              expira_em=COALESCE($3::date, expira_em),
+              stripe_customer_id=COALESCE($4, stripe_customer_id), atualizado_em=now()
+        WHERE id=$1`,
+      [id, data.plano, data.expira_em ?? null, data.stripeCustomerId ?? null],
+    )
+    return { criada: false }
+  }
+
+  const senha = gerarSenhaTemporaria()
+  const hash = await bcrypt.hash(senha, 10)
+  await query(
+    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,instituicao,plano,status_assinatura,expira_em,stripe_customer_id)
+     VALUES ($1,$1,$2,$3,'user',$4,$5,$6,$7,'ativa',$8,$9)`,
+    [id, data.nome ?? null, hash, data.empresa ?? null, data.telefone ?? null, data.instituicao ?? null,
+     data.plano, data.expira_em ?? null, data.stripeCustomerId ?? null],
+  )
+  return { criada: true, senhaTemporaria: senha }
+}
+
+/** Marca status da conta pela assinatura (inadimplente/cancelada) sem excluir. */
+export async function marcarStatusAssinatura(email: string, status: 'ativa' | 'inadimplente' | 'cancelada'): Promise<void> {
+  const suspende = status === 'cancelada'
+  await query(
+    `UPDATE usuarios SET status_assinatura=$2, suspenso=$3, atualizado_em=now()
+      WHERE id=$1 AND role<>'master'`,
+    [norm(email), status, suspende],
+  )
+}
+
 /** Senha temporária legível (mostrada uma vez ao admin). */
 export function gerarSenhaTemporaria(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
