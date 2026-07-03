@@ -6,7 +6,9 @@
 
 import Link from 'next/link'
 import type { Metadata } from 'next'
-import { Stethoscope, Radar, Workflow, ArrowRight, ShieldCheck } from 'lucide-react'
+import { clsx } from 'clsx'
+import { Stethoscope, Radar, Workflow, ArrowRight, ShieldCheck, Check } from 'lucide-react'
+import { PLANOS, formatarPreco } from '@/lib/planos'
 
 export const metadata: Metadata = {
   title: 'GovHealth AI — Inteligência comercial para licitações de saúde',
@@ -66,6 +68,7 @@ export default function InicioPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <a href="#planos" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Planos</a>
             <Link href="/metodologia" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Metodologia</Link>
             <Link href="/login" className="text-[12px] font-semibold text-black bg-accent hover:bg-accent2 px-3.5 py-1.5 rounded-md transition-colors">
               Entrar
@@ -134,6 +137,41 @@ export default function InicioPage() {
               </div>
             ))}
           </div>
+        </section>
+
+        {/* Planos */}
+        <section id="planos" className="pb-16">
+          <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-2">Planos</p>
+          <h2 className="text-center font-heading font-bold text-[26px] mb-1">Escolha o plano da sua operação</h2>
+          <p className="text-center text-[13px] text-muted mb-8 max-w-[520px] mx-auto">Mensal, sem fidelidade. Pagamento por PIX, cartão ou boleto (30 dias) — com nota fiscal.</p>
+          <div className="grid sm:grid-cols-2 gap-4 max-w-[760px] mx-auto">
+            {PLANOS.map((p) => (
+              <div key={p.id} className={clsx('rounded-2xl p-6 border flex flex-col', p.destaque ? 'border-accent bg-accent/5 shadow-lg' : 'border-subtle bg-bg2')}>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="font-heading font-bold text-[18px]">{p.nome}</h3>
+                  {p.destaque && <span className="text-[10px] font-mono-custom text-black bg-accent px-2 py-0.5 rounded-full font-bold">Mais completo</span>}
+                </div>
+                <p className="text-[12px] text-muted mb-3">{p.resumo}</p>
+                <div className="flex items-baseline gap-1 mb-4">
+                  <span className="font-heading font-bold text-[32px]">{formatarPreco(p.preco)}</span>
+                  <span className="text-[13px] text-faint">/{p.ciclo}</span>
+                </div>
+                <ul className="space-y-2 mb-5 flex-1">
+                  {p.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-[12.5px] text-strong">
+                      <Check size={14} className="text-accent flex-shrink-0 mt-0.5" /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <Link href={`/assinar?plano=${p.id}`}
+                  className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-2.5 rounded-lg transition-colors',
+                    p.destaque ? 'bg-accent text-black hover:bg-accent2' : 'bg-bg3 border border-subtle2 text-strong hover:border-accent/50')}>
+                  Assinar {p.nome} <ArrowRight size={15} />
+                </Link>
+              </div>
+            ))}
+          </div>
+          <p className="text-center text-[11px] text-faint mt-4">Precisa de mais usuários ou de um plano corporativo? <a href="mailto:contato@govhealth.ai?subject=Plano%20corporativo" className="text-accent hover:underline">Fale com a gente</a>.</p>
         </section>
 
         {/* Confiança */}

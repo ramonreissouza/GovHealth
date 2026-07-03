@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { exigirMaster } from '@/lib/admin-guard'
 import { listarUsuarios, criarUsuario, emailExiste, gerarSenhaTemporaria } from '@/lib/users'
 import { registrarAudit } from '@/lib/admin-audit'
+import { validarCPF, validarCNPJ, soDigitos } from '@/lib/validators'
 
 export const runtime = 'nodejs'
 
@@ -23,11 +24,18 @@ export async function GET(req: NextRequest) {
   }
 }
 
+const cpfOpc = z.string().max(20).optional().refine((v) => !v || validarCPF(v), 'CPF inválido').transform((v) => v ? soDigitos(v) : undefined)
+const cnpjOpc = z.string().max(20).optional().refine((v) => !v || validarCNPJ(v), 'CNPJ inválido').transform((v) => v ? soDigitos(v) : undefined)
+
 const CriarSchema = z.object({
   email: z.string().email(),
   nome: z.string().min(1).max(120).optional(),
   empresa: z.string().max(120).optional(),
   telefone: z.string().max(40).optional(),
+  instituicao: z.string().max(160).optional(),
+  endereco: z.string().max(240).optional(),
+  cpf: cpfOpc,
+  cnpj: cnpjOpc,
   plano: z.string().max(40).optional(),
   status_assinatura: z.string().max(40).optional(),
   expira_em: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),

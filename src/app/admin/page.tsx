@@ -15,6 +15,7 @@ type Tab = 'contas' | 'dashboard' | 'acessos' | 'mapa'
 
 interface Usuario {
   id: string; email: string; nome: string | null; role: string; empresa: string | null; telefone: string | null
+  instituicao: string | null; endereco: string | null; cpf: string | null; cnpj: string | null
   plano: string | null; status_assinatura: string | null; expira_em: string | null; suspenso: boolean
   deleted_at: string | null; criado_em: string; ultimo_acesso: string | null
 }
@@ -157,13 +158,13 @@ function TabContas() {
 
 function ContaModal({ modal, onClose, onSaved }: { modal: { tipo: 'criar' | 'editar'; user?: Usuario }; onClose: () => void; onSaved: (senha?: { email: string; senha: string }) => void }) {
   const u = modal.user
-  const [f, setF] = useState({ email: u?.email ?? '', nome: u?.nome ?? '', empresa: u?.empresa ?? '', telefone: u?.telefone ?? '', plano: u?.plano ?? 'trial', status_assinatura: u?.status_assinatura ?? 'trial', expira_em: u?.expira_em ?? '' })
+  const [f, setF] = useState({ email: u?.email ?? '', nome: u?.nome ?? '', empresa: u?.empresa ?? '', instituicao: u?.instituicao ?? '', telefone: u?.telefone ?? '', cpf: u?.cpf ?? '', cnpj: u?.cnpj ?? '', endereco: u?.endereco ?? '', plano: u?.plano ?? 'trial', status_assinatura: u?.status_assinatura ?? 'trial', expira_em: u?.expira_em ?? '' })
   const [erro, setErro] = useState('')
   const [salvando, setSalvando] = useState(false)
 
   async function salvar() {
     setSalvando(true); setErro('')
-    const body: Record<string, unknown> = { nome: f.nome || undefined, empresa: f.empresa || undefined, telefone: f.telefone || undefined, plano: f.plano || undefined, status_assinatura: f.status_assinatura || undefined, expira_em: f.expira_em || null }
+    const body: Record<string, unknown> = { nome: f.nome || undefined, empresa: f.empresa || undefined, instituicao: f.instituicao || undefined, telefone: f.telefone || undefined, cpf: f.cpf || undefined, cnpj: f.cnpj || undefined, endereco: f.endereco || undefined, plano: f.plano || undefined, status_assinatura: f.status_assinatura || undefined, expira_em: f.expira_em || null }
     let res: Response
     if (modal.tipo === 'criar') { body.email = f.email; res = await fetch('/api/admin/contas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) }
     else { res = await fetch(`/api/admin/contas/${encodeURIComponent(u!.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) }
@@ -181,8 +182,14 @@ function ContaModal({ modal, onClose, onSaved }: { modal: { tipo: 'criar' | 'edi
         <Campo label="Nome"><input value={f.nome} onChange={(e) => setF({ ...f, nome: e.target.value })} className={inp} /></Campo>
         <div className="grid grid-cols-2 gap-2.5">
           <Campo label="Empresa"><input value={f.empresa} onChange={(e) => setF({ ...f, empresa: e.target.value })} className={inp} /></Campo>
-          <Campo label="Telefone"><input value={f.telefone} onChange={(e) => setF({ ...f, telefone: e.target.value })} className={inp} /></Campo>
+          <Campo label="Instituição de trabalho"><input value={f.instituicao} onChange={(e) => setF({ ...f, instituicao: e.target.value })} className={inp} /></Campo>
         </div>
+        <div className="grid grid-cols-3 gap-2.5">
+          <Campo label="Telefone"><input value={f.telefone} onChange={(e) => setF({ ...f, telefone: e.target.value })} className={inp} placeholder="(11) 90000-0000" /></Campo>
+          <Campo label="CPF"><input value={f.cpf} onChange={(e) => setF({ ...f, cpf: e.target.value })} className={inp} placeholder="000.000.000-00" /></Campo>
+          <Campo label="CNPJ"><input value={f.cnpj} onChange={(e) => setF({ ...f, cnpj: e.target.value })} className={inp} placeholder="00.000.000/0000-00" /></Campo>
+        </div>
+        <Campo label="Endereço"><input value={f.endereco} onChange={(e) => setF({ ...f, endereco: e.target.value })} className={inp} placeholder="Rua, nº, cidade/UF" /></Campo>
         <div className="grid grid-cols-3 gap-2.5">
           <Campo label="Plano"><select value={f.plano} onChange={(e) => setF({ ...f, plano: e.target.value })} className={inp}>{['trial', 'Starter', 'Growth', 'Enterprise'].map((p) => <option key={p}>{p}</option>)}</select></Campo>
           <Campo label="Assinatura"><select value={f.status_assinatura} onChange={(e) => setF({ ...f, status_assinatura: e.target.value })} className={inp}>{['trial', 'ativa', 'expirada'].map((p) => <option key={p}>{p}</option>)}</select></Campo>

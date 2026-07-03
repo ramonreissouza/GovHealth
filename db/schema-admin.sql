@@ -21,6 +21,35 @@ CREATE TABLE IF NOT EXISTS usuarios (
   atualizado_em     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Campos adicionais de cadastro (idempotente).
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS endereco   TEXT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS instituicao TEXT;  -- instituição de trabalho
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS cpf        TEXT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS cnpj       TEXT;
+
+-- Assinaturas/leads de plano (do checkout público). A cobrança real é feita por
+-- um gateway (Asaas/Iugu/Pagar.me/Stripe) — aqui fica a INTENÇÃO/pendência até a
+-- integração; nenhum dado de cartão é armazenado (PCI: cartão vai tokenizado no
+-- gateway, nunca no nosso banco).
+CREATE TABLE IF NOT EXISTS assinaturas (
+  id           BIGSERIAL PRIMARY KEY,
+  nome         TEXT,
+  email        TEXT NOT NULL,
+  empresa      TEXT,
+  instituicao  TEXT,
+  cpf_cnpj     TEXT,
+  telefone     TEXT,
+  endereco     TEXT,
+  plano        TEXT NOT NULL,           -- id do plano (essencial | pro)
+  ciclo        TEXT DEFAULT 'mensal',
+  metodo       TEXT,                    -- pix | cartao | boleto
+  valor        NUMERIC,
+  status       TEXT NOT NULL DEFAULT 'pendente',  -- pendente | ativa | cancelada
+  gateway_ref  TEXT,                    -- id do gateway quando integrado
+  criado_em    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_assin_data ON assinaturas (criado_em DESC);
+
 -- Log de acessos (login e, se viável, page_view). Dado pessoal (LGPD) — expurgo > 90d.
 CREATE TABLE IF NOT EXISTS acessos (
   id          BIGSERIAL PRIMARY KEY,

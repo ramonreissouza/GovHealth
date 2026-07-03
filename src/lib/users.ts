@@ -13,6 +13,10 @@ export interface Usuario {
   role: Role
   empresa: string | null
   telefone: string | null
+  instituicao: string | null
+  endereco: string | null
+  cpf: string | null
+  cnpj: string | null
   plano: string | null
   status_assinatura: string | null
   expira_em: string | null
@@ -50,7 +54,8 @@ export async function listarUsuarios(opts: { busca?: string; status?: string; in
   if (opts.status === 'ativa') where.push('u.suspenso = false AND u.deleted_at IS NULL')
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   return query<Usuario>(
-    `SELECT u.id, u.email, u.nome, u.role, u.empresa, u.telefone, u.plano, u.status_assinatura,
+    `SELECT u.id, u.email, u.nome, u.role, u.empresa, u.telefone, u.instituicao, u.endereco,
+            u.cpf, u.cnpj, u.plano, u.status_assinatura,
             to_char(u.expira_em,'YYYY-MM-DD') AS expira_em, u.suspenso,
             u.deleted_at, u.criado_em,
             (SELECT max(a.criado_em) FROM acessos a WHERE a.user_id = u.id AND a.evento='login') AS ultimo_acesso
@@ -62,7 +67,7 @@ export async function listarUsuarios(opts: { busca?: string; status?: string; in
 
 export async function buscarUsuario(id: string): Promise<Usuario | null> {
   return queryOne<Usuario>(
-    `SELECT id,email,nome,role,empresa,telefone,plano,status_assinatura,
+    `SELECT id,email,nome,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,
             to_char(expira_em,'YYYY-MM-DD') AS expira_em,suspenso,deleted_at,criado_em
      FROM usuarios WHERE id=$1`, [norm(id)],
   )
@@ -76,20 +81,22 @@ export async function emailExiste(email: string): Promise<boolean> {
 /** Cria usuário com senha (gera hash). Retorna o usuário criado. */
 export async function criarUsuario(data: {
   email: string; nome?: string; senha: string; role?: Role
-  empresa?: string; telefone?: string; plano?: string; status_assinatura?: string; expira_em?: string | null
+  empresa?: string; telefone?: string; instituicao?: string; endereco?: string; cpf?: string; cnpj?: string
+  plano?: string; status_assinatura?: string; expira_em?: string | null
 }): Promise<Usuario> {
   const id = norm(data.email)
   const hash = await bcrypt.hash(data.senha, 10)
   await query(
-    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,plano,status_assinatura,expira_em)
-     VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,expira_em)
+     VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [id, data.nome ?? null, hash, data.role ?? 'user', data.empresa ?? null, data.telefone ?? null,
+     data.instituicao ?? null, data.endereco ?? null, data.cpf ?? null, data.cnpj ?? null,
      data.plano ?? 'trial', data.status_assinatura ?? 'trial', data.expira_em ?? null],
   )
   return (await buscarUsuario(id))!
 }
 
-export async function atualizarUsuario(id: string, patch: Partial<Pick<Usuario, 'nome' | 'empresa' | 'telefone' | 'plano' | 'status_assinatura' | 'expira_em' | 'suspenso'>>): Promise<void> {
+export async function atualizarUsuario(id: string, patch: Partial<Pick<Usuario, 'nome' | 'empresa' | 'telefone' | 'instituicao' | 'endereco' | 'cpf' | 'cnpj' | 'plano' | 'status_assinatura' | 'expira_em' | 'suspenso'>>): Promise<void> {
   const campos: string[] = []
   const params: unknown[] = []
   for (const [k, v] of Object.entries(patch)) {

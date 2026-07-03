@@ -16,7 +16,7 @@ import { getToken } from 'next-auth/jwt'
 import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
 
-const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia']
+const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/assinar']
 
 function ehPublica(pathname: string): boolean {
   return ROTAS_PUBLICAS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
@@ -51,7 +51,7 @@ export async function middleware(req: NextRequest) {
 
   // ── NextAuth e cron não passam pela auth de sessão do middleware ─────────────
   // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET na rota.
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/')) {
+  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/assinaturas')) {
     return NextResponse.next()
   }
 
