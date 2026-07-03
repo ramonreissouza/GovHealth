@@ -36,6 +36,7 @@ const PIE = ['#2f80ed', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626']
 const accent = '#2f80ed'
 
 const diaCurto = (s: string) => { const [, m, d] = s.split('-'); return `${d}/${m}` }
+const fmtDataHora = (s: string) => { if (!s) return ''; const [dt, tm] = s.split('T'); const [a, m, d] = dt.split('-'); return `${d}/${m}/${a} ${(tm || '').slice(0, 5)}` }
 
 export default function AdminAnalytics() {
   const [dias, setDias] = useState('30')
@@ -61,8 +62,19 @@ export default function AdminAnalytics() {
   const sufixo = `${dias}d${uf !== 'todos' ? `_${uf}` : ''}_${new Date().toISOString().slice(0, 10)}`
   const rotasFmt = () => (d?.topRotas ?? []).map((r) => ({ pagina: rotulo(r.rota), rota: r.rota, n: r.n }))
 
-  function exportarExcel() {
+  const [exportando, setExportando] = useState(false)
+  async function exportarExcel() {
     if (!d) return
+    setExportando(true)
+    // Lista detalhada de acessos (IP/cidade) — respeita período/estado ativos.
+    let detalhe: Record<string, unknown>[] = []
+    try {
+      const p = new URLSearchParams({ dias, limit: '2000' })
+      if (uf !== 'todos') p.set('uf', uf)
+      const r = await fetch(`/api/admin/acessos?${p}`)
+      detalhe = (await r.json()).linhas ?? []
+    } catch { /* segue com o resto mesmo sem o detalhe */ }
+
     const sheets: ExportSheet[] = [
       { name: 'Resumo', columns: [{ key: 'm', label: 'Métrica' }, { key: 'v', label: 'Valor' }],
         data: [{ m: 'Acessos', v: d.kpis.total }, { m: 'Visitantes únicos', v: d.kpis.unicos }, { m: 'Logins', v: d.kpis.logins }, { m: 'Páginas vistas', v: d.kpis.pageviews }] },
@@ -72,8 +84,16 @@ export default function AdminAnalytics() {
       { name: 'Mais acessado', columns: [{ key: 'pagina', label: 'Página' }, { key: 'rota', label: 'Rota' }, { key: 'n', label: 'Acessos' }], data: rotasFmt() },
       { name: 'Cidades', columns: [{ key: 'cidade', label: 'Cidade' }, { key: 'n', label: 'Acessos' }], data: d.topCidades },
       { name: 'Dispositivos', columns: [{ key: 'tipo', label: 'Tipo' }, { key: 'n', label: 'Acessos' }], data: d.dispositivos },
+      { name: 'Acessos (detalhe)', columns: [
+          { key: 'criado_em', label: 'Data/hora', format: (v) => fmtDataHora(String(v ?? '')) },
+          { key: 'nome', label: 'Nome' }, { key: 'email', label: 'E-mail' },
+          { key: 'evento', label: 'Evento' }, { key: 'rota', label: 'Rota' },
+          { key: 'ip', label: 'IP' }, { key: 'cidade', label: 'Cidade' },
+          { key: 'regiao', label: 'UF/Região' }, { key: 'pais', label: 'País' },
+        ], data: detalhe },
     ]
     exportSheetsToXLSX(sheets, `analise-acessos_${sufixo}`)
+    setExportando(false)
     setExpOpen(false)
   }
   function csvQuem() {
@@ -109,8 +129,8 @@ export default function AdminAnalytics() {
             </button>
             {expOpen && (
               <div className="absolute right-0 top-full mt-1 w-56 bg-bg2 border border-subtle rounded-lg shadow-lg z-50 py-1 overflow-hidden">
-                <button onClick={exportarExcel} className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left">
-                  <Table2 size={13} /> Excel completo <span className="ml-auto text-[10px] font-mono-custom text-faint">.xlsx</span>
+                <button onClick={exportarExcel} disabled={exportando} className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left disabled:opacity-50">
+                  <Table2 size={13} /> {exportando ? 'Gerando…' : 'Excel completo'} <span className="ml-auto text-[10px] font-mono-custom text-faint">.xlsx</span>
                 </button>
                 <div className="my-1 border-t border-subtle" />
                 <button onClick={csvQuem} className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left">

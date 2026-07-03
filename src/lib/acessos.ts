@@ -57,12 +57,13 @@ export interface AcessoRow {
   latitude: number | null; longitude: number | null; user_agent: string | null; criado_em: string
 }
 
-export async function listarAcessos(opts: { busca?: string; evento?: string; dias?: number; limit?: number; offset?: number } = {}): Promise<{ linhas: AcessoRow[]; total: number }> {
+export async function listarAcessos(opts: { busca?: string; evento?: string; dias?: number; uf?: string; limit?: number; offset?: number } = {}): Promise<{ linhas: AcessoRow[]; total: number }> {
   const where: string[] = []
   const params: unknown[] = []
   if (opts.busca) { params.push(`%${opts.busca}%`); where.push(`(email ILIKE $${params.length} OR nome ILIKE $${params.length} OR ip ILIKE $${params.length} OR cidade ILIKE $${params.length})`) }
   if (opts.evento && opts.evento !== 'todos') { params.push(opts.evento); where.push(`evento = $${params.length}`) }
   if (opts.dias) { params.push(opts.dias); where.push(`criado_em > now() - ($${params.length} || ' days')::interval`) }
+  if (opts.uf && opts.uf !== 'todos') { params.push(opts.uf); where.push(`regiao = $${params.length}`) }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const limit = Math.min(opts.limit ?? 50, 200)
   const offset = opts.offset ?? 0

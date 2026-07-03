@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
       busca: searchParams.get('busca') ?? undefined,
       evento: searchParams.get('evento') ?? undefined,
       dias: searchParams.get('dias') ? Number(searchParams.get('dias')) : undefined,
+      uf: searchParams.get('uf') ?? undefined,
       limit: searchParams.get('limit') ? Number(searchParams.get('limit')) : 50,
       offset: searchParams.get('offset') ? Number(searchParams.get('offset')) : 0,
     })
