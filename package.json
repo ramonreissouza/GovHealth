@@ -11,7 +11,8 @@
     "db:setup": "node scripts/db-setup.mjs",
     "etl": "node scripts/etl-pncp.mjs",
     "etl:overnight": "node scripts/etl-overnight.mjs",
-    "audit": "node audit/run-audit.mjs"
+    "audit": "node audit/run-audit.mjs",
+    "admin:seed": "node scripts/seed-admin.mjs"
   },
   "dependencies": {
     "@types/mapbox-gl": "^3.1.0",
