@@ -2,15 +2,19 @@
 // src/app/timeline/page.tsx — Timeline de Licitações (dados reais PNCP)
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { ExternalLink, Loader2, Calendar, Clock, CheckCircle2, AlertCircle, XCircle } from 'lucide-react'
+import { ExternalLink, Loader2, Calendar, Clock, CheckCircle2, AlertCircle, XCircle, MapPin, ChevronRight } from 'lucide-react'
 import type { Oportunidade } from '@/lib/types'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
-import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL } from '@/lib/categorias'
+import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
+
+const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
+const TIPOS: { key: string; label: string }[] = [{ key: 'todos', label: 'Todos' }, ...Object.entries(TIPO_LABEL).map(([key, label]) => ({ key, label }))]
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -94,6 +98,7 @@ function monthLabel(key: string) {
 // ── Timeline Card ─────────────────────────────────────────────────────────────
 
 function TimelineCard({ opp }: { opp: Oportunidade }) {
+  const router = useRouter()
   const lic = opp.licitacaoRelacionada
   const status = getStatus(opp)
   const cfg = STATUS_CONFIG[status]
@@ -105,9 +110,11 @@ function TimelineCard({ opp }: { opp: Oportunidade }) {
       {/* Dot */}
       <div className={clsx('absolute left-0 top-3.5 w-3 h-3 rounded-full border-2 flex-shrink-0', cfg.dotClass)} />
 
-      {/* Card */}
-      <div className={clsx(
-        'bg-bg2 border rounded-xl p-3.5 transition-all hover:border-subtle2',
+      {/* Card — clicável: abre o detalhe completo em /oportunidades */}
+      <div
+        onClick={() => router.push(`/oportunidades?opp=${encodeURIComponent(opp.id)}`)}
+        className={clsx(
+        'group bg-bg2 border rounded-xl p-3.5 transition-all cursor-pointer hover:border-accent/40 hover:bg-bg2/70',
         status === 'encerra-hoje' ? 'border-red/30' :
         status === 'urgente' ? 'border-amber/30' :
         'border-subtle'
@@ -129,6 +136,7 @@ function TimelineCard({ opp }: { opp: Oportunidade }) {
             acaoRecomendada={opp.acaoRecomendada}
             size="sm"
           />
+          <ChevronRight size={14} className="text-faint opacity-0 group-hover:opacity-100 group-hover:text-accent transition-all flex-shrink-0 mt-0.5" />
         </div>
 
         {/* Description */}
@@ -202,17 +210,24 @@ export default function TimelinePage() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('todos')
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
+  const [uf, setUf] = useState('')
+  const [tipo, setTipo] = useState('todos')
 
   const load = useCallback(async () => {
     setLoading(true)
+    setSelectedMonth(null) // volta ao mês mais recente ao trocar filtro
     try {
-      const r = await fetch('/api/opportunities?limit=400&minScore=0')
+      // limit alto para cobrir vários meses (antes 400 só trazia o mês mais recente).
+      const params = new URLSearchParams({ limit: '2000', minScore: '0' })
+      if (uf) params.set('uf', uf)
+      if (tipo !== 'todos') params.set('tipo', tipo)
+      const r = await fetch(`/api/opportunities?${params}`)
       const d = await r.json()
       publishDataStatus(d)
       setOpps(d.oportunidades ?? [])
     } catch { /* silent */ }
     finally { setLoading(false) }
-  }, [])
+  }, [uf, tipo])
 
   useEffect(() => { load() }, [load])
 
@@ -259,6 +274,27 @@ export default function TimelinePage() {
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* Filtros UF + Tipo */}
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <MapPin size={13} className="text-faint" />
+              <select value={uf} onChange={(e) => setUf(e.target.value)}
+                className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none">
+                <option value="">Todas UFs</option>
+                {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+            <div className="flex gap-1 overflow-x-auto pb-1">
+              {TIPOS.map((t) => (
+                <button key={t.key} onClick={() => setTipo(t.key)}
+                  className={clsx('text-[11px] font-mono-custom px-2.5 py-1 rounded-full whitespace-nowrap transition-all border',
+                    tipo === t.key ? 'bg-accent text-black border-accent font-bold' : 'border-subtle2 text-faint hover:text-strong')}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Status filter */}

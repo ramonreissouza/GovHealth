@@ -8,6 +8,16 @@ import { query } from '@/lib/db'
 export const runtime = 'nodejs'
 
 interface RankRow { chave: string | null; valor: number; qtd: number }
+interface DetalheRow {
+  orgao: string | null
+  uf: string | null
+  fornecedor: string | null
+  descricao: string | null   // texto do item: marca/modelo/especificação
+  qtd: number | null
+  valor_unitario: number | null
+  valor_total: number | null
+  data: string | null
+}
 
 function buildWhere(opts: { ano?: number; item?: string; empresa?: string; uf?: string }) {
   const where: string[] = ['r.valor_total_homologado IS NOT NULL']
@@ -34,7 +44,26 @@ export async function GET(req: NextRequest) {
     // Coluna ESTADO + KPI + proponentes: item + empresa selecionados.
     const wCtx = buildWhere({ ano, item, empresa, uf })
 
-    const [porItem, porVencedor, porEstado, totalRow, proponentes] = await Promise.all([
+    // DETALHE DE COMPRA (drill mais fundo): itens homologados individuais com a
+    // descrição do item (marca/modelo/especificação) e o preço unitário pago.
+    // Só quando há item selecionado (senão seria amplo/pesado demais).
+    const detalhePromise = item
+      ? query<DetalheRow>(
+          `SELECT c.razao_social_orgao AS orgao, r.uf, r.nome_fornecedor AS fornecedor,
+                  COALESCE(NULLIF(i.descricao, ''), r.nome_catmat) AS descricao,
+                  r.quantidade_homologada::float8     AS qtd,
+                  r.valor_unitario_homologado::float8 AS valor_unitario,
+                  r.valor_total_homologado::float8    AS valor_total,
+                  to_char(r.data_resultado, 'YYYY-MM-DD') AS data
+           FROM resultados r
+           LEFT JOIN itens i ON i.numero_controle_pncp = r.numero_controle_pncp AND i.numero_item = r.numero_item
+           LEFT JOIN contratacoes c ON c.numero_controle_pncp = r.numero_controle_pncp
+           ${wCtx.sql}
+           ORDER BY r.valor_total_homologado DESC NULLS LAST
+           LIMIT 80`, wCtx.params)
+      : Promise.resolve([] as DetalheRow[])
+
+    const [porItem, porVencedor, porEstado, totalRow, proponentes, detalhes] = await Promise.all([
       query<RankRow>(
         `SELECT COALESCE(NULLIF(r.nome_catmat,''),'(sem descrição)') AS chave,
                 SUM(r.valor_total_homologado)::float8 AS valor, COUNT(*)::int AS qtd
@@ -55,11 +84,12 @@ export async function GET(req: NextRequest) {
                 SUM(r.valor_total_homologado)::float8 AS valor, COUNT(DISTINCT r.numero_controle_pncp)::int AS qtd
          FROM resultados r LEFT JOIN contratacoes c ON c.numero_controle_pncp = r.numero_controle_pncp
          ${wCtx.sql} GROUP BY 1 ORDER BY valor DESC NULLS LAST LIMIT 25`, wCtx.params),
+      detalhePromise,
     ])
 
     return NextResponse.json({
       valorTotal: totalRow[0]?.total ?? 0,
-      porItem, porVencedor, porEstado, proponentes,
+      porItem, porVencedor, porEstado, proponentes, detalhes,
       atualizadoEm: new Date().toISOString(),
     })
   } catch (error: unknown) {
