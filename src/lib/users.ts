@@ -183,6 +183,25 @@ export async function marcarStatusAssinatura(email: string, status: 'ativa' | 'i
   )
 }
 
+/**
+ * Reivindica (atomicamente) os trials que expiram AMANHÃ e ainda não receberam o
+ * lembrete — marca trial_lembrete_em=now() e retorna os dados p/ envio do e-mail.
+ * Marcar antes de enviar evita reenvio em execuções concorrentes/retries do cron.
+ */
+export async function reivindicarLembretesTrial(): Promise<Array<{ id: string; email: string; nome: string | null; plano: string | null; expira_em: string }>> {
+  return query(
+    `UPDATE usuarios
+        SET trial_lembrete_em = now()
+      WHERE status_assinatura = 'trial'
+        AND role <> 'master'
+        AND deleted_at IS NULL
+        AND suspenso = false
+        AND trial_lembrete_em IS NULL
+        AND expira_em = (CURRENT_DATE + 1)
+      RETURNING id, email, nome, plano, to_char(expira_em,'YYYY-MM-DD') AS expira_em`,
+  )
+}
+
 /** Senha temporária legível (mostrada uma vez ao admin). */
 export function gerarSenhaTemporaria(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
