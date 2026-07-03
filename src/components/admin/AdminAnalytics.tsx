@@ -87,14 +87,14 @@ export default function AdminAnalytics() {
             <Card title="Acessos por dia" span2>
               {d.serie.length === 0 ? <Vazio /> : (
                 <ResponsiveContainer width="100%" height={190}>
-                  <AreaChart data={d.serie} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+                  <AreaChart data={d.serie} margin={{ top: 6, right: 8, left: -6, bottom: 0 }}>
                     <defs>
                       <linearGradient id="gLog" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={accent} stopOpacity={0.35} /><stop offset="100%" stopColor={accent} stopOpacity={0} /></linearGradient>
                       <linearGradient id="gPv" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#16a34a" stopOpacity={0.3} /><stop offset="100%" stopColor="#16a34a" stopOpacity={0} /></linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.06)" vertical={false} />
                     <XAxis dataKey="dia" tickFormatter={diaCurto} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} minTickGap={20} />
-                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={34} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} width={42} />
                     <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid rgba(15,23,42,0.1)' }} labelFormatter={(l) => `Dia ${diaCurto(String(l))}`} />
                     <Area type="monotone" dataKey="logins" name="Logins" stroke={accent} strokeWidth={2} fill="url(#gLog)" />
                     <Area type="monotone" dataKey="pageviews" name="Páginas" stroke="#16a34a" strokeWidth={2} fill="url(#gPv)" />
