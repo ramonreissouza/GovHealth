@@ -1,7 +1,12 @@
 // src/lib/db.ts — cliente Postgres (Neon) compartilhado.
 // Pool lazy: não instancia no import, para o build não exigir DATABASE_URL.
 
-import { Pool, type QueryResultRow } from 'pg'
+import { Pool, types, type QueryResultRow } from 'pg'
+
+// DATE (OID 1082) como string 'YYYY-MM-DD' — evita conversão de fuso que
+// desloca o dia (ex.: expira_em de trial). Alinha com os tipos que já tratam
+// datas como string (to_char nas demais queries).
+types.setTypeParser(1082, (v) => v)
 
 let pool: Pool | null = null
 

@@ -22,6 +22,12 @@ function ehPublica(pathname: string): boolean {
   return ROTAS_PUBLICAS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
 
+/** Trial expirado quando a data de expiração (YYYY-MM-DD) é anterior a hoje (UTC). */
+function trialExpirado(expiraEm: string): boolean {
+  const hoje = new Date().toISOString().slice(0, 10)
+  return expiraEm.slice(0, 10) < hoje
+}
+
 function ipDe(req: NextRequest): string {
   const xff = req.headers.get('x-forwarded-for')
   return (xff ? xff.split(',')[0].trim() : '') || req.headers.get('x-real-ip') || 'desconhecido'
@@ -54,7 +60,7 @@ export async function middleware(req: NextRequest) {
   // ── NextAuth, cron e Stripe não passam pela auth de sessão do middleware ──────
   // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET; o
   // webhook do Stripe é validado pela assinatura HMAC na própria rota.
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas')) {
+  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro')) {
     return NextResponse.next()
   }
 
@@ -76,6 +82,18 @@ export async function middleware(req: NextRequest) {
   if (token) {
     if (pathname === '/login' || pathname === '/inicio') {
       return NextResponse.redirect(new URL('/', req.url))
+    }
+    // Gate de teste grátis: trial expirado → pede pagamento (só páginas internas;
+    // não afeta APIs nem rotas públicas como /assinar, /metodologia).
+    const t = token as { status?: string | null; expiraEm?: string | null; plano?: string | null }
+    if (
+      t.status === 'trial' && typeof t.expiraEm === 'string' && trialExpirado(t.expiraEm) &&
+      !pathname.startsWith('/api/') && !ehPublica(pathname)
+    ) {
+      const url = new URL('/assinar', req.url)
+      url.searchParams.set('trial', 'expirado')
+      url.searchParams.set('plano', t.plano || 'pro')
+      return NextResponse.redirect(url)
     }
     return NextResponse.next()
   }

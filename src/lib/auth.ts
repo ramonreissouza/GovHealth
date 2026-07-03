@@ -34,7 +34,13 @@ export const authOptions: NextAuthOptions = {
           console.warn('[auth] falha ao registrar acesso:', e)
         }
 
-        return { id: user.id, name: user.nome, email: user.email, image: null, role: user.role }
+        // expira_em já vem como 'YYYY-MM-DD' (parser de DATE em lib/db).
+        const expiraEm = user.expira_em ? String(user.expira_em).slice(0, 10) : null
+
+        return {
+          id: user.id, name: user.nome, email: user.email, image: null, role: user.role,
+          plano: user.plano, status: user.status_assinatura, expiraEm,
+        }
       },
     }),
   ],
@@ -48,16 +54,23 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = (user as { id?: string }).id
-        token.role = (user as { role?: string }).role ?? 'user'
+        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null }
+        token.id = u.id
+        token.role = u.role ?? 'user'
+        token.plano = u.plano ?? null
+        token.status = u.status ?? null
+        token.expiraEm = u.expiraEm ?? null
       }
       return token
     },
     async session({ session, token }) {
       if (session.user) {
-        const u = session.user as typeof session.user & { id?: string; role?: string }
+        const u = session.user as typeof session.user & { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null }
         u.id = token.id as string
         u.role = (token.role as string) ?? 'user'
+        u.plano = (token.plano as string | null) ?? null
+        u.status = (token.status as string | null) ?? null
+        u.expiraEm = (token.expiraEm as string | null) ?? null
       }
       return session
     },
