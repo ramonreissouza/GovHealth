@@ -7,11 +7,12 @@ import { useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import { signOut } from 'next-auth/react'
 import { clsx } from 'clsx'
-import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, ShieldCheck, Copy } from 'lucide-react'
+import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, ShieldCheck, Copy, CreditCard } from 'lucide-react'
+import { formatarPreco, planoPorId } from '@/lib/planos'
 
 const AdminMapa = dynamic(() => import('@/components/admin/AdminMapa'), { ssr: false, loading: () => <div className="h-[560px] rounded-xl border border-subtle flex items-center justify-center text-faint text-[13px]">Carregando mapa…</div> })
 
-type Tab = 'contas' | 'dashboard' | 'acessos' | 'mapa'
+type Tab = 'contas' | 'assinaturas' | 'dashboard' | 'acessos' | 'mapa'
 
 interface Usuario {
   id: string; email: string; nome: string | null; role: string; empresa: string | null; telefone: string | null
@@ -35,7 +36,7 @@ export default function AdminPage() {
             <span className="font-heading font-bold text-[15px]">GovHealth <span className="text-accent">Admin</span></span>
           </div>
           <nav className="flex items-center gap-1 ml-4">
-            {([['contas', 'Contas', Users], ['dashboard', 'Dashboard', LayoutDashboard], ['acessos', 'Acessos', ScrollText], ['mapa', 'Mapa', MapIcon]] as [Tab, string, React.ElementType][]).map(([k, label, Icon]) => (
+            {([['contas', 'Contas', Users], ['assinaturas', 'Assinaturas', CreditCard], ['dashboard', 'Dashboard', LayoutDashboard], ['acessos', 'Acessos', ScrollText], ['mapa', 'Mapa', MapIcon]] as [Tab, string, React.ElementType][]).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={clsx('flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg transition-colors',
                   tab === k ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-strong')}>
@@ -51,6 +52,7 @@ export default function AdminPage() {
 
       <main className="max-w-[1200px] mx-auto px-5 py-6">
         {tab === 'contas' && <TabContas />}
+        {tab === 'assinaturas' && <TabAssinaturas />}
         {tab === 'dashboard' && <TabDashboard />}
         {tab === 'acessos' && <TabAcessos />}
         {tab === 'mapa' && <TabMapa />}
@@ -245,6 +247,45 @@ function SenhaModal({ dados, onClose }: { dados: { email: string; senha: string 
       </div>
       <div className="flex justify-end mt-4"><button onClick={onClose} className="text-[12px] font-semibold bg-accent text-black px-3.5 py-2 rounded-lg hover:bg-accent2">Entendi</button></div>
     </Overlay>
+  )
+}
+
+// ── TAB — Assinaturas (pendências do checkout) ────────────────────────────────
+
+function TabAssinaturas() {
+  const [linhas, setLinhas] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => { fetch('/api/admin/assinaturas').then((r) => r.json()).then((d) => setLinhas(d.assinaturas ?? [])).catch(() => {}).finally(() => setLoading(false)) }, [])
+  return (
+    <div>
+      <h1 className="font-heading font-bold text-[20px] mb-1">Assinaturas</h1>
+      <p className="text-[12px] text-muted mb-4">{linhas.length} solicitação(ões) do checkout · a cobrança é concluída pelo gateway quando integrado.</p>
+      <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead><tr className="text-faint text-[10px] font-mono-custom uppercase tracking-wider border-b border-subtle">
+            {['Quando', 'Nome', 'E-mail', 'Empresa', 'CPF/CNPJ', 'Telefone', 'Plano', 'Método', 'Valor', 'Status'].map((h) => <th key={h} className="px-3 py-2.5 text-left font-medium">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading ? <tr><td colSpan={10} className="px-3 py-6 text-center text-faint">Carregando…</td></tr>
+              : linhas.length === 0 ? <tr><td colSpan={10} className="px-3 py-6 text-center text-faint">Nenhuma solicitação de assinatura ainda.</td></tr>
+              : linhas.map((a) => (
+                <tr key={a.id} className="border-b border-subtle last:border-0 hover:bg-bg3">
+                  <td className="px-3 py-2 text-faint font-mono-custom whitespace-nowrap">{fmtDataHora(a.criado_em)}</td>
+                  <td className="px-3 py-2 text-strong">{a.nome || '—'}</td>
+                  <td className="px-3 py-2 text-muted">{a.email}</td>
+                  <td className="px-3 py-2 text-muted">{a.empresa || a.instituicao || '—'}</td>
+                  <td className="px-3 py-2 text-muted font-mono-custom">{a.cpf_cnpj || '—'}</td>
+                  <td className="px-3 py-2 text-muted">{a.telefone || '—'}</td>
+                  <td className="px-3 py-2"><span className="text-[10px] font-mono-custom px-1.5 py-0.5 rounded-full bg-accent/10 text-accent">{planoPorId(a.plano)?.nome ?? a.plano}</span></td>
+                  <td className="px-3 py-2 text-muted uppercase">{a.metodo || '—'}</td>
+                  <td className="px-3 py-2 text-strong font-mono-custom">{a.valor != null ? formatarPreco(a.valor) : '—'}</td>
+                  <td className="px-3 py-2"><span className={clsx('text-[10px] font-mono-custom px-1.5 py-0.5 rounded-full border', a.status === 'ativa' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber/15 text-amber border-amber/30')}>{a.status}</span></td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
