@@ -4,6 +4,7 @@ import { DM_Sans, Syne, DM_Mono } from 'next/font/google'
 import './globals.css'
 import SessionProvider from '@/components/providers/SessionProvider'
 import NotificationsWatcher from '@/components/NotificationsWatcher'
+import PageViewTracker from '@/components/PageViewTracker'
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-bg text-strong antialiased font-sans">
           <SessionProvider>
           <NotificationsWatcher />
+          <PageViewTracker />
           {children}
         </SessionProvider>
         </body>
