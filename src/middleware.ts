@@ -43,6 +43,13 @@ function resp429(r: RateResult): NextResponse {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
+  // ── Arquivos estáticos públicos (logo, screenshots, fontes, etc.) ────────────
+  // Devem ser acessíveis SEM auth — inclusive por crawlers sociais (OG) e clientes
+  // de e-mail (logo). Sem isso, o middleware os redireciona para /login.
+  if (/\.(png|jpe?g|svg|gif|webp|avif|ico|bmp|woff2?|ttf|otf|txt|xml|json|map|css|js)$/i.test(pathname)) {
+    return NextResponse.next()
+  }
+
   // ── Rate limiting (best-effort por instância) para rotas de API ──────────────
   if (pathname.startsWith('/api/')) {
     const ip = ipDe(req)

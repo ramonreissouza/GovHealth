@@ -2,6 +2,7 @@
 // src/components/layout/Sidebar.tsx
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
@@ -129,15 +130,9 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 py-5 border-b border-subtle relative">
         <button onClick={() => setOpen(false)} aria-label="Fechar menu" className="md:hidden absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-strong"><X size={16} /></button>
-        <div className="w-7 h-7 bg-accent rounded-md flex items-center justify-center flex-shrink-0">
-          <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4">
-            <path d="M8 2L14 5.5V10.5L8 14L2 10.5V5.5L8 2Z" stroke="#000" strokeWidth="1.5" strokeLinejoin="round"/>
-            <circle cx="8" cy="8" r="2" fill="#000"/>
-          </svg>
-        </div>
         <div>
-          <div className="font-heading font-bold text-[15px] text-strong leading-none">GovHealth.ai</div>
-          <div className="font-mono-custom text-[10px] text-faint mt-0.5 tracking-wide">Sales Intelligence</div>
+          <Image src="/logo-govhealth.png" alt="GovHealth" width={150} height={68} className="h-7 w-auto" />
+          <div className="font-mono-custom text-[10px] text-faint mt-1 tracking-wide">Sales Intelligence</div>
         </div>
       </div>
 

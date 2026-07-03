@@ -1,193 +1,230 @@
-// src/app/inicio/page.tsx — landing PÚBLICA (item 1 do TOP10 v2).
-// Problema que resolve: o site abria direto no login — invisível para o mercado,
-// sem proposta de valor, sem nada indexável. Esta é a face pública: proposta de
-// valor + a tese dos 3 pilares + como funciona + confiança (metodologia) + CTA.
-// Estática/indexável, fora da área autenticada (ver middleware).
+// src/app/inicio/page.tsx — landing PÚBLICA (modernizada — brief-landing-inicio.md).
+// Tema claro hospitalar (tokens em globals.css). Estrutura enxuta em blocos, com
+// números REAIS do banco, logo oficial, screenshots reais do produto e fundo
+// autêntico (mapa da plataforma). Server Component + ISR (revalida a cada hora).
 
 import Link from 'next/link'
+import Image from 'next/image'
 import type { Metadata } from 'next'
 import { clsx } from 'clsx'
-import { Stethoscope, Radar, Workflow, ArrowRight, ShieldCheck, Check } from 'lucide-react'
+import { ArrowRight, ShieldCheck, Check, Radar, Swords, Flame } from 'lucide-react'
 import { PLANOS, formatarPreco } from '@/lib/planos'
+import { query } from '@/lib/db'
+
+export const revalidate = 3600 // ISR: números atualizam a cada hora
 
 export const metadata: Metadata = {
-  title: 'GovHealth AI — Inteligência comercial para licitações de saúde',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://gov-health.vercel.app'),
+  title: 'GovHealth AI — Antecipe as licitações de saúde pública',
   description:
-    'A GovHealth AI antecipa oportunidades de saúde pública no Brasil: da emenda ao convênio ao edital. Inteligência pré-edital, análise de vencedores e concorrentes, com fontes oficiais e metodologia transparente.',
+    'Da emenda parlamentar ao edital: oportunidades, vencedores e concorrentes das licitações de saúde no Brasil, com dados oficiais e metodologia transparente.',
   openGraph: {
-    title: 'GovHealth AI — Inteligência comercial para licitações de saúde',
+    title: 'GovHealth AI — Antecipe as licitações de saúde pública',
     description:
-      'Antecipe licitações de saúde pública: emendas, convênios, vencedores e concorrentes — com dados oficiais e metodologia transparente.',
+      'Oportunidades, vencedores e concorrentes das licitações de saúde no Brasil — com dados oficiais e metodologia transparente.',
     type: 'website',
+    images: ['/shots/dashboard.png'],
   },
+  twitter: { card: 'summary_large_image', images: ['/shots/dashboard.png'] },
 }
 
-const PILARES = [
-  {
-    icon: Stethoscope,
-    titulo: 'Especialização em saúde',
-    texto: 'Não somos uma ferramenta genérica de licitações. Classificamos o mercado de saúde — medicamentos, equipamentos, insumos, OPME, laboratório — e falamos a língua de quem vende para o SUS.',
-  },
-  {
-    icon: Radar,
-    titulo: 'Inteligência pré-edital',
-    texto: 'Enquanto os outros mostram o edital publicado, nós olhamos antes: emendas parlamentares, convênios e repasses que viram compra. Você chega no órgão antes do concorrente.',
-  },
-  {
-    icon: Workflow,
-    titulo: 'Do sinal à ação',
-    texto: 'Oportunidades, vencedores, concorrentes por estado e exportação para Excel/PDF — a inteligência sai da tela e circula na sua diretoria comercial.',
-  },
-]
+// Números reais (com fallback truthful medido no banco, caso a query falhe no build).
+async function getStats() {
+  const fallback = { valor: 52_483_751_556, total: 14_856, munis: 2_865, ufs: 27, ult: '21/06/2026' }
+  try {
+    const [r] = await query<{ valor: number; total: number; munis: number; ufs: number; ult: string }>(
+      `SELECT sum(valor_total_estimado)::float8 AS valor, count(*)::int AS total,
+              count(distinct municipio)::int AS munis, count(distinct uf)::int AS ufs,
+              to_char(max(data_publicacao),'DD/MM/YYYY') AS ult
+         FROM contratacoes WHERE valor_total_estimado >= 10000 AND objeto_compra IS NOT NULL`,
+    )
+    return r?.total ? r : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const num = (n: number) => n.toLocaleString('pt-BR')
+const bilhoes = (v: number) => `R$ ${(v / 1e9).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} bi`
 
 const RECURSOS = [
-  ['Análise de Vencedores', 'Quem venceu cada licitação de saúde, por item, valor e órgão — com detalhamento do processo.'],
-  ['Radar de Concorrência', 'Filtre por categoria e estado, veja o ranking de concorrentes e cada licitação que venceram.'],
-  ['Ranking de Fornecedores', 'Os maiores vendedores por categoria, no país ou por estados, com o que cada um vendeu onde.'],
-  ['Concorrentes por Estado', 'Quem domina o quê em cada UF, com distribuição por item e entidades beneficiadas.'],
-  ['Oportunidades', 'Licitações de saúde em tempo real do PNCP, filtráveis por categoria, estado e situação.'],
-  ['Exportação', 'Qualquer tela vira Excel, CSV ou PDF em um clique — pronto para a reunião de diretoria.'],
+  { icon: Radar, titulo: 'Radar pré-edital', texto: 'Emendas, convênios e repasses que viram compra — você chega ao órgão antes do edital.' },
+  { icon: Swords, titulo: 'Inteligência de concorrentes', texto: 'Quem vence o quê em cada estado, por item e valor, com ranking de fornecedores.' },
+  { icon: Flame, titulo: 'Verba mapeada', texto: 'Radar de verba não executada e preços de referência oficiais para dimensionar a disputa.' },
 ]
 
-export default function InicioPage() {
+const PASSOS = [
+  { n: '01', t: 'Fontes oficiais', d: 'PNCP, Transparência, Compras.gov e CNES — coletados e classificados por mercado de saúde.' },
+  { n: '02', t: 'Sinais antes do edital', d: 'Oportunidades, vencedores e concorrentes prontos, filtráveis por estado e categoria.' },
+  { n: '03', t: 'Da tela à diretoria', d: 'Alertas, território e exportação Excel/PDF — a inteligência circula na equipe comercial.' },
+]
+
+export default async function InicioPage() {
+  const s = await getStats()
+  const PROVAS = [
+    { v: bilhoes(s.valor), l: 'em licitações mapeadas' },
+    { v: num(s.total), l: 'contratações de saúde' },
+    { v: num(s.munis), l: 'municípios cobertos' },
+    { v: `${s.ufs} estados`, l: 'cobertura nacional' },
+  ]
+
   return (
     <div className="min-h-screen bg-bg text-strong">
       {/* Topo */}
-      <header className="border-b border-subtle bg-bg2/80 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-[1000px] mx-auto px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
-              <svg viewBox="0 0 16 16" fill="none" className="w-5 h-5">
-                <path d="M8 2L14 5.5V10.5L8 14L2 10.5V5.5L8 2Z" stroke="#000" strokeWidth="1.5" strokeLinejoin="round" />
-                <circle cx="8" cy="8" r="2" fill="#000" />
-              </svg>
-            </div>
-            <div>
-              <div className="font-heading font-bold text-[15px] leading-none">GovHealth.ai</div>
-              <div className="font-mono-custom text-[10px] text-faint mt-0.5 tracking-wide">Sales Intelligence</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <a href="#planos" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Planos</a>
-            <Link href="/metodologia" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Metodologia</Link>
-            <Link href="/login" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Entrar</Link>
-            <Link href="/login?criar=1" className="text-[12px] font-semibold text-black bg-accent hover:bg-accent2 px-3.5 py-1.5 rounded-md transition-colors">
+      <header className="border-b border-subtle bg-bg2/85 backdrop-blur sticky top-0 z-20">
+        <div className="max-w-[1080px] mx-auto px-6 py-3.5 flex items-center justify-between gap-4">
+          <Image src="/logo-govhealth.png" alt="GovHealth" width={150} height={68} priority className="h-8 w-auto" />
+          <div className="flex items-center gap-4">
+            <a href="#planos" className="text-[13px] text-muted hover:text-strong transition-colors hidden sm:block">Planos</a>
+            <Link href="/metodologia" className="text-[13px] text-muted hover:text-strong transition-colors hidden sm:block">Metodologia</Link>
+            <Link href="/login" className="text-[13px] text-muted hover:text-strong transition-colors">Entrar</Link>
+            <Link href="/login?criar=1" className="text-[13px] font-semibold text-white bg-accent hover:bg-accent-2 px-3.5 py-1.5 rounded-lg transition-colors">
               Criar conta
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="max-w-[1000px] mx-auto px-6">
-        {/* Hero */}
-        <section className="pt-20 pb-16 text-center">
-          <div className="inline-flex items-center gap-1.5 text-[11px] font-mono-custom text-accent bg-accent/10 border border-accent/20 rounded-full px-3 py-1 mb-6">
-            <ShieldCheck size={12} /> Fontes 100% oficiais · metodologia pública
+      <main>
+        {/* ── Bloco 1 — Hero ─────────────────────────────────────────────── */}
+        <section className="relative overflow-hidden border-b border-subtle">
+          {/* Fundo autêntico: o mapa real da plataforma, suave, com wash de gradiente */}
+          <div aria-hidden className="absolute inset-0 -z-10">
+            <Image src="/shots/mapa.png" alt="" fill priority sizes="100vw" className="object-cover object-right opacity-[0.10]" />
+            <div className="absolute inset-0 bg-gradient-to-r from-bg via-bg/95 to-bg/70" />
+            <div className="absolute -top-40 -left-40 w-[520px] h-[520px] rounded-full bg-accent/10 blur-3xl" />
           </div>
-          <h1 className="font-heading font-bold text-[38px] sm:text-[46px] leading-[1.05] max-w-[760px] mx-auto">
-            A inteligência que antecipa as licitações de <span className="text-accent">saúde pública</span> no Brasil
-          </h1>
-          <p className="text-[16px] text-muted leading-relaxed max-w-[620px] mx-auto mt-5">
-            Da emenda parlamentar ao convênio ao edital. A GovHealth AI mostra a oportunidade
-            antes de virar disputa — e quem são os vencedores e concorrentes de cada mercado.
-          </p>
-          <div className="flex items-center justify-center gap-3 mt-8 flex-wrap">
-            <Link href="/login?criar=1" className="inline-flex items-center gap-2 text-[14px] font-semibold text-black bg-accent hover:bg-accent2 px-5 py-2.5 rounded-lg transition-colors">
-              Criar conta · 3 dias grátis <ArrowRight size={15} />
-            </Link>
-            <Link href="/login"
-              className="inline-flex items-center gap-2 text-[14px] font-medium text-strong bg-bg3 border border-subtle hover:border-subtle2 px-5 py-2.5 rounded-lg transition-colors">
-              Já tenho conta · Entrar
-            </Link>
-          </div>
-        </section>
 
-        {/* Tese dos 3 pilares */}
-        <section className="pb-16">
-          <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-6">
-            Por que somos diferentes
-          </p>
-          <div className="grid sm:grid-cols-3 gap-4">
-            {PILARES.map(({ icon: Icon, titulo, texto }) => (
-              <div key={titulo} className="bg-bg2 border border-subtle rounded-xl p-5">
-                <div className="w-9 h-9 rounded-lg bg-accent/10 flex items-center justify-center mb-3">
-                  <Icon size={18} className="text-accent" />
-                </div>
-                <h3 className="font-heading font-semibold text-[15px] mb-1.5">{titulo}</h3>
-                <p className="text-[13px] text-muted leading-relaxed">{texto}</p>
+          <div className="max-w-[1080px] mx-auto px-6 pt-16 pb-14 grid lg:grid-cols-[1fr_1.05fr] gap-12 items-center">
+            <div>
+              <div className="reveal inline-flex items-center gap-1.5 text-[11px] font-mono-custom text-accent bg-accent/10 border border-accent/20 rounded-full px-3 py-1 mb-6" style={{ '--d': '0s' } as React.CSSProperties}>
+                <ShieldCheck size={12} /> Fontes 100% oficiais · metodologia pública
               </div>
-            ))}
-          </div>
-          <p className="text-center text-[13px] text-muted mt-6 max-w-[680px] mx-auto">
-            Ninguém no Brasil combina os três: <strong className="text-strong">especialização em saúde</strong>,{' '}
-            <strong className="text-strong">inteligência pré-edital</strong> e{' '}
-            <strong className="text-strong">workflow comercial</strong>. Quem junta, vira referência.
-          </p>
-        </section>
-
-        {/* Recursos */}
-        <section className="pb-16">
-          <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-6">
-            O que você encontra dentro
-          </p>
-          <div className="grid sm:grid-cols-2 gap-3">
-            {RECURSOS.map(([titulo, texto]) => (
-              <div key={titulo} className="bg-bg2 border border-subtle rounded-xl p-4">
-                <h3 className="font-heading font-semibold text-[14px] mb-1">{titulo}</h3>
-                <p className="text-[12px] text-muted leading-snug">{texto}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Planos */}
-        <section id="planos" className="pb-16">
-          <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-2">Planos</p>
-          <h2 className="text-center font-heading font-bold text-[26px] mb-1">Escolha o plano da sua operação</h2>
-          <p className="text-center text-[13px] text-muted mb-8 max-w-[520px] mx-auto">Mensal, sem fidelidade. Pagamento por PIX, cartão ou boleto (30 dias) — com nota fiscal.</p>
-          <div className="grid sm:grid-cols-2 gap-4 max-w-[760px] mx-auto">
-            {PLANOS.map((p) => (
-              <div key={p.id} className={clsx('rounded-2xl p-6 border flex flex-col', p.destaque ? 'border-accent bg-accent/5 shadow-lg' : 'border-subtle bg-bg2')}>
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="font-heading font-bold text-[18px]">{p.nome}</h3>
-                  {p.destaque && <span className="text-[10px] font-mono-custom text-black bg-accent px-2 py-0.5 rounded-full font-bold">Mais completo</span>}
-                </div>
-                <p className="text-[12px] text-muted mb-3">{p.resumo}</p>
-                <div className="flex items-baseline gap-1 mb-4">
-                  <span className="font-heading font-bold text-[32px]">{formatarPreco(p.preco)}</span>
-                  <span className="text-[13px] text-faint">/{p.ciclo}</span>
-                </div>
-                <ul className="space-y-2 mb-5 flex-1">
-                  {p.features.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-[12.5px] text-strong">
-                      <Check size={14} className="text-accent flex-shrink-0 mt-0.5" /> {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link href={`/login?criar=1&plano=${p.id}`}
-                  className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-2.5 rounded-lg transition-colors',
-                    p.destaque ? 'bg-accent text-black hover:bg-accent2' : 'bg-bg3 border border-subtle2 text-strong hover:border-accent/50')}>
-                  Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
+              <h1 className="reveal font-heading font-bold text-[40px] sm:text-[52px] leading-[1.03] tracking-tight" style={{ '--d': '0.05s' } as React.CSSProperties}>
+                Antecipe as licitações de <span className="text-accent">saúde pública</span> do Brasil
+              </h1>
+              <p className="reveal text-[17px] text-muted leading-relaxed max-w-[520px] mt-5" style={{ '--d': '0.1s' } as React.CSSProperties}>
+                Da emenda parlamentar ao edital: oportunidades, vencedores e concorrentes — com dados oficiais e metodologia transparente.
+              </p>
+              <div className="reveal flex items-center gap-4 mt-8" style={{ '--d': '0.15s' } as React.CSSProperties}>
+                <Link href="/login?criar=1" className="inline-flex items-center gap-2 text-[15px] font-semibold text-white bg-accent hover:bg-accent-2 px-6 py-3 rounded-xl transition-colors shadow-sm shadow-accent/20">
+                  Criar conta · 3 dias grátis <ArrowRight size={16} />
                 </Link>
-                <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2">ou assinar direto</Link>
+                <Link href="/login" className="text-[14px] text-muted hover:text-strong transition-colors">Já tenho conta</Link>
+              </div>
+            </div>
+
+            {/* Screenshot real do dashboard, emoldurado */}
+            <div className="reveal" style={{ '--d': '0.2s' } as React.CSSProperties}>
+              <Frame>
+                <Image src="/shots/dashboard.png" alt="Dashboard da GovHealth AI com oportunidades reais de saúde"
+                  width={1440} height={900} priority className="w-full h-auto" />
+              </Frame>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Bloco 2 — Prova por números (faixa fina) ───────────────────── */}
+        <section className="border-b border-subtle bg-bg3/60">
+          <div className="max-w-[1080px] mx-auto px-6 py-7 grid grid-cols-2 md:grid-cols-4 gap-6">
+            {PROVAS.map((p, i) => (
+              <div key={p.l} className="reveal text-center md:text-left" style={{ '--d': `${i * 0.06}s` } as React.CSSProperties}>
+                <div className="font-mono-custom font-semibold text-[22px] sm:text-[26px] text-strong tracking-tight">{p.v}</div>
+                <div className="text-[12px] text-faint mt-0.5">{p.l}</div>
               </div>
             ))}
           </div>
-          <p className="text-center text-[11px] text-faint mt-4">Precisa de mais usuários ou de um plano corporativo? <a href="mailto:contato@govhealth.ai?subject=Plano%20corporativo" className="text-accent hover:underline">Fale com a gente</a>.</p>
         </section>
 
-        {/* Confiança */}
-        <section className="pb-16">
-          <div className="bg-bg2 border border-subtle rounded-2xl p-8 text-center">
-            <ShieldCheck size={28} className="text-accent mx-auto mb-3" />
-            <h2 className="font-heading font-semibold text-[20px] mb-2">Transparência é o produto</h2>
-            <p className="text-[14px] text-muted leading-relaxed max-w-[600px] mx-auto">
-              Cada dado vem de fonte oficial do governo — PNCP, Portal da Transparência, Compras.gov,
-              CNES — e o momento real da coleta fica visível na plataforma. Publicamos abertamente de
-              onde vêm os dados e o que não garantimos.
-            </p>
-            <Link href="/metodologia" className="inline-flex items-center gap-1.5 text-[13px] text-accent hover:underline mt-4">
-              Ver fontes e metodologia <ArrowRight size={14} />
+        {/* ── Bloco 3 — 3 cards de funcionalidade ────────────────────────── */}
+        <section className="max-w-[1080px] mx-auto px-6 py-20">
+          <div className="grid md:grid-cols-3 gap-5">
+            {RECURSOS.map(({ icon: Icon, titulo, texto }, i) => (
+              <div key={titulo} className="reveal bg-bg2 border border-subtle rounded-2xl p-6 hover:border-accent/40 hover:shadow-lg hover:shadow-slate-200/50 transition-all" style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
+                <div className="w-11 h-11 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
+                  <Icon size={20} className="text-accent" />
+                </div>
+                <h3 className="font-heading font-semibold text-[16px] mb-1.5">{titulo}</h3>
+                <p className="text-[13.5px] text-muted leading-relaxed">{texto}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── Bloco 4 — Como funciona (3 passos) ─────────────────────────── */}
+        <section className="border-y border-subtle bg-bg3/60">
+          <div className="max-w-[1080px] mx-auto px-6 py-20">
+            <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-10">Como funciona</p>
+            <div className="grid md:grid-cols-3 gap-8">
+              {PASSOS.map((p, i) => (
+                <div key={p.n} className="reveal" style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
+                  <div className="font-heading font-bold text-[40px] text-accent/30 leading-none mb-3">{p.n}</div>
+                  <h3 className="font-heading font-semibold text-[17px] mb-1.5">{p.t}</h3>
+                  <p className="text-[13.5px] text-muted leading-relaxed">{p.d}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Bloco 5 — Screenshot grande (mapa) ─────────────────────────── */}
+        <section className="max-w-[1080px] mx-auto px-6 py-20">
+          <div className="reveal">
+            <Frame>
+              <Image src="/shots/mapa.png" alt="Mapa de inteligência: oportunidades de saúde por todo o Brasil"
+                width={1440} height={900} className="w-full h-auto" />
+            </Frame>
+          </div>
+          <p className="text-center text-[13px] text-muted mt-5">
+            Cada ponto é uma oportunidade real de saúde, do PNCP — nos {s.ufs} estados. <span className="text-faint">Atualizado em {s.ult}.</span>
+          </p>
+        </section>
+
+        {/* ── Planos ─────────────────────────────────────────────────────── */}
+        <section id="planos" className="border-y border-subtle bg-bg3/60">
+          <div className="max-w-[1080px] mx-auto px-6 py-20">
+            <h2 className="text-center font-heading font-bold text-[28px] mb-1">Escolha o plano da sua operação</h2>
+            <p className="text-center text-[13.5px] text-muted mb-10 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
+            <div className="grid sm:grid-cols-2 gap-5 max-w-[760px] mx-auto">
+              {PLANOS.map((p, i) => (
+                <div key={p.id} className={clsx('reveal rounded-2xl p-7 border flex flex-col bg-bg2', p.destaque ? 'border-accent shadow-xl shadow-slate-200/60' : 'border-subtle')} style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="font-heading font-bold text-[19px]">{p.nome}</h3>
+                    {p.destaque && <span className="text-[10px] font-mono-custom text-white bg-accent px-2 py-0.5 rounded-full font-bold">Mais completo</span>}
+                  </div>
+                  <p className="text-[12.5px] text-muted mb-4">{p.resumo}</p>
+                  <div className="flex items-baseline gap-1 mb-5">
+                    <span className="font-heading font-bold text-[34px]">{formatarPreco(p.preco)}</span>
+                    <span className="text-[13px] text-faint">/{p.ciclo}</span>
+                  </div>
+                  <ul className="space-y-2.5 mb-6 flex-1">
+                    {p.features.map((f) => (
+                      <li key={f} className="flex items-start gap-2 text-[13px] text-strong">
+                        <Check size={15} className="text-accent flex-shrink-0 mt-0.5" /> {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Link href={`/login?criar=1&plano=${p.id}`}
+                    className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-colors',
+                      p.destaque ? 'bg-accent text-white hover:bg-accent-2' : 'bg-bg3 border border-subtle2 text-strong hover:border-accent/50')}>
+                    Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
+                  </Link>
+                  <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2.5">ou assinar direto</Link>
+                </div>
+              ))}
+            </div>
+            <p className="text-center text-[11px] text-faint mt-5">Precisa de mais usuários ou plano corporativo? <a href="mailto:contato@govhealth.ai?subject=Plano%20corporativo" className="text-accent hover:underline">Fale com a gente</a>.</p>
+          </div>
+        </section>
+
+        {/* ── Bloco 6 — CTA final ────────────────────────────────────────── */}
+        <section className="max-w-[1080px] mx-auto px-6 py-20">
+          <div className="reveal relative overflow-hidden rounded-3xl bg-accent px-8 py-14 text-center">
+            <div aria-hidden className="absolute -top-24 -right-24 w-[360px] h-[360px] rounded-full bg-white/10 blur-3xl" />
+            <h2 className="font-heading font-bold text-[26px] sm:text-[30px] text-white relative">Comece antes do próximo edital</h2>
+            <p className="text-[14.5px] text-white/85 mt-2 mb-7 relative max-w-[460px] mx-auto">Teste grátis por 3 dias. Sem cartão, sem fidelidade.</p>
+            <Link href="/login?criar=1" className="relative inline-flex items-center gap-2 text-[15px] font-semibold text-accent bg-white hover:bg-white/90 px-7 py-3 rounded-xl transition-colors">
+              Criar conta · 3 dias grátis <ArrowRight size={16} />
             </Link>
           </div>
         </section>
@@ -195,15 +232,32 @@ export default function InicioPage() {
 
       {/* Rodapé */}
       <footer className="border-t border-subtle">
-        <div className="max-w-[1000px] mx-auto px-6 py-6 flex items-center justify-between gap-4 flex-wrap">
-          <span className="text-[12px] text-faint font-mono-custom">© {new Date().getFullYear()} GovHealth AI · Sales Intelligence</span>
-          <div className="flex items-center gap-4 text-[12px]">
+        <div className="max-w-[1080px] mx-auto px-6 py-7 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={120} height={54} className="h-6 w-auto opacity-80" />
+            <span className="text-[12px] text-faint font-mono-custom">© {new Date().getFullYear()} · Sales Intelligence</span>
+          </div>
+          <div className="flex items-center gap-5 text-[12.5px]">
             <Link href="/metodologia" className="text-muted hover:text-accent">Metodologia</Link>
             <Link href="/login" className="text-muted hover:text-accent">Entrar</Link>
             <a href="mailto:contato@govhealth.ai" className="text-muted hover:text-accent">Contato</a>
           </div>
         </div>
       </footer>
+    </div>
+  )
+}
+
+/** Moldura estilo "janela do produto" para dar sofisticação aos screenshots. */
+function Frame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-subtle bg-bg2 shadow-2xl shadow-slate-300/40 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3.5 py-2.5 border-b border-subtle bg-bg3/70">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#ec6a5e]" />
+        <span className="w-2.5 h-2.5 rounded-full bg-[#f4bf4f]" />
+        <span className="w-2.5 h-2.5 rounded-full bg-[#61c554]" />
+      </div>
+      {children}
     </div>
   )
 }
