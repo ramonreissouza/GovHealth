@@ -20,7 +20,9 @@ export const authOptions: NextAuthOptions = {
       // Registra o acesso (com geo dos headers) — best-effort, não bloqueia o login.
       async authorize(credentials, req) {
         const email = credentials?.email?.trim().toLowerCase()
-        const senha = credentials?.password
+        // Apara espaços/quebras acidentais (teclado mobile, autofill, colar) — as
+        // senhas das contas não têm espaço nas bordas, então isso só ajuda.
+        const senha = credentials?.password?.trim()
         if (!email || !senha) return null
 
         const { user } = await verificarLogin(email, senha)
