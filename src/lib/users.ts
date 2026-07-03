@@ -85,7 +85,7 @@ export async function criarUsuario(data: {
   plano?: string; status_assinatura?: string; expira_em?: string | null
 }): Promise<Usuario> {
   const id = norm(data.email)
-  const hash = await bcrypt.hash(data.senha, 10)
+  const hash = await bcrypt.hash(data.senha.trim(), 10)
   await query(
     `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,expira_em)
      VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
