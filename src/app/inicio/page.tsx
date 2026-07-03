@@ -10,11 +10,12 @@ import { clsx } from 'clsx'
 import { ArrowRight, ShieldCheck, Check, Radar, Swords, Flame } from 'lucide-react'
 import { PLANOS, formatarPreco } from '@/lib/planos'
 import { query } from '@/lib/db'
+import { siteUrl } from '@/lib/site'
 
 export const revalidate = 3600 // ISR: números atualizam a cada hora
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://gov-health.vercel.app'),
+  metadataBase: new URL(siteUrl()),
   title: 'GovHealth AI — Antecipe as licitações de saúde pública',
   description:
     'Da emenda parlamentar ao edital: oportunidades, vencedores e concorrentes das licitações de saúde no Brasil, com dados oficiais e metodologia transparente.',
