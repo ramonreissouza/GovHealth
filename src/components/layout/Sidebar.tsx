@@ -81,6 +81,13 @@ export default function Sidebar() {
   const userName = session?.user?.name ?? 'Usuário'
   const userEmail = session?.user?.email ?? ''
   const userImage = session?.user?.image
+
+  // Teste grátis: dias restantes (banner no rodapé).
+  const su = session?.user as { status?: string | null; expiraEm?: string | null; plano?: string | null } | undefined
+  const emTrial = su?.status === 'trial'
+  const diasRestantes = emTrial && su?.expiraEm
+    ? Math.ceil((new Date(su.expiraEm + 'T23:59:59Z').getTime() - Date.now()) / 86_400_000)
+    : null
   const initials = userName
     .split(' ')
     .slice(0, 2)
@@ -187,6 +194,18 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="p-3 border-t border-subtle">
+        {emTrial && (
+          <Link href={`/assinar?plano=${su?.plano || 'pro'}`}
+            className="block mb-2 p-2.5 rounded-lg border border-accent/40 bg-accent/10 hover:bg-accent/15 transition-colors">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-accent">
+              <Flame size={12} />
+              {diasRestantes !== null && diasRestantes > 0
+                ? `Teste grátis · ${diasRestantes} dia${diasRestantes > 1 ? 's' : ''} restante${diasRestantes > 1 ? 's' : ''}`
+                : 'Seu teste expirou'}
+            </div>
+            <div className="text-[10.5px] text-muted mt-0.5">Assinar para manter o acesso →</div>
+          </Link>
+        )}
         <div className="flex items-center gap-2 p-2 rounded-lg bg-bg3">
           {userImage ? (
             // eslint-disable-next-line @next/next/no-img-element

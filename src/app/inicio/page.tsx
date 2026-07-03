@@ -70,8 +70,9 @@ export default function InicioPage() {
           <div className="flex items-center gap-3">
             <a href="#planos" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Planos</a>
             <Link href="/metodologia" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Metodologia</Link>
-            <Link href="/login" className="text-[12px] font-semibold text-black bg-accent hover:bg-accent2 px-3.5 py-1.5 rounded-md transition-colors">
-              Entrar
+            <Link href="/login" className="text-[12px] text-muted hover:text-strong transition-colors hidden sm:block">Entrar</Link>
+            <Link href="/login?criar=1" className="text-[12px] font-semibold text-black bg-accent hover:bg-accent2 px-3.5 py-1.5 rounded-md transition-colors">
+              Criar conta
             </Link>
           </div>
         </div>
@@ -91,13 +92,13 @@ export default function InicioPage() {
             antes de virar disputa — e quem são os vencedores e concorrentes de cada mercado.
           </p>
           <div className="flex items-center justify-center gap-3 mt-8 flex-wrap">
-            <Link href="/login" className="inline-flex items-center gap-2 text-[14px] font-semibold text-black bg-accent hover:bg-accent2 px-5 py-2.5 rounded-lg transition-colors">
-              Entrar na plataforma <ArrowRight size={15} />
+            <Link href="/login?criar=1" className="inline-flex items-center gap-2 text-[14px] font-semibold text-black bg-accent hover:bg-accent2 px-5 py-2.5 rounded-lg transition-colors">
+              Criar conta · 3 dias grátis <ArrowRight size={15} />
             </Link>
-            <a href="mailto:contato@govhealth.ai?subject=Solicitação%20de%20acesso%20—%20GovHealth%20AI"
+            <Link href="/login"
               className="inline-flex items-center gap-2 text-[14px] font-medium text-strong bg-bg3 border border-subtle hover:border-subtle2 px-5 py-2.5 rounded-lg transition-colors">
-              Solicitar acesso
-            </a>
+              Já tenho conta · Entrar
+            </Link>
           </div>
         </section>
 
@@ -163,11 +164,12 @@ export default function InicioPage() {
                     </li>
                   ))}
                 </ul>
-                <Link href={`/assinar?plano=${p.id}`}
+                <Link href={`/login?criar=1&plano=${p.id}`}
                   className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-2.5 rounded-lg transition-colors',
                     p.destaque ? 'bg-accent text-black hover:bg-accent2' : 'bg-bg3 border border-subtle2 text-strong hover:border-accent/50')}>
-                  Assinar {p.nome} <ArrowRight size={15} />
+                  Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
                 </Link>
+                <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2">ou assinar direto</Link>
               </div>
             ))}
           </div>

@@ -89,6 +89,11 @@ function Checkout() {
           <div className="grid md:grid-cols-[1fr_360px] gap-6">
             {/* Formulário */}
             <div>
+              {sp.get('trial') === 'expirado' && (
+                <div className="mb-4 bg-amber/10 border border-amber/30 rounded-lg px-3.5 py-2.5 text-[12.5px] text-amber">
+                  Seu teste grátis terminou. Assine para continuar com acesso total à plataforma.
+                </div>
+              )}
               <h1 className="font-heading font-bold text-[22px] mb-1">Assinar {plano.nome}</h1>
               <p className="text-[13px] text-muted mb-5">Preencha os dados de cobrança. Sem fidelidade — cancele quando quiser.</p>
 
