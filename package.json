@@ -15,7 +15,8 @@
     "admin:seed": "node scripts/seed-admin.mjs",
     "admin:set-password": "node scripts/set-master-password.mjs",
     "stripe:migrate": "node scripts/migrate-stripe.mjs",
-    "stripe:setup": "node scripts/stripe-setup.mjs"
+    "stripe:setup": "node scripts/stripe-setup.mjs",
+    "trial:migrate": "node scripts/migrate-trial.mjs"
   },
   "dependencies": {
     "@types/mapbox-gl": "^3.1.0",
