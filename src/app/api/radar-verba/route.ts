@@ -14,13 +14,15 @@ export const maxDuration = 30
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const uf = searchParams.get('uf')?.toUpperCase().trim() || undefined
+  const ufsParam = searchParams.get('ufs') || undefined // território multi-UF
+  const ufs = ufsParam ? ufsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean) : undefined
   const anoParam = searchParams.get('ano')
   const tipo = searchParams.get('tipo')?.trim().toLowerCase() || undefined
   const subfuncao = searchParams.get('subfuncao')?.trim().toLowerCase() || undefined
   const valorMin = searchParams.get('valorMin') ? Number(searchParams.get('valorMin')) : 0
   const soQuentes = searchParams.get('soQuentes') === '1'
 
-  const cacheKey = `radar:${anoParam ?? 'auto'}:${uf ?? ''}:${tipo ?? ''}:${subfuncao ?? ''}:${valorMin}:${soQuentes ? 'q' : ''}`
+  const cacheKey = `radar:${anoParam ?? 'auto'}:${ufs?.length ? ufs.join(',') : uf ?? ''}:${tipo ?? ''}:${subfuncao ?? ''}:${valorMin}:${soQuentes ? 'q' : ''}`
   const cached = getCached<object>(cacheKey)
   if (cached) return NextResponse.json(cached)
 
@@ -38,7 +40,8 @@ export async function GET(req: NextRequest) {
     let emendas: EmendaRadar[] = brutas.map(toEmendaRadar)
 
     // Filtros
-    if (uf) emendas = emendas.filter((e) => e.uf === uf)
+    if (ufs?.length) emendas = emendas.filter((e) => ufs.includes(e.uf))
+    else if (uf) emendas = emendas.filter((e) => e.uf === uf)
     if (tipo) emendas = emendas.filter((e) => e.tipo.toLowerCase().includes(tipo))
     if (subfuncao) emendas = emendas.filter((e) => e.subfuncao.toLowerCase().includes(subfuncao))
     if (valorMin > 0) emendas = emendas.filter((e) => e.disponivel >= valorMin)

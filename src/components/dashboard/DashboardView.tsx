@@ -24,6 +24,8 @@ import {
   getSavedViews, createSavedView, deleteSavedView, savedViewExists,
   getLastFilter, setLastFilter, type SavedView,
 } from '@/lib/saved-views'
+import { getTerritorio } from '@/lib/territorio'
+import TerritorioToggle from '@/components/ui/TerritorioToggle'
 
 export interface OpportunitiesData {
   oportunidades: Oportunidade[]
@@ -49,17 +51,23 @@ export default function DashboardView() {
   const [uf, setUf] = useState<string>('') // '' = Brasil
   const [tipo, setTipo] = useState<string>('todos')
   const [views, setViews] = useState<SavedView[]>([])
+  const [terrAtivo, setTerrAtivo] = useState(false)
+  const [terr, setTerr] = useState<string[]>([])
 
   const [oppData, setOppData] = useState<OpportunitiesData | null>(null)
   const [oppLoading, setOppLoading] = useState(true)
   const [oppError, setOppError] = useState(false)
 
-  const filtros = { uf: uf || undefined, tipo: tipo === 'todos' ? undefined : tipo }
-  const ativo = !!uf || tipo !== 'todos'
+  // Território ativo comanda o multi-UF; senão vale o seletor de UF única.
+  const usandoTerritorio = terrAtivo && terr.length > 0
+  const filtros = { uf: usandoTerritorio ? undefined : (uf || undefined), tipo: tipo === 'todos' ? undefined : tipo }
+  const ativo = !!uf || tipo !== 'todos' || usandoTerritorio
+  const ufsKey = usandoTerritorio ? terr.join(',') : ''
 
-  // Ao montar: carrega filtros salvos e restaura o último filtro aplicado (perfil).
+  // Ao montar: carrega filtros salvos, território e restaura o último filtro aplicado.
   useEffect(() => {
     setViews(getSavedViews())
+    setTerr(getTerritorio())
     const last = getLastFilter()
     if (last) {
       if (last.uf) setUf(last.uf)
@@ -72,9 +80,10 @@ export default function DashboardView() {
     let cancelado = false
     setOppLoading(true)
     setOppError(false)
-    setLastFilter(filtros) // memoriza o filtro para restaurar na próxima visita
+    if (!usandoTerritorio) setLastFilter(filtros) // memoriza o filtro p/ restaurar (exceto território)
     const params = new URLSearchParams({ limit: '300', minScore: '0' })
-    if (filtros.uf) params.set('uf', filtros.uf)
+    if (usandoTerritorio) params.set('ufs', ufsKey)
+    else if (filtros.uf) params.set('uf', filtros.uf)
     if (filtros.tipo) params.set('tipo', filtros.tipo)
     fetch(`/api/opportunities?${params}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
@@ -82,7 +91,7 @@ export default function DashboardView() {
       .catch(() => { if (!cancelado) setOppError(true) })
       .finally(() => { if (!cancelado) setOppLoading(false) })
     return () => { cancelado = true }
-  }, [filtros.uf, filtros.tipo])
+  }, [filtros.uf, filtros.tipo, usandoTerritorio, ufsKey])
 
   const tipoLabelDe = (k: string) => TIPOS.find((t) => t.key === k)?.label ?? k
 
@@ -116,7 +125,9 @@ export default function DashboardView() {
           <select
             value={uf}
             onChange={(e) => setUf(e.target.value)}
-            className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none"
+            disabled={usandoTerritorio}
+            title={usandoTerritorio ? 'Território ativo comanda as UFs' : undefined}
+            className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none disabled:opacity-50"
           >
             <option value="">Brasil (todas UFs)</option>
             {UFS.map((u) => (
@@ -124,6 +135,8 @@ export default function DashboardView() {
             ))}
           </select>
         </div>
+
+        <TerritorioToggle ativo={terrAtivo} onToggle={setTerrAtivo} />
 
         <div className="flex gap-1 overflow-x-auto flex-1 min-w-0 pb-1">
           {TIPOS.map((t) => (

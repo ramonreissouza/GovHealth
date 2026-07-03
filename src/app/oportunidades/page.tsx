@@ -17,6 +17,7 @@ import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/portfolio'
+import { getTerritorio } from '@/lib/territorio'
 import { publishDataStatus } from '@/lib/data-status'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -135,6 +136,10 @@ function OportunidadesInner() {
   const [queryConvenio, setQueryConvenio] = useState('')
   const [categoria, setCategoria] = useState('todos')
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
+  const [terrUFs, setTerrUFs] = useState<string[]>([])
+  useEffect(() => { setTerrUFs(getTerritorio()) }, [])
+  // Território ativo = ufsAtivos exatamente igual ao conjunto do território.
+  const territorioAtivo = terrUFs.length > 0 && terrUFs.length === ufsAtivos.size && terrUFs.every((u) => ufsAtivos.has(u))
   const [anoFiltro, setAnoFiltro] = useState('todos')
   const [statusFiltro, setStatusFiltro] = useState('todos')
   const [minScore, setMinScore] = useState(Number(searchParams.get('minScore') ?? 0) || 0)
@@ -355,6 +360,15 @@ function OportunidadesInner() {
                   ufsAtivos.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                 Todos
               </button>
+              {terrUFs.length > 0 && (
+                <button
+                  onClick={() => setUfsAtivos(territorioAtivo ? new Set() : new Set(terrUFs))}
+                  title={`Aplicar as ${terrUFs.length} UF(s) do seu território`}
+                  className={clsx('flex items-center gap-1 text-[10px] font-mono-custom px-2.5 py-1 rounded-md border transition-all',
+                    territorioAtivo ? 'bg-accent/15 text-accent border-accent/40 font-semibold' : 'border-accent/30 text-accent hover:bg-accent/10')}>
+                  <Target size={11} /> Meu território ({terrUFs.length})
+                </button>
+              )}
               {UFS.map((uf) => (
                 <button key={uf} onClick={() => toggleUF(uf)}
                   className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
