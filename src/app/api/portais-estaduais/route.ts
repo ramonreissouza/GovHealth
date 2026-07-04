@@ -2,9 +2,8 @@
 // Agrega dados de licitações de saúde dos portais estaduais (SP, RJ, MG, BA)
 
 import { NextRequest, NextResponse } from 'next/server'
+import { buscarLicitacoesEstado, buscarResumoEstados } from '@/lib/portais-estaduais-db'
 import {
-  buscarLicitacoesEstado,
-  buscarResumoEstados,
   PORTAIS_CONFIG,
   TODAS_UFS,
   type UFEstadual,
@@ -54,12 +53,15 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const cacheKey = `portais-estaduais:${uf}`
+  const statusParam = searchParams.get('status')
+  const status = statusParam === 'abertas' || statusParam === 'fechadas' ? statusParam : undefined
+
+  const cacheKey = `portais-estaduais:${uf}:${status ?? 'todas'}`
   const cached = getCached<object>(cacheKey)
   if (cached) return NextResponse.json(cached)
 
   try {
-    const resultado = await buscarLicitacoesEstado(uf as UFEstadual)
+    const resultado = await buscarLicitacoesEstado(uf as UFEstadual, status)
     setCached(cacheKey, resultado, TTL.SHORT)
     return NextResponse.json(resultado)
   } catch (error) {

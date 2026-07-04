@@ -19,6 +19,7 @@ import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/portfolio'
 import { getTerritorio } from '@/lib/territorio'
 import { publishDataStatus } from '@/lib/data-status'
+import { matchesTermo } from '@/lib/text'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -62,15 +63,18 @@ function estaAberta(o: Oportunidade): boolean {
     : lic?.situacaoCompraId === 1
 }
 
-// ── ItemsRow: lazy-loads PNCP items for a given oportunidade ─────────────────
+// ── ItemsRow: itens (equipamentos/acessórios) de uma oportunidade ────────────
+// Usa os itens já pré-carregados em lote (banco); se não vierem, faz fetch
+// individual no PNCP como fallback.
 
-function ItemsRow({ opp }: { opp: Oportunidade }) {
-  const [itens, setItens] = useState<ItemPNCP[]>([])
-  const [loading, setLoading] = useState(true)
+function ItemsRow({ opp, preloaded }: { opp: Oportunidade; preloaded?: ItemPNCP[] }) {
+  const [itens, setItens] = useState<ItemPNCP[]>(preloaded ?? [])
+  const [loading, setLoading] = useState(!preloaded)
 
   const lic = opp.licitacaoRelacionada
 
   useEffect(() => {
+    if (preloaded) { setItens(preloaded); setLoading(false); return }
     const parsed = parsePNCPNum(lic?.numeroControlePNCP)
     const cnpj = lic?.orgaoEntidade?.cnpj
     if (!parsed || !cnpj) { setLoading(false); return }
@@ -80,7 +84,7 @@ function ItemsRow({ opp }: { opp: Oportunidade }) {
       .then((json) => setItens(json.itens ?? []))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [opp.id, lic?.numeroControlePNCP, lic?.orgaoEntidade?.cnpj])
+  }, [opp.id, lic?.numeroControlePNCP, lic?.orgaoEntidade?.cnpj, preloaded])
 
   if (loading) {
     return (
@@ -141,12 +145,26 @@ function OportunidadesInner() {
   // Território ativo = ufsAtivos exatamente igual ao conjunto do território.
   const territorioAtivo = terrUFs.length > 0 && terrUFs.length === ufsAtivos.size && terrUFs.every((u) => ufsAtivos.has(u))
   const [anoFiltro, setAnoFiltro] = useState('todos')
-  const [statusFiltro, setStatusFiltro] = useState('todos')
+  // Default: abertas (as que ainda dá para disputar). Encerradas (já homologadas)
+  // são muito mais — ao escolher "Encerrado" pré-selecionamos um ano p/ não pesar.
+  const [statusFiltro, setStatusFiltro] = useState('aberto')
   const [minScore, setMinScore] = useState(Number(searchParams.get('minScore') ?? 0) || 0)
   const [viewMode, setViewMode] = useState<'tabela' | 'cards'>('tabela')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([])
   const [soPortfolio, setSoPortfolio] = useState(false)
+  // Itens (equipamentos/acessórios) pré-carregados em lote, por nº de controle
+  // PNCP — habilita a busca por item e alimenta a pré-análise de cada licitação.
+  const [itensMap, setItensMap] = useState<Record<string, ItemPNCP[]>>({})
+  const [itensProntos, setItensProntos] = useState(0)
+  const [itensTotal, setItensTotal] = useState(0)
+  // Renderização em lotes ("mostrar mais") — evita pintar milhares de linhas de
+  // uma vez (abertas ~1,4 mil). Reinicia quando os filtros mudam.
+  const [visibleCount, setVisibleCount] = useState(400)
+  // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
+  // as linhas carregadas. porTipo alimenta as contagens das abas.
+  const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number } | null>(null)
+  const [porTipo, setPorTipo] = useState<Record<string, number> | null>(null)
 
   // Carrega o portfólio do fornecedor (localStorage) para o filtro "Meu Portfólio".
   useEffect(() => { setProdutos(getProdutos()) }, [])
@@ -176,21 +194,60 @@ function OportunidadesInner() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ limit: '300' })
+      // Status/ano/tipo vão ao servidor para conter o volume (encerradas são ~10 mil)
+      // e para os KPIs refletirem o total real do filtro.
+      const params = new URLSearchParams({ limit: '1500' })
       if (minScore > 0) params.set('minScore', String(minScore))
       if (categoria !== 'todos') params.set('categoria', categoria)
+      if (statusFiltro !== 'todos') params.set('status', statusFiltro)
+      if (anoFiltro !== 'todos') params.set('ano', anoFiltro)
+      if (tipo !== 'todos') params.set('tipo', tipo)
       const res = await fetch(`/api/opportunities?${params}`)
       const data = await res.json()
       publishDataStatus(data)
       setOpps(data.oportunidades ?? [])
+      setTotais(data.totais ?? null)
+      setPorTipo(data.porTipo ?? null)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
-  }, [categoria, minScore])
+  }, [categoria, minScore, statusFiltro, anoFiltro, tipo])
 
   useEffect(() => { load() }, [load])
 
+  // Pré-carrega os itens de TODAS as licitações em lote (banco), em blocos, para
+  // permitir buscar por equipamento/insumo — ex.: "luvas cirúrgicas" — e mostrar
+  // a pré-análise (especificação, quantidade, valor) sem abrir o PNCP.
+  useEffect(() => {
+    const ids = Array.from(new Set(
+      opps.map((o) => o.licitacaoRelacionada?.numeroControlePNCP).filter((x): x is string => !!x)
+    ))
+    setItensMap({}); setItensProntos(0); setItensTotal(ids.length)
+    if (ids.length === 0) return
+    let cancelled = false
+    const CHUNK = 300
+    ;(async () => {
+      for (let i = 0; i < ids.length && !cancelled; i += CHUNK) {
+        const slice = ids.slice(i, i + CHUNK)
+        try {
+          const r = await fetch('/api/itens-lote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: slice }),
+          })
+          const j: { itens?: Record<string, ItemPNCP[]> } = await r.json()
+          if (!cancelled) setItensMap((p) => ({ ...p, ...(j.itens ?? {}) }))
+        } catch { /* segue para o próximo bloco */ }
+        if (!cancelled) setItensProntos((n) => n + slice.length)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [opps])
+
   // Sincroniza a aba de tipo quando a URL muda (links da sidebar "Por Tipo")
   useEffect(() => { setTipo(searchParams.get('tipo') ?? 'todos') }, [searchParams])
+
+  // Reinicia o lote visível sempre que os filtros/dados mudam.
+  useEffect(() => { setVisibleCount(400) }, [opps, tipo, statusFiltro, anoFiltro, categoria, query, queryProponente, queryConvenio, minScore, soPortfolio, ufsAtivos])
 
   // Client-side filtering
   const filtered = opps.filter((o) => {
@@ -203,24 +260,30 @@ function OportunidadesInner() {
     if (statusFiltro === 'encerrado' && estaAberta(o)) return false
     if (queryProponente && !(o.hospital ?? o.municipio).toLowerCase().includes(queryProponente.toLowerCase())) return false
     if (queryConvenio && !(lic?.numeroControlePNCP ?? '').toLowerCase().includes(queryConvenio.toLowerCase())) return false
-    if (query) {
-      const q = query.toLowerCase()
-      return (
-        (o.hospital ?? '').toLowerCase().includes(q) ||
-        o.municipio.toLowerCase().includes(q) ||
-        o.descricao.toLowerCase().includes(q) ||
-        (lic?.orgaoEntidade.cnpj ?? '').includes(q) ||
-        (lic?.numeroControlePNCP ?? '').toLowerCase().includes(q)
-      )
+    if (query.trim()) {
+      // Casa contra hospital/município/objeto/CNPJ/PNCP E contra os itens
+      // (equipamentos/insumos) já pré-carregados — tolerante a acento e plural.
+      const nc = lic?.numeroControlePNCP ?? ''
+      const itensTexto = (itensMap[nc] ?? []).map((it) => it.descricao).join(' ')
+      return matchesTermo(query, o.hospital, o.municipio, o.descricao, lic?.orgaoEntidade.cnpj, nc, itensTexto)
     }
     return true
   })
 
-  // KPIs
-  const valorTotal = filtered.reduce((s, o) => s + o.valorEstimado, 0)
-  const ticketMedio = filtered.length ? valorTotal / filtered.length : 0
-  const estados = new Set(filtered.map((o) => o.uf)).size
-  const abertos = filtered.filter(estaAberta).length
+  // KPIs — usam os totais REAIS do filtro (servidor) quando não há refinamento só
+  // do cliente (busca livre / UF / portfólio). Com esses refinamentos ativos, somam
+  // o conjunto visível carregado.
+  const refinamentoCliente =
+    !!query.trim() || !!queryProponente.trim() || !!queryConvenio.trim() || ufsAtivos.size > 0 || soPortfolio
+  const usarTotais = !refinamentoCliente && !!totais
+  const totalLic = usarTotais ? totais!.total : filtered.length
+  const valorTotal = usarTotais ? totais!.valorTotal : filtered.reduce((s, o) => s + o.valorEstimado, 0)
+  const abertos = usarTotais ? totais!.abertas : filtered.filter(estaAberta).length
+  const estados = usarTotais ? totais!.estados : new Set(filtered.map((o) => o.uf)).size
+  const ticketMedio = totalLic ? valorTotal / totalLic : 0
+
+  // Lote visível (reinicia ao mudar filtros/dados).
+  const visible = filtered.slice(0, visibleCount)
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -228,7 +291,9 @@ function OportunidadesInner() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Topbar
           title={tipo === 'todos' ? 'Análise de Licitações' : `Licitações · ${TIPO_LABEL[tipo] ?? tipo}`}
-          subtitle={loading ? 'Carregando…' : `${filtered.length} encontradas`}
+          subtitle={loading
+            ? 'Carregando…'
+            : `${totalLic} no filtro${itensTotal > 0 && itensProntos < itensTotal ? ' · indexando itens…' : ''}`}
         />
         <main className="flex-1 overflow-y-auto p-6 bg-bg">
 
@@ -247,9 +312,9 @@ function OportunidadesInner() {
               >
                 {t.label}
                 <span className="ml-1.5 text-[10px] text-faint">
-                  {t.key === 'todos'
-                    ? opps.length
-                    : opps.filter((o) => (o.tipoFornecimento ?? 'outros') === t.key).length}
+                  {porTipo
+                    ? (t.key === 'todos' ? Object.values(porTipo).reduce((a, b) => a + b, 0) : (porTipo[t.key] ?? 0))
+                    : (t.key === 'todos' ? opps.length : opps.filter((o) => (o.tipoFornecimento ?? 'outros') === t.key).length)}
                 </span>
               </button>
             ))}
@@ -260,7 +325,7 @@ function OportunidadesInner() {
             {[
               { label: 'Valor total', value: formatBRL(valorTotal), sub: 'estimado' },
               { label: 'Ticket médio', value: formatBRL(ticketMedio), sub: 'por licitação' },
-              { label: 'Em aberto', value: String(abertos), sub: `de ${filtered.length} total` },
+              { label: 'Em aberto', value: String(abertos), sub: `de ${totalLic} total` },
               { label: 'Estados', value: String(estados), sub: 'com resultados' },
             ].map(({ label, value, sub }) => (
               <div key={label} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">
@@ -287,7 +352,11 @@ function OportunidadesInner() {
             {/* Status */}
             <div className="flex gap-0.5 bg-bg2 border border-subtle2 rounded-lg p-1">
               {[{ k: 'todos', l: 'Todos' }, { k: 'aberto', l: 'Aberto' }, { k: 'encerrado', l: 'Encerrado' }].map(({ k, l }) => (
-                <button key={k} onClick={() => setStatusFiltro(k)}
+                <button key={k} onClick={() => {
+                  setStatusFiltro(k)
+                  // Encerradas são ~10 mil: se nenhum ano estiver escolhido, pré-seleciona 2025.
+                  if (k === 'encerrado' && anoFiltro === 'todos') setAnoFiltro('2025')
+                }}
                   className={clsx('text-[11px] font-mono-custom px-3 py-1.5 rounded-md transition-all',
                     statusFiltro === k ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong')}>
                   {l}
@@ -394,7 +463,7 @@ function OportunidadesInner() {
           <div className="grid grid-cols-3 gap-2 mb-4">
             {[
               { value: queryProponente, set: setQueryProponente, placeholder: 'Nome do proponente / hospital…' },
-              { value: query, set: setQuery, placeholder: 'Busca geral (município, CNPJ…)' },
+              { value: query, set: setQuery, placeholder: 'Item, equipamento, município, CNPJ… (ex: luvas cirúrgicas)' },
               { value: queryConvenio, set: setQueryConvenio, placeholder: 'Nº PNCP / convênio…' },
             ].map(({ value, set, placeholder }) => (
               <div key={placeholder} className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2">
@@ -432,7 +501,7 @@ function OportunidadesInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((opp, idx) => {
+                  {visible.map((opp, idx) => {
                     const lic = opp.licitacaoRelacionada
                     const situacaoId = lic?.situacaoCompraId ?? 4
                     const ano = lic?.dataPublicacaoPncp?.substring(0, 4) ?? '—'
@@ -514,7 +583,7 @@ function OportunidadesInner() {
                                     <AddToCRMButton oportunidade={opp} />
                                     <AbrirDossieButton oportunidade={opp} />
                                   </div>
-                                  <ItemsRow opp={opp} />
+                                  <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
                                   <div className="mt-3 pt-3 border-t border-subtle">
                                     <PrecosReferencia termo={opp.descricao} uf={opp.uf} />
                                   </div>
@@ -599,7 +668,7 @@ function OportunidadesInner() {
 
             /* ── CARDS VIEW ─────────────────────────────────────────────── */
             <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
-              {filtered.map((opp) => {
+              {visible.map((opp) => {
                 const lic = opp.licitacaoRelacionada
                 const isExpanded = expanded.has(opp.id)
                 const dias = lic?.dataEncerramentoProposta ? diasRestantes(lic.dataEncerramentoProposta) : null
@@ -676,7 +745,7 @@ function OportunidadesInner() {
                               <AddToCRMButton oportunidade={opp} />
                               <AbrirDossieButton oportunidade={opp} />
                             </div>
-                            <ItemsRow opp={opp} />
+                            <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
                             <div className="mt-3 pt-3 border-t border-subtle">
                               <PrecosReferencia termo={opp.descricao} uf={opp.uf} />
                             </div>
@@ -752,6 +821,21 @@ function OportunidadesInner() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {/* Mostrar mais — renderização em lotes p/ não pesar com milhares de linhas */}
+          {!loading && filtered.length > visible.length && (
+            <div className="flex items-center justify-center gap-3 mt-4">
+              <span className="text-[11px] font-mono-custom text-faint">
+                Mostrando {visible.length} de {filtered.length}
+              </span>
+              <button
+                onClick={() => setVisibleCount((n) => n + 400)}
+                className="text-[12px] font-mono-custom px-4 py-2 rounded-lg bg-bg2 border border-subtle2 text-strong hover:border-accent hover:text-accent transition-all"
+              >
+                Mostrar mais 400
+              </button>
             </div>
           )}
         </main>

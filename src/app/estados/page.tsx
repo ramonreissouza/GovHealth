@@ -1,18 +1,20 @@
 'use client'
 // src/app/estados/page.tsx — Portais Estaduais (SP, RJ, MG, BA)
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
   ExternalLink, Search, CheckCircle2, AlertCircle, RefreshCw,
-  Building2, MapPin, ChevronDown, ChevronUp, Wifi, WifiOff,
+  Building2, MapPin, ChevronDown, ChevronUp, Wifi, WifiOff, Package,
 } from 'lucide-react'
 import type { ResultadoEstado, KPIsEstado, UFEstadual, LicitacaoEstadual } from '@/lib/portais-estaduais'
+import type { ItemPNCP } from '@/lib/pncp'
 import { PORTAIS_CONFIG, ENTIDADES_SAUDE, TODAS_UFS } from '@/lib/portais-estaduais'
 import { CATEGORIA_COLOR as CAT_COLOR } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
+import { matchesTermo } from '@/lib/text'
 import { publishDataStatus } from '@/lib/data-status'
 
 // ── Types from API response ───────────────────────────────────────────────────
@@ -41,6 +43,9 @@ function isAbertaLic(l: LicitacaoEstadual): boolean {
   const s = (l.situacao ?? '').toLowerCase()
   return s.includes('aberto') || s.includes('publicad') || s.includes('divulgad') || s.includes('recebendo')
 }
+
+// Estado da pré-análise de itens de uma licitação.
+interface ItensState { itens: ItemPNCP[]; loading: boolean; erro?: boolean }
 
 type StatusFiltro = 'todas' | 'abertas' | 'fechadas'
 
@@ -177,6 +182,65 @@ function EstadoCard({
   )
 }
 
+// ── Pré-análise de itens (o que está sendo orçado) ────────────────────────────
+// Lista os itens (equipamentos/acessórios) da licitação buscados no PNCP, sem
+// precisar sair da plataforma. Destaca os itens que casam com a busca ativa.
+function ItensPreAnalise({ estado, query }: { estado?: ItensState; query: string }) {
+  if (!estado) return null
+  if (estado.loading) {
+    return (
+      <div className="mt-4 pt-4 border-t border-subtle/60 flex items-center gap-2 text-[11px] text-faint">
+        <Package size={12} className="animate-pulse" />
+        Pré-analisando itens no PNCP…
+      </div>
+    )
+  }
+  if (estado.erro || estado.itens.length === 0) {
+    return (
+      <div className="mt-4 pt-4 border-t border-subtle/60 text-[11px] text-faint">
+        Itens detalhados não disponíveis para esta licitação no PNCP.
+      </div>
+    )
+  }
+  const temQuery = query.trim().length > 0
+  const total = estado.itens.reduce((s, it) => s + (it.quantidade || 0) * (it.valorUnitarioEstimado || 0), 0)
+  return (
+    <div className="mt-4 pt-4 border-t border-subtle/60">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider flex items-center gap-1.5">
+          <Package size={11} />
+          Pré-análise — o que está sendo orçado ({estado.itens.length} iten{estado.itens.length !== 1 ? 's' : ''})
+        </div>
+        {total > 0 && (
+          <div className="text-[10px] font-mono-custom text-faint">
+            Soma dos itens <span className="text-accent font-bold">{formatBRL(total)}</span>
+          </div>
+        )}
+      </div>
+      <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+        {estado.itens.map((item) => {
+          const match = temQuery && matchesTermo(query, item.descricao)
+          return (
+            <div
+              key={item.numeroItem}
+              className={clsx('flex items-start gap-3 px-3 py-2 rounded-lg', match ? 'bg-accent/10 border border-accent/30' : 'bg-bg4/40')}
+            >
+              <span className="text-[9px] font-mono-custom text-faint w-5 flex-shrink-0 mt-0.5">{item.numeroItem}</span>
+              <span className="text-[11px] text-strong flex-1 leading-snug">{item.descricao}</span>
+              <span className="text-[10px] font-mono-custom text-faint flex-shrink-0 whitespace-nowrap">
+                {item.quantidade} {item.unidadeMedida}
+              </span>
+              <span className="text-[11px] font-mono-custom font-bold text-accent flex-shrink-0 whitespace-nowrap">
+                {formatBRL((item.quantidade || 0) * (item.valorUnitarioEstimado || 0))}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Detalhe do estado ─────────────────────────────────────────────────────────
 
 function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; statusFiltro: StatusFiltro; onStatusChange: (v: StatusFiltro) => void }) {
@@ -185,6 +249,9 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
   const [query, setQuery]           = useState('')
   const [expanded, setExpanded]     = useState<Set<string>>(new Set())
   const [showEntidades, setShowEntidades] = useState(false)
+  // Pré-análise: itens (equipamentos/acessórios) de cada licitação, buscados no
+  // PNCP em segundo plano. Alimenta tanto o detalhe expandido quanto a busca.
+  const [itensMap, setItensMap] = useState<Record<string, ItensState>>({})
 
   const toggle = (id: string) =>
     setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s })
@@ -192,29 +259,64 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
   useEffect(() => {
     setLoading(true)
     setResultado(null)
-    fetch(`/api/portais-estaduais?uf=${uf}`)
+    setItensMap({})
+    // Status vai ao servidor (abertas/fechadas) — encerradas são muitas, então a
+    // lista é limitada no banco; os KPIs continuam sendo do estado inteiro.
+    const sp = statusFiltro === 'abertas' || statusFiltro === 'fechadas' ? `&status=${statusFiltro}` : ''
+    fetch(`/api/portais-estaduais?uf=${uf}${sp}`)
       .then((r) => r.json())
       .then((d) => setResultado(d))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [uf])
+  }, [uf, statusFiltro])
+
+  // Pré-carrega os itens de TODAS as licitações do estado numa ÚNICA chamada em
+  // lote (banco) para permitir buscar por equipamento — ex.: "luvas cirúrgicas" —
+  // filtrando as licitações pelo conteúdo orçado, sem precisar abrir o PNCP.
+  useEffect(() => {
+    const lics = resultado?.licitacoes ?? []
+    if (lics.length === 0) { setItensMap({}); return }
+    let cancelled = false
+    const ids = lics.map((l) => l.id)
+    setItensMap(Object.fromEntries(ids.map((id) => [id, { itens: [], loading: true }])))
+    fetch('/api/itens-lote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    })
+      .then((r) => r.json())
+      .then((j: { itens?: Record<string, ItemPNCP[]> }) => {
+        if (cancelled) return
+        setItensMap(Object.fromEntries(ids.map((id) => [id, { itens: j.itens?.[id] ?? [], loading: false }])))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setItensMap(Object.fromEntries(ids.map((id) => [id, { itens: [], loading: false, erro: true }])))
+      })
+    return () => { cancelled = true }
+  }, [resultado])
 
   const portal  = PORTAIS_CONFIG[uf]
   const color   = accent(uf)
   const entidades = ENTIDADES_SAUDE[uf] ?? []
 
   const licitacoes: LicitacaoEstadual[] = resultado?.licitacoes ?? []
+  const temQuery = query.trim().length > 0
   const filtered = licitacoes.filter((l) => {
     if (statusFiltro === 'abertas' && !isAbertaLic(l)) return false
     if (statusFiltro === 'fechadas' && isAbertaLic(l)) return false
-    return (
-      !query ||
-      l.proponente.toLowerCase().includes(query.toLowerCase()) ||
-      l.descricao.toLowerCase().includes(query.toLowerCase()) ||
-      l.municipio.toLowerCase().includes(query.toLowerCase())
-    )
+    if (!temQuery) return true
+    // Casa contra proponente/objeto/município E contra os itens (equipamentos/
+    // acessórios) já pré-analisados — tolerante a acento e plural.
+    const itensTexto = (itensMap[l.id]?.itens ?? []).map((it) => it.descricao).join(' ')
+    return matchesTermo(query, l.proponente, l.descricao, l.municipio, itensTexto)
   })
   const nAbertas = licitacoes.filter(isAbertaLic).length
+
+  // Progresso da pré-análise de itens (para indicar que a busca ainda está indexando).
+  const totalComItens = Object.keys(itensMap).length
+  const itensCarregados = Object.values(itensMap).filter((s) => !s.loading).length
+  const analisandoItens = totalComItens > 0 && itensCarregados < totalComItens
 
   return (
     <div className="space-y-4">
@@ -308,12 +410,15 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar por proponente, item, município…"
+            placeholder="Buscar por equipamento, item, proponente, município… (ex: luvas cirúrgicas)"
             className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none"
           />
           <StatusFilter value={statusFiltro} onChange={onStatusChange} />
           <span className="text-[10px] font-mono-custom text-faint whitespace-nowrap">
             {filtered.length} de {licitacoes.length} · {nAbertas} abertas
+            {analisandoItens && (
+              <span className="text-accent"> · analisando itens {itensCarregados}/{totalComItens}</span>
+            )}
           </span>
           <a
             href={portal.urlConsulta}
@@ -351,6 +456,7 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
             <tbody>
               {filtered.map((l, idx) => {
                 const isOpen = expanded.has(l.id)
+                const itSt = itensMap[l.id]
                 const estaAberto = l.dataEncerramento
                   ? new Date(l.dataEncerramento) > new Date()
                   : l.situacao.toLowerCase().includes('aberto')
@@ -392,6 +498,19 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
                             {l.categoria}
                           </span>
                           <span className="text-[11px] text-muted max-w-[160px] truncate">{l.descricao}</span>
+                          {itSt?.loading ? (
+                            <span title="Pré-analisando itens no PNCP">
+                              <Package size={10} className="text-faint animate-pulse flex-shrink-0" />
+                            </span>
+                          ) : itSt && itSt.itens.length > 0 ? (
+                            <span
+                              title={`${itSt.itens.length} itens orçados — clique para ver a pré-análise`}
+                              className="inline-flex items-center gap-1 text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20 flex-shrink-0"
+                            >
+                              <Package size={9} />
+                              {itSt.itens.length}
+                            </span>
+                          ) : null}
                         </div>
                       </td>
 
@@ -481,6 +600,9 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
                               </a>
                             </div>
                           </div>
+
+                          {/* Pré-análise dos itens orçados (equipamentos/acessórios) */}
+                          <ItensPreAnalise estado={itSt} query={query} />
                         </td>
                       </tr>
                     )}
@@ -497,15 +619,12 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
 
 // ── Comparação entre estados ──────────────────────────────────────────────────
 
-function TabelaComparacao({ resumo, statusFiltro }: { resumo: ResumoPayload | null; statusFiltro: StatusFiltro }) {
+function TabelaComparacao({ resumo }: { resumo: ResumoPayload | null }) {
   if (!resumo) return null
   const fechadasDe = (uf: UFEstadual) => Math.max((resumo.estados[uf]?.kpis.total ?? 0) - (resumo.estados[uf]?.kpis.abertas ?? 0), 0)
-  const metrica = (uf: UFEstadual) =>
-    statusFiltro === 'abertas' ? (resumo.estados[uf]?.kpis.abertas ?? 0)
-    : statusFiltro === 'fechadas' ? fechadasDe(uf)
-    : (resumo.estados[uf]?.kpis.total ?? 0)
-  // Ordena pelo métrica do filtro (mais ativos primeiro)
-  const ufs: UFEstadual[] = [...TODAS_UFS].sort((a, b) => metrica(b) - metrica(a))
+  // Ordem alfabética (por nome do estado)
+  const ufs: UFEstadual[] = [...TODAS_UFS].sort((a, b) =>
+    PORTAIS_CONFIG[a].nomeEstado.localeCompare(PORTAIS_CONFIG[b].nomeEstado, 'pt-BR'))
 
   return (
     <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
@@ -635,14 +754,6 @@ export default function EstadosPage() {
     return { ...resumo, estados }
   }, [resumo, realKpis])
 
-  const metricaUF = useCallback((uf: UFEstadual) => {
-    const k = resumoEfetivo?.estados[uf]?.kpis
-    if (!k) return 0
-    if (statusFiltro === 'abertas') return k.abertas
-    if (statusFiltro === 'fechadas') return Math.max(k.total - k.abertas, 0)
-    return k.total
-  }, [resumoEfetivo, statusFiltro])
-
   const totalLicitacoes = resumoEfetivo
     ? UFS.reduce((s, uf) => s + (resumoEfetivo.estados[uf]?.kpis.total ?? 0), 0)
     : 0
@@ -703,9 +814,9 @@ export default function EstadosPage() {
                 <StatusFilter value={statusFiltro} onChange={setStatusFiltro} />
               </div>
 
-              {/* ── Cards de estado (ordenados pela métrica do filtro) ──────── */}
+              {/* ── Cards de estado (ordem alfabética) ──────────────────────── */}
               <div className="grid grid-cols-4 gap-3">
-                {[...UFS].sort((a, b) => metricaUF(b) - metricaUF(a)).map((uf) => (
+                {[...UFS].sort((a, b) => PORTAIS_CONFIG[a].nomeEstado.localeCompare(PORTAIS_CONFIG[b].nomeEstado, 'pt-BR')).map((uf) => (
                   <EstadoCard
                     key={uf}
                     uf={uf}
@@ -723,7 +834,7 @@ export default function EstadosPage() {
               </div>
 
               {/* ── Comparação ────────────────────────────────────────────── */}
-              {!resumoLoading && <TabelaComparacao resumo={resumoEfetivo} statusFiltro={statusFiltro} />}
+              {!resumoLoading && <TabelaComparacao resumo={resumoEfetivo} />}
             </>
           )}
         </main>

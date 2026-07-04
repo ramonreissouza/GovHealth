@@ -231,7 +231,9 @@ export async function buscarItensCompra(
   )
   if (!res.ok) return []
   const data = await res.json()
-  return data.data ?? []
+  // O endpoint de itens do PNCP responde com um ARRAY puro ([{...}]), não com
+  // um envelope { data: [...] }. Aceitamos ambos por segurança.
+  return Array.isArray(data) ? data : (data?.data ?? data?.itens ?? [])
 }
 
 export interface ResultadoCompra {
