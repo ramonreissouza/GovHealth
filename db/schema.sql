@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS etl_checkpoint (
 
 -- Índices essenciais para as agregações das telas
 CREATE INDEX IF NOT EXISTS idx_res_uf        ON resultados (uf);
+-- Presença de resultado por contratação (define aberto/encerrada: EXISTS resultado
+-- = homologada/encerrada). Acelera o join usado em opportunities e portais estaduais.
+CREATE INDEX IF NOT EXISTS idx_res_ncp       ON resultados (numero_controle_pncp);
 CREATE INDEX IF NOT EXISTS idx_res_fornec    ON resultados (ni_fornecedor);
 CREATE INDEX IF NOT EXISTS idx_res_catmat    ON resultados (codigo_catmat);
 CREATE INDEX IF NOT EXISTS idx_res_ano       ON resultados (ano);

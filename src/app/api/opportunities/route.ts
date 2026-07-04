@@ -100,6 +100,71 @@ interface ContratacaoRow {
   situacao_id: number | null
   categoria_saude: string | null
   tipo_fornecimento: string | null
+  aberto: boolean
+}
+
+// aberto = ainda SEM resultado homologado; encerrada = já tem vencedor definido.
+// (situacao_id do PNCP é desatualizado no banco; a presença de resultado é o sinal
+// confiável de que a licitação encerrou.)
+const abertoExpr = (ref: string) =>
+  `NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = ${ref}.numero_controle_pncp)`
+
+// Filtros SQL compartilhados por buscarDoBanco / totaisDoBanco (mesmo universo).
+interface FiltroBanco {
+  uf?: string
+  ufs?: string[]
+  tipo?: TipoFornecimento
+  status?: 'aberto' | 'encerrado' | 'todos'
+  ano?: string
+  categoria?: string
+}
+function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {}): { whereSql: string; args: unknown[] } {
+  const where: string[] = ['valor_total_estimado >= 10000', "objeto_compra IS NOT NULL"]
+  const args: unknown[] = []
+  if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
+  else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
+  if (opts.incluirTipo !== false && params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
+  if (params.categoria) { args.push(params.categoria); where.push(`categoria_saude = $${args.length}`) }
+  if (params.ano && /^\d{4}$/.test(params.ano)) { args.push(Number(params.ano)); where.push(`EXTRACT(YEAR FROM data_publicacao) = $${args.length}`) }
+  if (params.status === 'aberto') where.push(abertoExpr('contratacoes'))
+  else if (params.status === 'encerrado') where.push(`NOT ${abertoExpr('contratacoes')}`)
+  return { whereSql: where.join(' AND '), args }
+}
+
+// Totais REAIS do filtro (não da página carregada) — para os KPIs refletirem todo
+// o universo selecionado, não só as N linhas renderizadas.
+export interface TotaisBanco { total: number; valorTotal: number; abertas: number; estados: number }
+async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
+  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
+  const cached = getCached<TotaisBanco>(cacheKey)
+  if (cached) return cached
+  const { whereSql, args } = construirWhere(params)
+  const [row] = await query<TotaisBanco>(
+    `SELECT count(*)::int AS total,
+            COALESCE(sum(valor_total_estimado), 0)::float8 AS "valorTotal",
+            count(*) FILTER (WHERE ${abertoExpr('contratacoes')})::int AS abertas,
+            count(DISTINCT uf)::int AS estados
+       FROM contratacoes WHERE ${whereSql}`,
+    args,
+  )
+  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0 }, TTL.SHORT)
+}
+
+// Contagem por tipo de fornecimento (para as abas), SEM o filtro de tipo — assim
+// todas as abas mostram seu total dentro do filtro de status/ano/categoria.
+async function porTipoDoBanco(params: FiltroBanco): Promise<Record<string, number>> {
+  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
+  const cached = getCached<Record<string, number>>(cacheKey)
+  if (cached) return cached
+  const { whereSql, args } = construirWhere(params, { incluirTipo: false })
+  const rows = await query<{ tipo: string; n: number }>(
+    `SELECT COALESCE(tipo_fornecimento, 'outros') AS tipo, count(*)::int AS n
+       FROM contratacoes WHERE ${whereSql} GROUP BY 1`,
+    args,
+  )
+  const map: Record<string, number> = {}
+  for (const r of rows) map[r.tipo] = r.n
+  return setCached(cacheKey, map, TTL.SHORT)
 }
 
 // Fonte primária: banco. Retorna null quando indisponível/vazio (sinal p/ fallback PNCP).
@@ -108,32 +173,34 @@ async function buscarDoBanco(params: {
   ufs?: string[]
   tipo?: TipoFornecimento
   porUf?: number // amostra por UF (mapa): top-N por UF, cobertura geográfica
+  status?: 'aberto' | 'encerrado' | 'todos'
+  ano?: string
+  categoria?: string
+  limit?: number
   agora: string
 }): Promise<Oportunidade[] | null> {
-  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}`
+  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.limit ?? ''}`
   const cached = getCached<Oportunidade[]>(cacheKey)
   if (cached) return cached
 
-  const where: string[] = ['valor_total_estimado >= 10000', "objeto_compra IS NOT NULL"]
-  const args: unknown[] = []
-  if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
-  else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
-  if (params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
+  const { whereSql, args } = construirWhere(params)
 
   const cols = `numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
             modalidade_nome, objeto_compra, ano_compra, sequencial_compra,
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
             situacao_id, categoria_saude, tipo_fornecimento`
+  const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
 
   // Modo mapa: top-N por UF (janela) → toda UF com dado aparece, sem viés de recência.
-  // Caso contrário: os 4000 mais recentes (o dashboard/lista querem prioridade temporal).
+  // Caso contrário: os N mais recentes (o dashboard/lista querem prioridade temporal).
   const sql = params.porUf
-    ? `SELECT ${cols} FROM (
-         SELECT *, ROW_NUMBER() OVER (PARTITION BY uf ORDER BY valor_total_estimado DESC NULLS LAST) AS rn
-         FROM contratacoes WHERE ${where.join(' AND ')}
+    ? `SELECT ${cols}, aberto FROM (
+         SELECT *, ${abertoExpr('contratacoes')} AS aberto,
+                ROW_NUMBER() OVER (PARTITION BY uf ORDER BY valor_total_estimado DESC NULLS LAST) AS rn
+         FROM contratacoes WHERE ${whereSql}
        ) c WHERE rn <= ${Math.min(Math.max(Math.floor(params.porUf), 1), 100)}`
-    : `SELECT ${cols} FROM contratacoes WHERE ${where.join(' AND ')} ORDER BY data_publicacao DESC NULLS LAST LIMIT 4000`
+    : `SELECT ${cols}, ${abertoExpr('contratacoes')} AS aberto FROM contratacoes WHERE ${whereSql} ORDER BY data_publicacao DESC NULLS LAST LIMIT ${lim}`
 
   const rows = await query<ContratacaoRow>(sql, args)
 
@@ -158,8 +225,9 @@ async function buscarDoBanco(params: {
       objetoCompra: r.objeto_compra ?? '',
       valorTotalEstimado: r.valor_total_estimado ?? 0,
       dataPublicacaoPncp: r.data_publicacao ?? '',
-      situacaoCompraId: r.situacao_id ?? 0,
-      situacaoCompraNome: r.situacao_id === 1 ? 'Divulgada no PNCP' : 'Encerrada',
+      // Status por resultado homologado (não pelo situacao_id, desatualizado).
+      situacaoCompraId: r.aberto ? 1 : 4,
+      situacaoCompraNome: r.aberto ? 'Em aberto' : 'Encerrada (homologada)',
       linkSistemaOrigem: link,
     }
     const catBanco = r.categoria_saude as Oportunidade['categoria'] | null
@@ -171,7 +239,7 @@ async function buscarDoBanco(params: {
       municipio: r.municipio ?? 'N/D',
       hospital: r.razao_social_orgao ?? 'N/D',
       valor: r.valor_total_estimado ?? 0,
-      aberto: r.situacao_id === 1,
+      aberto: r.aberto,
       categoria: catBanco && CATEGORIAS_VALIDAS.has(catBanco) ? catBanco : undefined,
       tipo: isTipoFornecimento(r.tipo_fornecimento) ? r.tipo_fornecimento : undefined,
       agora: params.agora,
@@ -258,6 +326,10 @@ export async function GET(req: NextRequest) {
     const regiao = searchParams.get('regiao') ?? undefined
     const tipoParam = searchParams.get('tipo') ?? undefined
     const tipo = tipoParam && tipoParam !== 'todos' && isTipoFornecimento(tipoParam) ? tipoParam : undefined
+    const statusParam = searchParams.get('status') ?? undefined
+    const status = statusParam === 'aberto' || statusParam === 'encerrado' ? statusParam : undefined
+    const anoParam = searchParams.get('ano') ?? undefined
+    const ano = anoParam && /^\d{4}$/.test(anoParam) ? anoParam : undefined
     const limit = Number(searchParams.get('limit') ?? 100)
     const agora = new Date().toISOString()
 
@@ -267,9 +339,18 @@ export async function GET(req: NextRequest) {
     let avisos: string[] = []
     let serieMensal: SerieMensalRow[] = []
     let porCategoria: PorCategoriaRow[] = []
+    // Totais REAIS do filtro (todo o universo, não só as N linhas carregadas).
+    let totais: TotaisBanco | null = null
+    let porTipo: Record<string, number> | null = null
 
     try {
-      const doBanco = await buscarDoBanco({ uf, ufs, tipo, porUf, agora })
+      const [doBanco, tot, pt] = await Promise.all([
+        buscarDoBanco({ uf, ufs, tipo, porUf, status, ano, categoria, limit, agora }),
+        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, tipo, status, ano, categoria }),
+        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, status, ano, categoria }),
+      ])
+      totais = tot
+      porTipo = pt
       if (doBanco && doBanco.length) {
         oportunidades = doBanco
         const agg = await agregadosDoBanco({ uf, ufs, tipo }) // gráficos sobre o dataset completo
@@ -324,6 +405,15 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.score - a.score || (b.licitacaoRelacionada?.dataPublicacaoPncp ?? '').localeCompare(a.licitacaoRelacionada?.dataPublicacaoPncp ?? ''))
       .slice(0, limit)
 
+    // Totais do filtro: preferir o agregado do banco (universo completo). Sem ele
+    // (PNCP/porUf), cai para os totais do conjunto carregado.
+    const totaisFinal: TotaisBanco = totais ?? {
+      total: resultado.length,
+      valorTotal: resultado.reduce((s, o) => s + o.valorEstimado, 0),
+      abertas: resultado.filter((o) => o.licitacaoRelacionada?.situacaoCompraId === 1).length,
+      estados: new Set(resultado.map((o) => o.uf)).size,
+    }
+
     return NextResponse.json({
       oportunidades: resultado,
       kpis: {
@@ -334,6 +424,8 @@ export async function GET(req: NextRequest) {
           ? Math.round(resultado.reduce((s, o) => s + o.score, 0) / resultado.length)
           : 0,
       },
+      totais: totaisFinal,
+      porTipo,
       serieMensal,
       porCategoria,
       fonte,

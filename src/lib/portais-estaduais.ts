@@ -236,6 +236,9 @@ export interface LicitacaoEstadual {
   categoria: string
   link: string
   fonte: 'pncp' | 'bec-sp' | 'licitamg' | 'subg-rj' | 'compras-ba'
+  // Chaves para buscar os itens da compra no PNCP (pré-análise do que está sendo orçado).
+  anoCompra?: number
+  sequencialCompra?: number
 }
 
 // ── Normaliza PNCPContratacao → LicitacaoEstadual ─────────────────────────────
@@ -258,6 +261,8 @@ function pncpToEstadual(raw: PNCPContratacao): LicitacaoEstadual {
     categoria: inferirCategoria(raw.objetoCompra),
     link: raw.linkSistemaOrigem,
     fonte: 'pncp',
+    anoCompra: raw.anoCompra,
+    sequencialCompra: raw.sequencialCompra,
   }
 }
 
@@ -297,7 +302,9 @@ export interface KPIsEstado {
   topProponentes: { proponente: string; cnpj: string; valor: number; count: number }[]
 }
 
-export async function buscarLicitacoesEstado(
+// Varredura ao vivo do PNCP (rasa e sujeita a rate-limit). Usada como FALLBACK
+// pela versão baseada no banco (ver portais-estaduais-db.ts, server-only).
+export async function buscarLicitacoesEstadoLive(
   uf: UFEstadual,
   params: PNCPSearchParams = {}
 ): Promise<ResultadoEstado> {
@@ -376,7 +383,7 @@ function calcularKpis(licitacoes: LicitacaoEstadual[], uf: UFEstadual): KPIsEsta
   return { total: licitacoes.length, abertas, valorTotal, ticketMedio, entidadesEstaduais, porCategoria, topProponentes }
 }
 
-function kpisVazio(): KPIsEstado {
+export function kpisVazio(): KPIsEstado {
   return { total: 0, abertas: 0, valorTotal: 0, ticketMedio: 0, entidadesEstaduais: 0, porCategoria: {}, topProponentes: [] }
 }
 
@@ -392,16 +399,27 @@ export interface ResumoEstados {
  * agrupa por estado — muito mais eficiente que 27 buscas paralelas, que
  * estourariam o rate-limit do PNCP.
  */
-export async function buscarResumoEstados(): Promise<ResumoEstados> {
+// Resumo via varredura ao vivo do PNCP. FALLBACK do resumo baseado no banco.
+export async function buscarResumoEstadosLive(): Promise<ResumoEstados> {
   const estados: ResumoEstados['estados'] = {}
   for (const uf of TODAS_UFS) {
     estados[uf] = { kpis: kpisVazio(), fontesAtivas: { pncp: false, portalProprio: false } }
   }
 
   try {
-    const result = await buscarComprasSaude({ tamanhoPagina: 50 })
+    // Duas varreduras nacionais em paralelo: publicadas (sobretudo encerradas) +
+    // ABERTAS (recebendo proposta). Sem a segunda, quase nenhum estado teria
+    // "em aberto" no resumo — só os poucos que a busca progressiva por-UF
+    // conseguisse atualizar antes do rate-limit do PNCP.
+    const [result, abertas] = await Promise.all([
+      buscarComprasSaude({ tamanhoPagina: 50 }),
+      buscarLicitacoesAbertas({ tamanhoPagina: 50 }),
+    ])
     const porUf: Partial<Record<UFEstadual, LicitacaoEstadual[]>> = {}
-    for (const c of result.data) {
+    const vistos = new Set<string>()
+    for (const c of [...abertas, ...result.data]) {
+      if (vistos.has(c.numeroControlePNCP)) continue
+      vistos.add(c.numeroControlePNCP)
       const lic = pncpToEstadual(c)
       const uf = lic.uf as UFEstadual
       if (!uf || !TODAS_UFS.includes(uf)) continue
@@ -415,3 +433,7 @@ export async function buscarResumoEstados(): Promise<ResumoEstados> {
 
   return { estados, atualizadoEm: new Date().toISOString() }
 }
+
+// As funções baseadas no BANCO (fonte primária) ficam em `portais-estaduais-db.ts`
+// (server-only), pois importam `pg`/`./db`. Este arquivo é client-safe: exporta
+// tipos, constantes e as funções de varredura ao vivo (fallback).
