@@ -11,7 +11,7 @@ import { clsx } from 'clsx'
 import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
-import { PrecosReferencia } from '@/components/ui/PrecosReferencia'
+import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
 import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
@@ -107,13 +107,17 @@ function ItemsRow({ opp, preloaded }: { opp: Oportunidade; preloaded?: ItemPNCP[
         {itens.map((item) => (
           <div key={item.numeroItem} className="flex items-start gap-3 px-3 py-2 bg-bg4/40 rounded-lg">
             <span className="text-[9px] font-mono-custom text-faint w-4 flex-shrink-0 mt-0.5">{item.numeroItem}</span>
-            <span className="text-[11px] text-strong flex-1 leading-snug">{item.descricao}</span>
-            <span className="text-[10px] font-mono-custom text-faint flex-shrink-0 whitespace-nowrap">
+            <span className="text-[11px] text-strong flex-1 leading-snug min-w-0">{item.descricao}</span>
+            <span className="text-[10px] font-mono-custom text-faint flex-shrink-0 whitespace-nowrap mt-0.5">
               {item.quantidade} {item.unidadeMedida}
             </span>
-            <span className="text-[11px] font-mono-custom font-bold text-accent flex-shrink-0 whitespace-nowrap">
+            <span className="text-[11px] font-mono-custom font-bold text-accent flex-shrink-0 whitespace-nowrap mt-0.5 w-24 text-right">
               {formatBRL(item.quantidade * item.valorUnitarioEstimado)}
             </span>
+            {/* Preço de referência à direita — a tela tem espaço aqui. */}
+            <div className="flex-shrink-0 w-[260px]">
+              <PrecoRefItem descricao={item.descricao} valorUnitario={item.valorUnitarioEstimado} uf={opp.uf} />
+            </div>
           </div>
         ))}
       </div>
@@ -583,10 +587,6 @@ function OportunidadesInner() {
                                     <AddToCRMButton oportunidade={opp} />
                                     <AbrirDossieButton oportunidade={opp} />
                                   </div>
-                                  <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
-                                  <div className="mt-3 pt-3 border-t border-subtle">
-                                    <PrecosReferencia termo={opp.descricao} uf={opp.uf} />
-                                  </div>
                                 </div>
                                 <div className="space-y-3">
                                   <div>
@@ -654,6 +654,8 @@ function OportunidadesInner() {
                                   )}
                                 </div>
                               </div>
+                              {/* Itens em largura total — não espremer no grid de 2 colunas */}
+                              <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
                             </td>
                           </tr>
                         )}
@@ -745,10 +747,6 @@ function OportunidadesInner() {
                               <AddToCRMButton oportunidade={opp} />
                               <AbrirDossieButton oportunidade={opp} />
                             </div>
-                            <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
-                            <div className="mt-3 pt-3 border-t border-subtle">
-                              <PrecosReferencia termo={opp.descricao} uf={opp.uf} />
-                            </div>
                           </div>
                           <div className="space-y-3">
                             <div>
@@ -816,6 +814,8 @@ function OportunidadesInner() {
                             )}
                           </div>
                         </div>
+                        {/* Itens em largura total — não espremer no grid de 2 colunas */}
+                        <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
                       </div>
                     )}
                   </div>
