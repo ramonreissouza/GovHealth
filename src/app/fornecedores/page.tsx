@@ -53,7 +53,7 @@ export default function FornecedoresPage() {
   const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
 
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
-  const [ano, setAno] = useState('2026') // default leve: evita varrer a base inteira no 1º load
+  const [ano, setAno] = useState('2025') // default no ano com dados (2025 tem ~246k resultados vs ~7k em 2026)
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor

@@ -7,12 +7,13 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle, Menu, X,
-  Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame,
+  Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
 import { contarNaoLidas } from '@/lib/alertas'
 import { IA_HABILITADA } from '@/lib/features'
+import { ehRotaPro, temAcessoPro } from '@/lib/plano-gating'
 
 // Rotas que dependem de IA — ocultadas da navegação quando IA_HABILITADA é false.
 const IA_HREFS = new Set(['/copiloto', '/edital'])
@@ -33,6 +34,7 @@ const NAV_STATIC = [
     label: 'Inteligência',
     items: [
       { href: '/vencedores', label: 'Vencedores', icon: Trophy, badge: 'novo' as string | null },
+      { href: '/minhas-disputas', label: 'Minhas Disputas', icon: Swords, badge: 'novo' as string | null },
       { href: '/fornecedores', label: 'Fornecedores', icon: Store, badge: 'novo' as string | null },
       { href: '/concorrentes-estado', label: 'Concorrentes/UF', icon: PieChart, badge: 'novo' as string | null },
       { href: '/breakdown', label: 'Breakdown', icon: Layers, badge: 'novo' as string | null },
@@ -84,8 +86,10 @@ export default function Sidebar() {
   const userImage = session?.user?.image
 
   // Teste grátis: dias restantes (banner no rodapé).
-  const su = session?.user as { status?: string | null; expiraEm?: string | null; plano?: string | null } | undefined
+  const su = session?.user as { status?: string | null; expiraEm?: string | null; plano?: string | null; role?: string | null } | undefined
   const emTrial = su?.status === 'trial'
+  // Acesso Pro (master/trial/plano pro). Essencial vê as rotas Pro travadas.
+  const acessoPro = temAcessoPro({ plano: su?.plano, role: su?.role, status: su?.status })
   const diasRestantes = emTrial && su?.expiraEm
     ? Math.ceil((new Date(su.expiraEm + 'T23:59:59Z').getTime() - Date.now()) / 86_400_000)
     : null
@@ -146,15 +150,21 @@ export default function Sidebar() {
             {section.items.map((item) => {
               const active = pathname === item.href
               const isAlertBadge = item.href === '/alertas' && alertCount > 0
+              // Rota Pro sem acesso: fica travada e leva à tela de upgrade.
+              const locked = ehRotaPro(item.href) && !acessoPro
+              const href = locked ? `/assinar?upgrade=pro&recurso=${encodeURIComponent(item.href)}` : item.href
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  href={href}
                   onClick={() => setOpen(false)}
+                  title={locked ? 'Disponível no plano Pro' : undefined}
                   className={clsx(
                     'flex items-center gap-2.5 mx-1 px-3 py-2 rounded-md text-[13px] transition-all relative',
                     active
                       ? 'bg-bg4 text-accent'
+                      : locked
+                      ? 'text-faint/70 hover:bg-bg3 hover:text-muted'
                       : 'text-muted hover:bg-bg3 hover:text-strong'
                   )}
                 >
@@ -163,10 +173,12 @@ export default function Sidebar() {
                   )}
                   <item.icon
                     size={15}
-                    className={clsx('flex-shrink-0', active ? 'opacity-100' : 'opacity-60')}
+                    className={clsx('flex-shrink-0', active ? 'opacity-100' : locked ? 'opacity-40' : 'opacity-60')}
                   />
                   <span className="flex-1">{item.label}</span>
-                  {item.badge && (
+                  {locked ? (
+                    <Lock size={11} className="text-faint flex-shrink-0" />
+                  ) : item.badge ? (
                     <span
                       className={clsx(
                         'text-[10px] font-mono-custom font-semibold px-1.5 py-0.5 rounded-full',
@@ -179,7 +191,7 @@ export default function Sidebar() {
                     >
                       {item.badge}
                     </span>
-                  )}
+                  ) : null}
                 </Link>
               )
             })}

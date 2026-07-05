@@ -9,9 +9,10 @@ import {
   Plus, Trash2, Edit2, X, Save, Search, Loader2, Boxes, Tag, Package,
   CheckCircle2, Circle, Link2, ShieldCheck,
 } from 'lucide-react'
+import { useSession } from 'next-auth/react'
 import {
   getProdutos, createProduto, updateProduto, deleteProduto, toggleAtivo,
-  calcularPortfolioStats,
+  calcularPortfolioStats, seedSiemensDemo,
   type ProdutoPortfolio, type ProdutoInput, type CatmatVinculo,
 } from '@/lib/portfolio'
 import type { CategoriaEquipamento, TipoFornecimento, CatmatMaterial } from '@/lib/types'
@@ -38,12 +39,23 @@ const EMPTY_FORM: ProdutoInput = {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function PortfolioPage() {
+  const { data: session } = useSession()
   const [mounted, setMounted] = useState(false)
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
 
+  // Conta demo Siemens: oferece carregar o portfólio de produtos Siemens.
+  const empresa = (session?.user as { empresa?: string } | undefined)?.empresa ?? ''
+  const ehSiemens = session?.user?.email === 'siemens@govhealth.ai' || /siemens/i.test(empresa)
+
   const refresh = useCallback(() => setProdutos(getProdutos()), [])
+
+  function carregarSiemens() {
+    const n = seedSiemensDemo()
+    refresh()
+    if (n === 0) alert('Os produtos Siemens já estão no seu portfólio.')
+  }
 
   useEffect(() => {
     refresh()
@@ -105,13 +117,24 @@ export default function PortfolioPage() {
                 CATMAT e palavras-chave para filtrar as oportunidades pelo que você realmente comercializa.
               </p>
             </div>
-            <button
-              onClick={openNovo}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors flex-shrink-0"
-            >
-              <Plus size={14} />
-              Adicionar produto
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {ehSiemens && (
+                <button
+                  onClick={carregarSiemens}
+                  title="Popula o portfólio com os principais produtos Siemens Healthineers"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-bg3 border border-subtle2 text-[13px] font-semibold text-strong hover:border-accent transition-colors"
+                >
+                  <Boxes size={14} /> Carregar portfólio Siemens
+                </button>
+              )}
+              <button
+                onClick={openNovo}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors"
+              >
+                <Plus size={14} />
+                Adicionar produto
+              </button>
+            </div>
           </div>
 
           {/* Stats strip */}
@@ -140,12 +163,22 @@ export default function PortfolioPage() {
                 Adicione seu primeiro produto para personalizar as oportunidades e ativar o filtro
                 &quot;Meu Portfólio&quot; nas licitações.
               </p>
-              <button
-                onClick={openNovo}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors"
-              >
-                <Plus size={14} /> Adicionar produto
-              </button>
+              <div className="flex items-center gap-2">
+                {ehSiemens && (
+                  <button
+                    onClick={carregarSiemens}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-bg3 border border-subtle2 text-[13px] font-semibold text-strong hover:border-accent transition-colors"
+                  >
+                    <Boxes size={14} /> Carregar portfólio Siemens
+                  </button>
+                )}
+                <button
+                  onClick={openNovo}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors"
+                >
+                  <Plus size={14} /> Adicionar produto
+                </button>
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 max-w-[980px]">
