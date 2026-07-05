@@ -94,6 +94,12 @@ function Checkout() {
                   Seu teste grátis terminou. Assine para continuar com acesso total à plataforma.
                 </div>
               )}
+              {sp.get('upgrade') === 'pro' && (
+                <div className="mb-4 bg-accent/10 border border-accent/30 rounded-lg px-3.5 py-2.5 text-[12.5px] text-accent flex items-center gap-2">
+                  <Lock size={14} className="flex-shrink-0" />
+                  Este recurso está disponível no plano <strong>Pro</strong>. Faça upgrade para desbloquear Concorrentes, Breakdown, Mapa, CRM, Agenda, Dossiês e Portfólio.
+                </div>
+              )}
               <h1 className="font-heading font-bold text-[22px] mb-1">Assinar {plano.nome}</h1>
               <p className="text-[13px] text-muted mb-5">Preencha os dados de cobrança. Sem fidelidade — cancele quando quiser.</p>
 

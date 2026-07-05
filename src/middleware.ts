@@ -15,6 +15,7 @@ import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
+import { ehRotaPro, temAcessoPro } from '@/lib/plano-gating'
 
 const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/assinar']
 
@@ -92,7 +93,7 @@ export async function middleware(req: NextRequest) {
     }
     // Gate de teste grátis: trial expirado → pede pagamento (só páginas internas;
     // não afeta APIs nem rotas públicas como /assinar, /metodologia).
-    const t = token as { status?: string | null; expiraEm?: string | null; plano?: string | null }
+    const t = token as { status?: string | null; expiraEm?: string | null; plano?: string | null; role?: string | null }
     if (
       t.status === 'trial' && typeof t.expiraEm === 'string' && trialExpirado(t.expiraEm) &&
       !pathname.startsWith('/api/') && !ehPublica(pathname)
@@ -100,6 +101,16 @@ export async function middleware(req: NextRequest) {
       const url = new URL('/assinar', req.url)
       url.searchParams.set('trial', 'expirado')
       url.searchParams.set('plano', t.plano || 'pro')
+      return NextResponse.redirect(url)
+    }
+    // Gate por plano: rotas Pro exigem plano Pro (essencial → tela de upgrade).
+    if (
+      !pathname.startsWith('/api/') && !ehPublica(pathname) &&
+      ehRotaPro(pathname) && !temAcessoPro({ plano: t.plano, role: t.role, status: t.status })
+    ) {
+      const url = new URL('/assinar', req.url)
+      url.searchParams.set('upgrade', 'pro')
+      url.searchParams.set('recurso', pathname)
       return NextResponse.redirect(url)
     }
     return NextResponse.next()

@@ -130,6 +130,30 @@ export function casaComPortfolio(produtos: ProdutoPortfolio[], opp: Oportunidade
   return produtos.some((p) => p.ativo && produtoMatchTexto(p, texto))
 }
 
+// ── Seed de demonstração: portfólio Siemens Healthineers ──────────────────────
+// Usado pela conta demo "Siemens" (Pro). Popula o portfólio (localStorage) com os
+// principais produtos Siemens para exercitar o matching de oportunidades.
+const SIEMENS_DEMO: ProdutoInput[] = [
+  { nome: 'Ressonância Magnética MAGNETOM', marca: 'Siemens Healthineers', modelo: 'MAGNETOM Sola 1.5T', categoria: 'imagem', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['ressonancia magnetica', 'magnetom', 'ressonancia'], ativo: true },
+  { nome: 'Tomógrafo Computadorizado SOMATOM', marca: 'Siemens Healthineers', modelo: 'SOMATOM go.Top', categoria: 'imagem', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['tomografo', 'tomografia computadorizada', 'somatom'], ativo: true },
+  { nome: 'Ultrassom ACUSON', marca: 'Siemens Healthineers', modelo: 'ACUSON Sequoia', categoria: 'imagem', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['ultrassom', 'ultrassonografia', 'acuson'], ativo: true },
+  { nome: 'Mamógrafo MAMMOMAT', marca: 'Siemens Healthineers', modelo: 'MAMMOMAT Revelation', categoria: 'imagem', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['mamografo', 'mamografia', 'mammomat'], ativo: true },
+  { nome: 'Angiógrafo / Arco Cirúrgico', marca: 'Siemens Healthineers', modelo: 'ARTIS / Cios Alpha', categoria: 'imagem', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['angiografia', 'arco cirurgico', 'hemodinamica', 'artis'], ativo: true },
+  { nome: 'Analisador de Imunoensaio Atellica', marca: 'Siemens Healthineers', modelo: 'Atellica IM', categoria: 'laboratorio', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['analisador', 'imunoensaio', 'bioquimica', 'atellica', 'reagente'], ativo: true },
+  { nome: 'Analisador Hematológico ADVIA', marca: 'Siemens Healthineers', modelo: 'ADVIA 2120i', categoria: 'laboratorio', tipoFornecimento: 'equipamento', catmats: [], palavrasChave: ['hematologia', 'analisador hematologico', 'advia', 'hemograma'], ativo: true },
+]
+
+/** Carrega o portfólio demo da Siemens (não duplica os que já existem por nome). */
+export function seedSiemensDemo(): number {
+  const existentes = getProdutos()
+  const jaTem = new Set(existentes.map((p) => p.nome.toLowerCase()))
+  const novos = SIEMENS_DEMO
+    .filter((p) => !jaTem.has(p.nome.toLowerCase()))
+    .map((input) => ({ ...input, id: genId(), criadoEm: new Date().toISOString() }))
+  if (novos.length) saveProdutos([...novos, ...existentes])
+  return novos.length
+}
+
 export function calcularPortfolioStats(produtos: ProdutoPortfolio[]): PortfolioStats {
   const ativos = produtos.filter((p) => p.ativo)
   return {

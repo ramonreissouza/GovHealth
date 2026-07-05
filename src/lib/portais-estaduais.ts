@@ -63,8 +63,10 @@ const PORTAL_OVERRIDES: Partial<Record<UFEstadual, Partial<PortalConfig>>> = {
     nomePortal: 'BEC/SP',
     urlPortal: 'https://www.bec.sp.gov.br',
     urlConsulta: 'https://www.bec.sp.gov.br/BECSP/OC_ConsultarLicitacoes.aspx',
-    temAPIPublica: true,   // SOAP/XML — ver buscarBECSP()
-    notaIntegracao: 'PNCP + BEC/SP (tentativa SOAP)',
+    // Dados vêm do banco (PNCP nacional). Sem adapter ao vivo do BEC — evita o
+    // indicador "BEC/SP tentando" que ficava sempre em alerta. Deep-link mantido.
+    temAPIPublica: false,
+    notaIntegracao: 'PNCP (fonte primária) + deep-link BEC/SP',
   },
   MG: {
     nomePortal: 'LicitaMG',
