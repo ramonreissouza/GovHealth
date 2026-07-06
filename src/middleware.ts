@@ -17,7 +17,7 @@ import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
 import { ehRotaPro, temAcessoPro } from '@/lib/plano-gating'
 
-const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/assinar']
+const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/assinar', '/aceitar-convite']
 
 function ehPublica(pathname: string): boolean {
   return ROTAS_PUBLICAS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
@@ -54,8 +54,8 @@ export async function middleware(req: NextRequest) {
   // ── Rate limiting (best-effort por instância) para rotas de API ──────────────
   if (pathname.startsWith('/api/')) {
     const ip = ipDe(req)
-    if (pathname === '/api/auth/callback/credentials') {
-      const r = rateLimit(`login:${ip}`, 10, 60_000) // brute force de login: 10/min
+    if (pathname === '/api/auth/callback/credentials' || pathname === '/api/auth/otp') {
+      const r = rateLimit(`login:${ip}`, 10, 60_000) // brute force de login/OTP: 10/min
       if (!r.ok) return resp429(r)
     } else if (!pathname.startsWith('/api/auth/') && !pathname.startsWith('/api/cron/') && !pathname.startsWith('/api/stripe/')) {
       // /api/stripe/webhook: o Stripe pode enviar rajadas de eventos — não limitar
@@ -68,7 +68,7 @@ export async function middleware(req: NextRequest) {
   // ── NextAuth, cron e Stripe não passam pela auth de sessão do middleware ──────
   // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET; o
   // webhook do Stripe é validado pela assinatura HMAC na própria rota.
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro')) {
+  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro') || pathname.startsWith('/api/equipe/aceitar')) {
     return NextResponse.next()
   }
 

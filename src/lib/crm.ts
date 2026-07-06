@@ -1,5 +1,7 @@
 // src/lib/crm.ts
-// CRM Pipeline — persistência em localStorage (client-side only)
+// CRM Pipeline — cache local sincronizado com a conta (ver lib/synced).
+
+import { readLocal, writeLocal } from './synced'
 
 export type PipelineStage =
   | 'prospeccao'
@@ -90,18 +92,11 @@ const STORAGE_KEY = 'govhealth:crm:deals'
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 export function getDeals(): PipelineDeal[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as PipelineDeal[]) : []
-  } catch {
-    return []
-  }
+  return readLocal<PipelineDeal[]>(STORAGE_KEY, [])
 }
 
 function saveDeals(deals: PipelineDeal[]): void {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(deals))
+  writeLocal(STORAGE_KEY, deals)
 }
 
 export function createDeal(

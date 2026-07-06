@@ -63,6 +63,16 @@ CREATE TABLE IF NOT EXISTS etl_checkpoint (
   atualizado_em TIMESTAMPTZ DEFAULT now()
 );
 
+-- Dados por conta (substitui o localStorage): portfólio, CRM, alertas, agenda.
+-- Uma linha por (usuário, chave); `valor` guarda o mesmo JSON que ficava no browser.
+CREATE TABLE IF NOT EXISTS user_data (
+  user_id       TEXT NOT NULL,
+  chave         TEXT NOT NULL,          -- 'portfolio' | 'crm' | 'alertas-config' | 'alertas-notif' | 'agenda'
+  valor         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  atualizado_em TIMESTAMPTZ DEFAULT now(),
+  PRIMARY KEY (user_id, chave)
+);
+
 -- Índices essenciais para as agregações das telas
 CREATE INDEX IF NOT EXISTS idx_res_uf        ON resultados (uf);
 -- Presença de resultado por contratação (define aberto/encerrada: EXISTS resultado

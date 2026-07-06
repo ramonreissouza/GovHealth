@@ -4,6 +4,7 @@ import GoogleProvider from 'next-auth/providers/google'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { verificarLogin } from '@/lib/users'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
+import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao } from '@/lib/seguranca'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -15,6 +16,7 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Senha', type: 'password' },
+        otp: { label: 'Código', type: 'text' },
       },
       // Autoriza pela tabela `usuarios` (bcrypt). Conta suspensa/excluída é negada.
       // Registra o acesso (com geo dos headers) — best-effort, não bloqueia o login.
@@ -27,6 +29,20 @@ export const authOptions: NextAuthOptions = {
 
         const { user } = await verificarLogin(email, senha)
         if (!user) return null
+
+        const isMaster = user.role === 'master'
+        // Sessão única (bloquear novo): recusa se já há sessão ativa em outra máquina.
+        if (FLAG_SESSAO_UNICA && !isMaster && (await sessaoAtiva(user.id))) {
+          throw new Error('SESSAO_ATIVA')
+        }
+        // 2FA por e-mail: exige OTP válido (o /api/auth/otp já enviou o código).
+        if (FLAG_2FA && !isMaster) {
+          const otp = credentials?.otp?.trim()
+          if (!otp) return null
+          if (!(await verificarOtp(user.id, otp))) throw new Error('OTP_INVALIDO')
+        }
+        // Registra a sessão desta máquina (para o controle de sessão única).
+        const sessaoId = await iniciarSessao(user.id)
 
         try {
           const headers = (req?.headers ?? {}) as Record<string, string | undefined>
@@ -41,7 +57,7 @@ export const authOptions: NextAuthOptions = {
 
         return {
           id: user.id, name: user.nome, email: user.email, image: null, role: user.role,
-          plano: user.plano, status: user.status_assinatura, expiraEm,
+          plano: user.plano, status: user.status_assinatura, expiraEm, sessaoId,
         }
       },
     }),
@@ -56,25 +72,35 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null }
+        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null; sessaoId?: string }
         token.id = u.id
         token.role = u.role ?? 'user'
         token.plano = u.plano ?? null
         token.status = u.status ?? null
         token.expiraEm = u.expiraEm ?? null
+        token.sessaoId = u.sessaoId ?? null
       }
       return token
     },
     async session({ session, token }) {
       if (session.user) {
-        const u = session.user as typeof session.user & { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null }
+        const u = session.user as typeof session.user & { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null; sessaoId?: string | null }
         u.id = token.id as string
         u.role = (token.role as string) ?? 'user'
         u.plano = (token.plano as string | null) ?? null
         u.status = (token.status as string | null) ?? null
         u.expiraEm = (token.expiraEm as string | null) ?? null
+        u.sessaoId = (token.sessaoId as string | null) ?? null
       }
       return session
+    },
+  },
+
+  // Ao sair, libera o assento de sessão única (permite novo login imediato).
+  events: {
+    async signOut({ token }) {
+      const id = (token as { id?: string })?.id
+      if (id) { try { await encerrarSessao(id) } catch { /* best-effort */ } }
     },
   },
 

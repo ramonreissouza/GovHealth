@@ -2,6 +2,7 @@
 // Senhas em bcrypt. Login rejeita conta suspensa/excluída.
 
 import bcrypt from 'bcryptjs'
+import { randomUUID } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
 
 export type Role = 'master' | 'user'
@@ -200,6 +201,95 @@ export async function reivindicarLembretesTrial(): Promise<Array<{ id: string; e
         AND expira_em = (CURRENT_DATE + 1)
       RETURNING id, email, nome, plano, to_char(expira_em,'YYYY-MM-DD') AS expira_em`,
   )
+}
+
+// ── Equipe / assentos (N usuários por CNPJ) ──────────────────────────────────
+// O titular é a conta que assinou (titular_id NULL) e detém os `assentos`. Os
+// membros têm titular_id = id do titular e herdam plano/CNPJ. Cada um tem senha
+// própria (nunca compartilhada).
+
+const COLS_USER = `id,email,nome,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,
+  to_char(expira_em,'YYYY-MM-DD') AS expira_em,suspenso,deleted_at,criado_em`
+
+/** Resolve o titular de uma conta (ele mesmo, ou o titular do membro). */
+export async function resolverTitular(userId: string): Promise<string> {
+  const u = await queryOne<{ titular_id: string | null }>(`SELECT titular_id FROM usuarios WHERE id=$1`, [norm(userId)])
+  return u?.titular_id ?? norm(userId)
+}
+
+export interface EquipeInfo {
+  titularId: string
+  souTitular: boolean
+  assentos: number
+  membros: Usuario[]
+  convitesPendentes: { id: string; email: string; expira_em: string }[]
+  vagas: number
+}
+
+export async function equipeInfo(userId: string): Promise<EquipeInfo> {
+  const id = norm(userId)
+  const titularId = await resolverTitular(id)
+  const tit = await queryOne<{ assentos: number | null }>(`SELECT assentos FROM usuarios WHERE id=$1`, [titularId])
+  const assentos = tit?.assentos ?? 1
+  const membros = await query<Usuario>(
+    `SELECT ${COLS_USER} FROM usuarios WHERE (id=$1 OR titular_id=$1) AND deleted_at IS NULL ORDER BY criado_em`, [titularId])
+  const convitesPendentes = await query<{ id: string; email: string; expira_em: string }>(
+    `SELECT id, email, to_char(expira_em,'YYYY-MM-DD') AS expira_em FROM convites
+      WHERE titular_id=$1 AND aceito_em IS NULL AND expira_em > now() ORDER BY criado_em`, [titularId])
+  return { titularId, souTitular: titularId === id, assentos, membros, convitesPendentes,
+    vagas: Math.max(assentos - membros.length - convitesPendentes.length, 0) }
+}
+
+/** Cria um convite (titular). Retorna o token para o link do e-mail. */
+export async function criarConvite(params: { userId: string; email: string }): Promise<{ ok: true; token: string; email: string } | { ok: false; erro: string }> {
+  const titularId = await resolverTitular(params.userId)
+  const info = await equipeInfo(titularId)
+  if (info.vagas <= 0) return { ok: false, erro: 'sem_vagas' }
+  const email = norm(params.email)
+  if (!/.+@.+\..+/.test(email)) return { ok: false, erro: 'email_invalido' }
+  if (await emailExiste(email)) return { ok: false, erro: 'email_existe' }
+  const jaConv = await queryOne<{ id: string }>(
+    `SELECT id FROM convites WHERE titular_id=$1 AND lower(email)=$2 AND aceito_em IS NULL AND expira_em>now()`, [titularId, email])
+  if (jaConv) return { ok: false, erro: 'ja_convidado' }
+  const tit = await queryOne<{ cnpj: string | null; plano: string | null }>(`SELECT cnpj, plano FROM usuarios WHERE id=$1`, [titularId])
+  const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '')
+  await query(
+    `INSERT INTO convites (id, titular_id, cnpj, email, token, plano, expira_em)
+     VALUES ($1,$2,$3,$4,$5,$6, now() + interval '7 days')`,
+    [randomUUID(), titularId, tit?.cnpj ?? null, email, token, tit?.plano ?? null])
+  return { ok: true, token, email }
+}
+
+/** Dados de um convite válido (para a tela de aceite). */
+export async function buscarConvite(token: string): Promise<{ email: string; empresa: string | null } | null> {
+  const row = await queryOne<{ email: string; titular_id: string }>(
+    `SELECT email, titular_id FROM convites WHERE token=$1 AND aceito_em IS NULL AND expira_em>now()`, [token])
+  if (!row) return null
+  const tit = await queryOne<{ empresa: string | null }>(`SELECT empresa FROM usuarios WHERE id=$1`, [row.titular_id])
+  return { email: row.email, empresa: tit?.empresa ?? null }
+}
+
+/** Aceita o convite: cria o usuário-membro com senha própria. */
+export async function aceitarConvite(params: { token: string; senha: string; nome: string }): Promise<{ ok: true; email: string } | { ok: false; erro: string }> {
+  const conv = await queryOne<{ id: string; email: string; titular_id: string; cnpj: string | null; plano: string | null }>(
+    `SELECT id, email, titular_id, cnpj, plano FROM convites WHERE token=$1 AND aceito_em IS NULL AND expira_em>now()`, [params.token])
+  if (!conv) return { ok: false, erro: 'invalido' }
+  if (params.senha.trim().length < 6) return { ok: false, erro: 'senha_curta' }
+  const email = norm(conv.email)
+  if (await emailExiste(email)) return { ok: false, erro: 'email_existe' }
+  // Capacidade no aceite: comparar MEMBROS reais com os assentos — este convite já
+  // está "reservado" (conta em convitesPendentes), então não usamos `vagas` aqui,
+  // senão o último convite que preenche o plano nunca poderia ser aceito.
+  const eq = await equipeInfo(conv.titular_id)
+  if (eq.membros.length >= eq.assentos) return { ok: false, erro: 'sem_vagas' }
+  const hash = await bcrypt.hash(params.senha.trim(), 10)
+  const tit = await queryOne<{ empresa: string | null }>(`SELECT empresa FROM usuarios WHERE id=$1`, [conv.titular_id])
+  await query(
+    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,cnpj,plano,status_assinatura,titular_id,assentos)
+     VALUES ($1,$1,$2,$3,'user',$4,$5,$6,'ativa',$7,0)`,
+    [email, params.nome?.trim() || null, hash, tit?.empresa ?? null, conv.cnpj, conv.plano, conv.titular_id])
+  await query(`UPDATE convites SET aceito_em=now() WHERE id=$1`, [conv.id])
+  return { ok: true, email }
 }
 
 /** Senha temporária legível (mostrada uma vez ao admin). */

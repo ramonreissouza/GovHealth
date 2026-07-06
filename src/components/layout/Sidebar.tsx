@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react'
 import { contarNaoLidas } from '@/lib/alertas'
 import { IA_HABILITADA } from '@/lib/features'
 import { ehRotaPro, temAcessoPro } from '@/lib/plano-gating'
+import { clearLocalData } from '@/lib/synced'
 
 // Rotas que dependem de IA — ocultadas da navegação quando IA_HABILITADA é false.
 const IA_HREFS = new Set(['/copiloto', '/edital'])
@@ -54,6 +55,7 @@ const NAV_STATIC = [
     label: 'Conta',
     items: [
       { href: '/portfolio', label: 'Meu Portfólio', icon: Boxes, badge: null as string | null },
+      { href: '/equipe', label: 'Equipe', icon: Users, badge: null as string | null },
       { href: '/perfil', label: 'Perfil & Preferências', icon: UserCircle, badge: null as string | null },
       { href: '/manual', label: 'Manual do usuário', icon: BookOpen, badge: null as string | null },
     ],
@@ -227,7 +229,7 @@ export default function Sidebar() {
             <div className="text-[10px] text-faint font-mono-custom truncate">{userEmail}</div>
           </div>
           <button
-            onClick={() => signOut({ callbackUrl: '/login' })}
+            onClick={() => { clearLocalData(); signOut({ callbackUrl: '/login' }) }}
             title="Sair"
             className="flex-shrink-0 p-1 rounded hover:bg-bg4 text-faint hover:text-red-400 transition-colors"
           >
