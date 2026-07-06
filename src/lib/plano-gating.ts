@@ -17,6 +17,7 @@ export const ROTAS_PRO: string[] = [
   '/editais',
   '/portfolio',
   '/minhas-disputas',
+  '/equipe',
 ]
 
 export function ehRotaPro(pathname: string): boolean {

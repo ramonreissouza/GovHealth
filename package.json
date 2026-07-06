@@ -16,7 +16,8 @@
     "admin:set-password": "node scripts/set-master-password.mjs",
     "stripe:migrate": "node scripts/migrate-stripe.mjs",
     "stripe:setup": "node scripts/stripe-setup.mjs",
-    "trial:migrate": "node scripts/migrate-trial.mjs"
+    "trial:migrate": "node scripts/migrate-trial.mjs",
+    "equipe:migrate": "node scripts/migrate-equipe.mjs"
   },
   "dependencies": {
     "@types/mapbox-gl": "^3.1.0",

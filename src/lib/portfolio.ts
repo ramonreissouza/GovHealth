@@ -7,6 +7,7 @@
 
 import type { CategoriaEquipamento, TipoFornecimento, Oportunidade } from './types'
 import { normalizeText } from './text'
+import { readLocal, writeLocal } from './synced'
 
 const STORAGE_KEY = 'govhealth:portfolio'
 
@@ -42,19 +43,11 @@ export interface PortfolioStats {
 // ── Persistência ──────────────────────────────────────────────────────────────
 
 export function getProdutos(): ProdutoPortfolio[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const arr = JSON.parse(raw)
-    return Array.isArray(arr) ? arr : []
-  } catch {
-    return []
-  }
+  return readLocal<ProdutoPortfolio[]>(STORAGE_KEY, [])
 }
 
 function saveProdutos(produtos: ProdutoPortfolio[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(produtos))
+  writeLocal(STORAGE_KEY, produtos)
 }
 
 function genId(): string {

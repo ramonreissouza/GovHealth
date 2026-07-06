@@ -55,6 +55,27 @@ function dataBR(iso?: string | null): string {
  * Boas-vindas ao iniciar o TESTE GRÁTIS (autocadastro). Informa o plano e a data
  * de expiração do trial e convida a explorar a plataforma.
  */
+/** Código de acesso (2FA por e-mail). */
+export async function enviarCodigoAcesso(params: { to: string; nome?: string | null; codigo: string }) {
+  const corpo = `
+    <p style="font-size:15px;color:#334155;">Olá${params.nome ? ' ' + params.nome : ''},</p>
+    <p style="font-size:15px;color:#334155;">Use o código abaixo para concluir o acesso à sua conta:</p>
+    <p style="font-size:30px;font-weight:bold;letter-spacing:6px;color:#0f172a;margin:18px 0;">${params.codigo}</p>
+    <p style="font-size:13px;color:#64748b;">O código expira em 10 minutos. Se você não tentou entrar, ignore este e-mail e troque sua senha.</p>`
+  return enviar(params.to, `Seu código de acesso GovHealth: ${params.codigo}`, moldura('Código de acesso', corpo))
+}
+
+/** Convite para entrar numa conta de equipe. */
+export async function enviarConviteEquipe(params: { to: string; empresa?: string | null; link: string }) {
+  const corpo = `
+    <p style="font-size:15px;color:#334155;">Você foi convidado(a) para a conta${params.empresa ? ' da <strong>' + params.empresa + '</strong>' : ''} no GovHealth AI.</p>
+    <p style="font-size:15px;color:#334155;">Crie a sua própria senha e comece a usar — cada pessoa tem o seu login.</p>
+    <p style="margin:20px 0;"><a href="${params.link}" style="background:#16a34a;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:bold;">Aceitar convite</a></p>
+    <p style="font-size:12px;color:#94a3b8;">Ou copie e cole no navegador: ${params.link}</p>
+    <p style="font-size:12px;color:#94a3b8;">O convite expira em 7 dias.</p>`
+  return enviar(params.to, 'Convite para o GovHealth AI', moldura('Convite de equipe', corpo))
+}
+
 export async function enviarBoasVindasTrial(params: {
   email: string; nome?: string | null; plano: string; expiraEm?: string | null
 }): Promise<{ enviado: boolean; motivo?: string }> {

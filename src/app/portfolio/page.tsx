@@ -15,6 +15,7 @@ import {
   calcularPortfolioStats, seedSiemensDemo,
   type ProdutoPortfolio, type ProdutoInput, type CatmatVinculo,
 } from '@/lib/portfolio'
+import { HYDRATED_EVENT } from '@/lib/synced'
 import type { CategoriaEquipamento, TipoFornecimento, CatmatMaterial } from '@/lib/types'
 import { CATEGORIA_META, CATEGORIA_COLOR, TIPO_LABEL } from '@/lib/categorias'
 
@@ -50,6 +51,13 @@ export default function PortfolioPage() {
   const ehSiemens = session?.user?.email === 'siemens@govhealth.ai' || /siemens/i.test(empresa)
 
   const refresh = useCallback(() => setProdutos(getProdutos()), [])
+
+  // Recarrega quando os dados da conta terminam de sincronizar do servidor.
+  useEffect(() => {
+    const h = () => refresh()
+    window.addEventListener(HYDRATED_EVENT, h)
+    return () => window.removeEventListener(HYDRATED_EVENT, h)
+  }, [refresh])
 
   function carregarSiemens() {
     const n = seedSiemensDemo()

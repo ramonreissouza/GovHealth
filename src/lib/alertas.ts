@@ -1,6 +1,9 @@
 // src/lib/alertas.ts
-// AlertaConfig = regra de monitoramento configurada pelo usuário (localStorage)
+// AlertaConfig = regra de monitoramento configurada pelo usuário
 // AlertaNotificacao = notificação gerada ao fazer match com PNCP
+// Cache local sincronizado com a conta (ver lib/synced).
+
+import { readLocal, writeLocal } from './synced'
 
 const STORAGE_CONFIG = 'govhealth:alertas:configs'
 const STORAGE_NOTIF  = 'govhealth:alertas:notifs'
@@ -35,14 +38,11 @@ export interface AlertaNotificacao {
 // ── AlertaConfig CRUD ──────────────────────────────────────────────────────────
 
 export function getAlertaConfigs(): AlertaConfig[] {
-  if (typeof window === 'undefined') return []
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_CONFIG) ?? '[]')
-  } catch { return [] }
+  return readLocal<AlertaConfig[]>(STORAGE_CONFIG, [])
 }
 
 function saveAlertaConfigs(configs: AlertaConfig[]) {
-  localStorage.setItem(STORAGE_CONFIG, JSON.stringify(configs))
+  writeLocal(STORAGE_CONFIG, configs)
 }
 
 export function createAlertaConfig(data: Omit<AlertaConfig, 'id' | 'criadoEm'>): AlertaConfig {
@@ -70,15 +70,12 @@ export function deleteAlertaConfig(id: string): void {
 // ── Notificações ──────────────────────────────────────────────────────────────
 
 export function getNotificacoes(): AlertaNotificacao[] {
-  if (typeof window === 'undefined') return []
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_NOTIF) ?? '[]')
-  } catch { return [] }
+  return readLocal<AlertaNotificacao[]>(STORAGE_NOTIF, [])
 }
 
 function saveNotificacoes(notifs: AlertaNotificacao[]) {
   // keep latest 200
-  localStorage.setItem(STORAGE_NOTIF, JSON.stringify(notifs.slice(0, 200)))
+  writeLocal(STORAGE_NOTIF, notifs.slice(0, 200))
 }
 
 export function addNotificacoes(notifs: AlertaNotificacao[]) {
