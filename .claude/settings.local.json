@@ -32,7 +32,12 @@
       "Bash(npx tsc *)",
       "Bash(curl -s -o /dev/null -w \"fornecedores page: HTTP %{http_code}\\\\n\" http://localhost:3000/fornecedores)",
       "Bash(curl -s -o /dev/null -w \"fornecedores api: HTTP %{http_code}\\\\n\" \"http://localhost:3000/api/resultados/fornecedores?limit=1\")",
-      "Bash(curl -s -o /dev/null -w \"concorrentes: HTTP %{http_code}\\\\n\" http://localhost:3000/concorrentes)"
+      "Bash(curl -s -o /dev/null -w \"concorrentes: HTTP %{http_code}\\\\n\" http://localhost:3000/concorrentes)",
+      "Bash(git restore *)",
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Bash(node scripts/migrate-tipo-fornecimento.mjs)",
+      "Bash(grep -v \"SECURITY WARNING\\\\|treated as aliases\\\\|prepare for this\\\\|want the current\\\\|want libpq\\\\|postgresql.org\\\\|libpq SSL\\\\|trace-warnings\\\\|^$\\\\|^-\\\\|^To \\\\|^If you\")",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }

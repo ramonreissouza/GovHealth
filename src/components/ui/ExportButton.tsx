@@ -61,10 +61,12 @@ export function ExportButton<T>({ data, columns, filename, title, disabled }: Pr
           <div className="my-1 border-t border-subtle" />
           <button
             onClick={() => { printTable(data, columns, label); setOpen(false) }}
+            title="Abre a janela de impressão — escolha 'Salvar como PDF'"
             className="flex items-center gap-2.5 w-full px-3 py-2 text-[12px] text-muted hover:bg-bg3 hover:text-strong transition-colors text-left"
           >
             <Printer size={13} />
-            Imprimir
+            PDF
+            <span className="ml-auto text-[10px] font-mono-custom text-faint">.pdf</span>
           </button>
         </div>
       )}
