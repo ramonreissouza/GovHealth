@@ -222,7 +222,7 @@ export interface EquipeInfo {
   souTitular: boolean
   assentos: number
   membros: Usuario[]
-  convitesPendentes: { id: string; email: string; expira_em: string }[]
+  convitesPendentes: { id: string; email: string; expira_em: string; token: string }[]
   vagas: number
 }
 
@@ -233,8 +233,8 @@ export async function equipeInfo(userId: string): Promise<EquipeInfo> {
   const assentos = tit?.assentos ?? 1
   const membros = await query<Usuario>(
     `SELECT ${COLS_USER} FROM usuarios WHERE (id=$1 OR titular_id=$1) AND deleted_at IS NULL ORDER BY criado_em`, [titularId])
-  const convitesPendentes = await query<{ id: string; email: string; expira_em: string }>(
-    `SELECT id, email, to_char(expira_em,'YYYY-MM-DD') AS expira_em FROM convites
+  const convitesPendentes = await query<{ id: string; email: string; expira_em: string; token: string }>(
+    `SELECT id, email, token, to_char(expira_em,'YYYY-MM-DD') AS expira_em FROM convites
       WHERE titular_id=$1 AND aceito_em IS NULL AND expira_em > now() ORDER BY criado_em`, [titularId])
   return { titularId, souTitular: titularId === id, assentos, membros, convitesPendentes,
     vagas: Math.max(assentos - membros.length - convitesPendentes.length, 0) }
@@ -290,6 +290,30 @@ export async function aceitarConvite(params: { token: string; senha: string; nom
     [email, params.nome?.trim() || null, hash, tit?.empresa ?? null, conv.cnpj, conv.plano, conv.titular_id])
   await query(`UPDATE convites SET aceito_em=now() WHERE id=$1`, [conv.id])
   return { ok: true, email }
+}
+
+/** Remove um MEMBRO da equipe (soft-delete): a conta não loga mais e o assento é
+ * liberado. Só o titular remove; não é possível remover a si mesmo nem o titular. */
+export async function removerMembro(params: { titularId: string; membroId: string }): Promise<{ ok: true } | { ok: false; erro: string }> {
+  const titularId = await resolverTitular(params.titularId)
+  const membroId = norm(params.membroId)
+  if (membroId === titularId) return { ok: false, erro: 'nao_pode_remover_titular' }
+  const membro = await queryOne<{ id: string }>(
+    `SELECT id FROM usuarios WHERE id=$1 AND titular_id=$2 AND deleted_at IS NULL`, [membroId, titularId])
+  if (!membro) return { ok: false, erro: 'membro_invalido' }
+  // Soft-delete + encerra a sessão do membro (libera o assento imediatamente).
+  await query(
+    `UPDATE usuarios SET deleted_at=now(), sessao_id=NULL, sessao_expira=NULL, sessao_ultimo_visto=NULL WHERE id=$1`, [membroId])
+  return { ok: true }
+}
+
+/** Cancela um convite pendente (titular). */
+export async function cancelarConvite(params: { titularId: string; conviteId: string }): Promise<{ ok: true } | { ok: false; erro: string }> {
+  const titularId = await resolverTitular(params.titularId)
+  const apagados = await query<{ id: string }>(
+    `DELETE FROM convites WHERE id=$1 AND titular_id=$2 AND aceito_em IS NULL RETURNING id`, [params.conviteId, titularId])
+  if (apagados.length === 0) return { ok: false, erro: 'convite_invalido' }
+  return { ok: true }
 }
 
 /** Senha temporária legível (mostrada uma vez ao admin). */
