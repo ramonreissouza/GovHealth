@@ -9,13 +9,12 @@ import { X, Search, ExternalLink, ChevronDown, ChevronUp, Package } from 'lucide
 import type { LicitacaoEnriquecida } from '@/app/api/licitacoes/route'
 import type { ItemPNCP } from '@/lib/pncp'
 import { PrecosReferencia } from '@/components/ui/PrecosReferencia'
-import { CATEGORIA_LABEL as CAT_LABEL, CATEGORIA_COLOR as CAT_COLOR } from '@/lib/categorias'
+import { CATEGORIA_LABEL as CAT_LABEL, CATEGORIA_COLOR as CAT_COLOR, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
-const ANOS = ['2023','2024','2025']
 
 const SITUACAO_CLASS: Record<number, string> = {
   1: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
@@ -62,8 +61,9 @@ export default function AnalisePage() {
     }
   }
 
-  // Filters
-  const [anosAtivos, setAnosAtivos] = useState<Set<string>>(new Set(['2024', '2025']))
+  // Filters — anos vazios = todos (o painel de Ano é montado a partir dos dados).
+  const [anosAtivos, setAnosAtivos] = useState<Set<string>>(new Set())
+  const [tiposAtivos, setTiposAtivos] = useState<Set<string>>(new Set())
   const [categoriasAtivas, setCategoriasAtivas] = useState<Set<string>>(new Set())
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
   const [situacao, setSituacao] = useState('todos')
@@ -81,10 +81,12 @@ export default function AnalisePage() {
   useEffect(() => { load() }, [load])
 
   const all = data?.licitacoes ?? []
+  const anosDisponiveis = [...new Set(all.map((l) => l.ano).filter((a) => a && a !== '—'))].sort()
 
   // Client-side filtering
   const filtered = all.filter((l) => {
     if (anosAtivos.size > 0 && !anosAtivos.has(l.ano)) return false
+    if (tiposAtivos.size > 0 && !tiposAtivos.has(l.tipo)) return false
     if (categoriasAtivas.size > 0 && !categoriasAtivas.has(l.categoria)) return false
     if (ufsAtivos.size > 0 && !ufsAtivos.has(l.uf)) return false
     if (situacao === 'aberto' && l.situacaoId !== 1) return false
@@ -97,6 +99,7 @@ export default function AnalisePage() {
 
   // Active filter chips
   const chips = [
+    ...[...tiposAtivos].map((t) => ({ label: TIPO_LABEL[t as keyof typeof TIPO_LABEL] ?? t, remove: () => setTiposAtivos((p) => { const s = new Set(p); s.delete(t); return s }) })),
     ...[...categoriasAtivas].map((c) => ({ label: CAT_LABEL[c] ?? c, remove: () => setCategoriasAtivas((p) => { const s = new Set(p); s.delete(c); return s }) })),
     ...[...ufsAtivos].map((u) => ({ label: u, remove: () => setUfsAtivos((p) => { const s = new Set(p); s.delete(u); return s }) })),
     ...(situacao !== 'todos' ? [{ label: situacao === 'aberto' ? 'Em Aberto' : 'Encerrado', remove: () => setSituacao('todos') }] : []),
@@ -125,7 +128,7 @@ export default function AnalisePage() {
                   {label} <X size={10} />
                 </button>
               ))}
-              <button onClick={() => { setCategoriasAtivas(new Set()); setUfsAtivos(new Set()); setSituacao('todos') }}
+              <button onClick={() => { setTiposAtivos(new Set()); setCategoriasAtivas(new Set()); setUfsAtivos(new Set()); setSituacao('todos') }}
                 className="text-[11px] font-mono-custom text-faint hover:text-strong">
                 Limpar filtros
               </button>
@@ -146,9 +149,9 @@ export default function AnalisePage() {
 
               {/* Year */}
               <div className="bg-bg2 border border-subtle rounded-xl p-3">
-                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Ano</div>
-                <div className="flex gap-1">
-                  {ANOS.map((ano) => (
+                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Ano {anosAtivos.size === 0 && <span className="text-faint/70 normal-case">· todos</span>}</div>
+                <div className="flex gap-1 flex-wrap">
+                  {anosDisponiveis.map((ano) => (
                     <button key={ano}
                       onClick={() => setAnosAtivos((p) => { const s = new Set(p); s.has(ano) ? s.delete(ano) : s.add(ano); return s })}
                       className={clsx('flex-1 text-[11px] font-mono-custom py-1.5 rounded-md transition-all',
@@ -159,9 +162,29 @@ export default function AnalisePage() {
                 </div>
               </div>
 
+              {/* Tipo de fornecimento */}
+              <div className="bg-bg2 border border-subtle rounded-xl p-3">
+                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Tipo de fornecimento</div>
+                <div className="space-y-1">
+                  {Object.entries(TIPO_LABEL).map(([key, label]) => {
+                    const count = all.filter((l) => l.tipo === key && (anosAtivos.size === 0 || anosAtivos.has(l.ano))).length
+                    if (count === 0) return null
+                    return (
+                      <button key={key}
+                        onClick={() => setTiposAtivos((p) => { const s = new Set(p); s.has(key) ? s.delete(key) : s.add(key); return s })}
+                        className={clsx('w-full flex items-center justify-between px-2 py-1.5 rounded-md transition-all text-left',
+                          tiposAtivos.has(key) ? 'bg-accent/15 border border-accent/30' : 'hover:bg-bg3')}>
+                        <span className={clsx('text-[10px]', tiposAtivos.has(key) ? 'text-accent font-semibold' : 'text-muted')}>{label}</span>
+                        <span className="text-[10px] font-mono-custom text-faint">{count}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               {/* Equipamentos */}
               <div className="bg-bg2 border border-subtle rounded-xl p-3">
-                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Equipamentos</div>
+                <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Categoria clínica</div>
                 <div className="space-y-1">
                   {Object.entries(CAT_LABEL).map(([key, label]) => {
                     const count = all.filter((l) => l.categoria === key && (anosAtivos.size === 0 || anosAtivos.has(l.ano))).length

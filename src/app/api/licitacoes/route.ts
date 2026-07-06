@@ -1,11 +1,13 @@
 // src/app/api/licitacoes/route.ts
-// Retorna licitações estruturadas do PNCP com categorização e KPIs
-// Usado pelas páginas Analise (/analise) e Concorrentes (/concorrentes)
+// Licitações de saúde a partir do BANCO (contratacoes + resultados populados pelo
+// ETL) — NÃO chama o PNCP ao vivo. Usado pela tela "Maior Atuação" (/analise).
+// Status aberto/encerrada = ausência/presença de resultado homologado.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
-import { inferirCategoria } from '@/lib/score-engine'
+import { query } from '@/lib/db'
+import { inferirCategoria, classificarTipo } from '@/lib/score-engine'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
+import type { TipoFornecimento } from '@/lib/types'
 
 export const runtime = 'nodejs'
 export const revalidate = 1800
@@ -19,6 +21,7 @@ export interface LicitacaoEnriquecida {
   uf: string
   modalidade: string
   categoria: string
+  tipo: TipoFornecimento
   descricao: string
   valor: number
   valorEstimado: number
@@ -33,51 +36,91 @@ export interface LicitacaoEnriquecida {
   sequencialCompra: number
 }
 
+interface Row {
+  numero_controle_pncp: string
+  cnpj_orgao: string
+  razao_social_orgao: string | null
+  municipio: string | null
+  uf: string | null
+  modalidade_nome: string | null
+  objeto_compra: string | null
+  ano_compra: number | null
+  sequencial_compra: number | null
+  valor_estimado: number | null
+  valor_homologado: number | null
+  encerrada: boolean
+  data_publicacao: string | null
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
-  const uf = searchParams.get('uf') ?? undefined
-  const limit = Number(searchParams.get('limit') ?? 500)
+  const uf = searchParams.get('uf')?.toUpperCase().trim() || undefined
+  const limit = Math.min(Number(searchParams.get('limit') ?? 500), 2000)
 
-  const cacheKey = `licitacoes:${uf ?? ''}:${limit}`
+  const cacheKey = `licitacoes:db:${uf ?? ''}:${limit}`
   const cached = getCached<object>(cacheKey)
   if (cached) return NextResponse.json(cached)
 
-  try {
-    const pncpResult = await buscarComprasSaude({ uf, tamanhoPagina: 100 })
+  // Filtro opcional por UF ("CE" ou "CE,BA").
+  const params: unknown[] = []
+  let whereSql = ''
+  if (uf) { params.push(uf.split(',')); whereSql = `WHERE c.uf = ANY($${params.length})` }
 
-    const licitacoes: LicitacaoEnriquecida[] = pncpResult.data.map((raw) => {
-      const norm = normalizarLicitacao(raw)
-      const valorHomologado = raw.valorTotalHomologado ?? 0
-      const valorEstimado = raw.valorTotalEstimado ?? 0
+  try {
+    const rows = await query<Row>(
+      `SELECT c.numero_controle_pncp, c.cnpj_orgao, c.razao_social_orgao, c.municipio, c.uf,
+              c.modalidade_nome, c.objeto_compra, c.ano_compra, c.sequencial_compra,
+              c.valor_total_estimado::float8      AS valor_estimado,
+              r.valor_homologado::float8          AS valor_homologado,
+              (r.valor_homologado IS NOT NULL)    AS encerrada,
+              to_char(c.data_publicacao, 'YYYY-MM-DD') AS data_publicacao
+       FROM contratacoes c
+       LEFT JOIN (
+         SELECT numero_controle_pncp, SUM(valor_total_homologado) AS valor_homologado
+         FROM resultados GROUP BY numero_controle_pncp
+       ) r ON r.numero_controle_pncp = c.numero_controle_pncp
+       ${whereSql}
+       ORDER BY COALESCE(r.valor_homologado, c.valor_total_estimado, 0) DESC NULLS LAST
+       LIMIT $${params.length + 1}`,
+      [...params, limit],
+    )
+
+    const licitacoes: LicitacaoEnriquecida[] = rows.map((c) => {
+      const valorHomologado = c.valor_homologado ?? 0
+      const valorEstimado = c.valor_estimado ?? 0
+      const ano = c.ano_compra ? String(c.ano_compra) : (c.data_publicacao?.substring(0, 4) ?? '—')
       return {
-        id: norm.id,
-        numeroControlePNCP: norm.numeroControlePNCP,
-        proponente: norm.orgaoEntidade.razaoSocial,
-        cnpj: norm.orgaoEntidade.cnpj,
-        municipio: norm.orgaoEntidade.municipio ?? '',
-        uf: norm.orgaoEntidade.uf ?? '',
-        modalidade: norm.modalidadeNome,
-        categoria: inferirCategoria(raw.objetoCompra),
-        descricao: raw.objetoCompra.substring(0, 120),
+        id: c.numero_controle_pncp,
+        numeroControlePNCP: c.numero_controle_pncp,
+        proponente: c.razao_social_orgao ?? '—',
+        cnpj: c.cnpj_orgao,
+        municipio: c.municipio ?? '',
+        uf: c.uf ?? '',
+        modalidade: c.modalidade_nome ?? '',
+        categoria: inferirCategoria(c.objeto_compra ?? ''),
+        tipo: classificarTipo(c.objeto_compra ?? ''),
+        descricao: (c.objeto_compra ?? '').substring(0, 120),
         valor: valorHomologado || valorEstimado,
         valorEstimado,
         valorHomologado,
-        situacaoId: raw.situacaoCompraId,
-        situacao: raw.situacaoCompraNome,
-        ano: raw.dataPublicacaoPncp?.substring(0, 4) ?? '—',
-        dataPublicacao: raw.dataPublicacaoPncp ?? '',
-        dataEncerramento: raw.dataEncerramentoProposta,
-        link: raw.linkSistemaOrigem ?? '',
-        anoCompra: raw.anoCompra,
-        sequencialCompra: raw.sequencialCompra,
+        // Status derivado do banco: com resultado homologado = Encerrada; sem = Em Aberto.
+        situacaoId: c.encerrada ? 4 : 1,
+        situacao: c.encerrada ? 'Encerrada' : 'Em Aberto',
+        ano,
+        dataPublicacao: c.data_publicacao ?? '',
+        // PNCP não guarda linkSistemaOrigem no banco; monta a URL canônica do edital.
+        link: c.cnpj_orgao && c.ano_compra && c.sequencial_compra
+          ? `https://pncp.gov.br/app/editais/${c.cnpj_orgao}/${c.ano_compra}/${c.sequencial_compra}`
+          : '',
+        anoCompra: c.ano_compra ?? 0,
+        sequencialCompra: c.sequencial_compra ?? 0,
       }
     })
 
-    // ── KPIs ────────────────────────────────────────────────────────────────
+    // ── Agregações (mantidas para compatibilidade da resposta) ─────────────────
     const valorTotal = licitacoes.reduce((s, l) => s + l.valor, 0)
     const ticketMedio = licitacoes.length ? Math.round(valorTotal / licitacoes.length) : 0
 
-    // ── Por categoria ────────────────────────────────────────────────────────
     const porCategoria: Record<string, { count: number; valor: number }> = {}
     for (const l of licitacoes) {
       if (!porCategoria[l.categoria]) porCategoria[l.categoria] = { count: 0, valor: 0 }
@@ -85,13 +128,9 @@ export async function GET(req: NextRequest) {
       porCategoria[l.categoria].valor += l.valor
     }
 
-    // ── Por UF ───────────────────────────────────────────────────────────────
     const porUF: Record<string, number> = {}
-    for (const l of licitacoes) {
-      if (l.uf) porUF[l.uf] = (porUF[l.uf] ?? 0) + l.valor
-    }
+    for (const l of licitacoes) if (l.uf) porUF[l.uf] = (porUF[l.uf] ?? 0) + l.valor
 
-    // ── Top proponentes ───────────────────────────────────────────────────────
     const pmap: Record<string, { proponente: string; uf: string; municipio: string; valor: number; count: number }> = {}
     for (const l of licitacoes) {
       if (!pmap[l.cnpj]) pmap[l.cnpj] = { proponente: l.proponente, uf: l.uf, municipio: l.municipio, valor: 0, count: 0 }
@@ -104,17 +143,31 @@ export async function GET(req: NextRequest) {
       .map(([cnpj, d]) => ({ cnpj, ...d }))
 
     const payload = {
-      licitacoes: licitacoes.slice(0, limit),
+      licitacoes,
       kpis: { total: licitacoes.length, valorTotal, ticketMedio },
       porCategoria,
       porUF,
       topProponentes,
       atualizadoEm: new Date().toISOString(),
+      fonte: 'PNCP · banco (ETL)',
     }
     setCached(cacheKey, payload, TTL.SHORT)
     return NextResponse.json(payload)
-  } catch (error) {
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    if (msg.includes('DATABASE_URL')) {
+      return NextResponse.json(
+        { error: 'Banco não configurado', instrucoes: 'Defina DATABASE_URL (Neon) no .env.local e rode `npm run db:setup` + `npm run etl`.' },
+        { status: 503 },
+      )
+    }
+    if (/relation .* does not exist/i.test(msg)) {
+      return NextResponse.json(
+        { error: 'Schema ausente', instrucoes: 'Rode `npm run db:setup` para criar as tabelas e `npm run etl` para popular.' },
+        { status: 503 },
+      )
+    }
     console.error('[licitacoes]', error)
-    return NextResponse.json({ error: String(error) }, { status: 500 })
+    return NextResponse.json({ error: 'Erro ao consultar licitações', detalhe: msg }, { status: 500 })
   }
 }

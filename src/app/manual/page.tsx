@@ -4,9 +4,14 @@
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
+import Link from 'next/link'
+import { useSession } from 'next-auth/react'
+import { temAcessoPro } from '@/lib/plano-gating'
 import {
   Flame, TrendingUp, Database, Filter, Search, Zap,
   Calendar, MapPin, ArrowRight, Info, CheckCircle, Clock,
+  LayoutDashboard, Boxes, Users, Kanban, CalendarClock, Map as MapIcon,
+  FileText, Trophy, Building2, Wallet, DollarSign, Bell, Flag, Crown, Lock, LayoutGrid,
 } from 'lucide-react'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -59,8 +64,9 @@ function ScoreTier({ score, label, color, description }: {
 
 // ── TOC ──────────────────────────────────────────────────────────────────────
 
-const TOC = [
+const TOC_BASE = [
   { id: 'visao-geral', label: 'Visão geral' },
+  { id: 'funcionalidades', label: 'Funcionalidades' },
   { id: 'fontes', label: 'Fontes de dados' },
   { id: 'score', label: 'Opportunity Score' },
   { id: 'sub-scores', label: 'Sub-scores' },
@@ -69,14 +75,195 @@ const TOC = [
   { id: 'filtros', label: 'Filtros e busca' },
 ]
 
+// Módulos da plataforma, marcados por plano. `pro: true` espelha ROTAS_PRO
+// (plano-gating.ts): esses só aparecem no manual de quem tem acesso Pro.
+interface Modulo { label: string; icon: React.ElementType; desc: string; pro: boolean; passos: string[]; valor: string }
+const MODULOS: Modulo[] = [
+  {
+    label: 'Dashboard', icon: LayoutDashboard, pro: false,
+    desc: 'Visão geral do dia: KPIs, oportunidades quentes e alertas prioritários.',
+    passos: [
+      'Ao entrar, leia os KPIs do topo: oportunidades quentes, valor em jogo e prazos que vencem.',
+      'Clique em qualquer KPI para abrir a lista filtrada correspondente (o número não é decorativo).',
+      'Confira o bloco de alertas do dia e abra os que interessam.',
+    ],
+    valor: 'Use como ponto de partida diário — os números levam direto à ação, sem precisar garimpar.',
+  },
+  {
+    label: 'Licitações', icon: Zap, pro: false,
+    desc: 'Busca de editais de saúde com Opportunity Score, filtros por UF, categoria e prazo.',
+    passos: [
+      'Digite o equipamento na busca (ex.: "tomógrafo") — ela ignora acento e maiúscula.',
+      'Refine por UF, categoria e score mínimo (50 / 70 / 80).',
+      'Passe o mouse no badge de score para entender por que ele é alto.',
+      'Clique numa linha para ver objeto, prazo, link do edital no PNCP e sub-scores.',
+    ],
+    valor: 'Priorize score ≥70 com prazo curto: é onde há chance real e urgência comercial.',
+  },
+  {
+    label: 'Maior Atuação', icon: TrendingUp, pro: false,
+    desc: 'Quem mais compra: ranking de órgãos por valor, UF, tipo de fornecimento e categoria.',
+    passos: [
+      'No painel esquerdo, filtre por Ano, Tipo de fornecimento (equipamento, medicamento, acessório…), Categoria clínica e Situação.',
+      'Na barra superior, restrinja a UF.',
+      'Leia a coluna Valor (a lista já vem ordenada) para ver quem mais compra.',
+      'Clique numa linha para abrir os itens da licitação e o preço de referência.',
+    ],
+    valor: 'Monte sua lista de alvos: os órgãos que mais compram o seu tipo de produto na sua região.',
+  },
+  {
+    label: 'Vencedores', icon: Trophy, pro: false,
+    desc: 'Resultados homologados — quem venceu, por qual preço e em qual região.',
+    passos: [
+      'Filtre por UF, empresa e período.',
+      'Veja, item a item, quem venceu e o valor homologado.',
+      'Compare o preço vencedor com o seu preço-alvo.',
+    ],
+    valor: 'Descubra a que preço o concorrente ganhou para calibrar a sua próxima proposta.',
+  },
+  {
+    label: 'Fornecedores', icon: Building2, pro: false,
+    desc: 'Ranking de concorrentes por valor homologado, com filtro por estado.',
+    passos: [
+      'Abra o ranking de fornecedores por valor homologado.',
+      'Filtre por estado para ver o líder regional.',
+      'Clique num fornecedor para abrir o histórico de vitórias dele.',
+    ],
+    valor: 'Saiba contra quem você compete em cada região e o tamanho da fatia de cada um.',
+  },
+  {
+    label: 'Radar de Verba', icon: Wallet, pro: false,
+    desc: 'Convênios e emendas federais de saúde — verba prestes a virar licitação.',
+    passos: [
+      'Filtre por UF.',
+      'Ordene por verba não executada e por vencimento próximo.',
+      'Abra um convênio/emenda para ver o valor disponível e o prazo.',
+    ],
+    valor: 'Verba com prazo curto para ser gasta = licitação iminente. Chegue antes do edital sair.',
+  },
+  {
+    label: 'Preços de referência', icon: DollarSign, pro: false,
+    desc: 'Preço praticado no Compras.gov por item, consultado sob demanda.',
+    passos: [
+      'Dentro de uma oportunidade, expanda um item.',
+      'Veja o preço praticado no Compras.gov para aquele item/CATMAT.',
+      'Use como piso/teto ao montar a sua proposta.',
+    ],
+    valor: 'Vá para a proposta com o preço de mercado na mão — menos achismo, mais margem.',
+  },
+  {
+    label: 'Alertas', icon: Bell, pro: false,
+    desc: 'Avisos automáticos quando surge uma oportunidade no seu perfil.',
+    passos: [
+      'Configure os critérios: categoria, UF e palavras-chave.',
+      'Receba o aviso quando surgir algo no seu perfil.',
+      'Abra o alerta para ir direto à oportunidade que o gerou.',
+    ],
+    valor: 'Pare de checar manualmente — a plataforma te chama quando aparece o que importa.',
+  },
+  {
+    label: 'Meu Portfólio', icon: Boxes, pro: true,
+    desc: 'Cadastre o que você vende; a plataforma prioriza as oportunidades que casam com o catálogo.',
+    passos: [
+      'Cadastre seus produtos (nome, categoria, palavras-chave) — ou clique em "Carregar portfólio Siemens" para o catálogo demo.',
+      'Vincule códigos CATMAT quando quiser precificação automática.',
+      'Volte às Licitações: as que casam com o seu catálogo passam a ser destacadas.',
+    ],
+    valor: 'Corta o ruído: você vê primeiro o que realmente vende, não o mercado inteiro.',
+  },
+  {
+    label: 'CRM / Pipeline', icon: Kanban, pro: true,
+    desc: 'Mova oportunidades por estágio, adicione notas e crie tarefas com prazo.',
+    passos: [
+      'Numa oportunidade, clique em "Adicionar ao pipeline".',
+      'Arraste o card entre os estágios conforme a negociação avança.',
+      'Adicione notas e tarefas com prazo em cada card.',
+    ],
+    valor: 'Gerencie o funil comercial sem sair de cima da inteligência de dados.',
+  },
+  {
+    label: 'Agenda', icon: CalendarClock, pro: true,
+    desc: 'Prazos de encerramento de propostas e follow-ups numa visão temporal.',
+    passos: [
+      'Veja os prazos das propostas que você acompanha, ordenados por urgência.',
+      'Crie follow-ups com data.',
+    ],
+    valor: 'Nunca perca o prazo de envio de proposta de um edital que interessa.',
+  },
+  {
+    label: 'Minhas Disputas', icon: Flag, pro: true,
+    desc: 'Acompanhe os editais que você está disputando, com status e prazos.',
+    passos: [
+      'Marque as licitações que você está disputando.',
+      'Acompanhe status e prazos num só painel.',
+    ],
+    valor: 'Visão consolidada do que está em jogo agora — sem planilha paralela.',
+  },
+  {
+    label: 'Editais', icon: FileText, pro: true,
+    desc: 'Leitura estruturada dos editais acompanhados.',
+    passos: [
+      'Abra um edital acompanhado.',
+      'Leia o resumo estruturado: objeto, itens e exigências.',
+    ],
+    valor: 'Entenda o que o edital pede em minutos, sem ler dezenas de páginas.',
+  },
+  {
+    label: 'Concorrentes', icon: Users, pro: true,
+    desc: 'Análise de concorrentes e participação (share) por estado.',
+    passos: [
+      'Selecione a categoria e a UF.',
+      'Veja o share de cada concorrente.',
+      'Compare a atuação deles por estado.',
+    ],
+    valor: 'Mapeie onde o concorrente é forte e onde há espaço aberto para atacar.',
+  },
+  {
+    label: 'Breakdown', icon: LayoutGrid, pro: true,
+    desc: 'Detalhamento item a item dos resultados homologados.',
+    passos: [
+      'Abra o detalhamento item a item.',
+      'Cruze item, quantidade e valor homologado.',
+    ],
+    valor: 'Análise fina de preço por item para afiar a proposta.',
+  },
+  {
+    label: 'Mapa', icon: MapIcon, pro: true,
+    desc: 'Oportunidades por município num mapa interativo.',
+    passos: [
+      'Abra o mapa e navegue pela região de interesse.',
+      'Clique num município para ver as oportunidades locais.',
+    ],
+    valor: 'Planeje a rota comercial priorizando regiões por concentração de demanda.',
+  },
+  {
+    label: 'Equipe', icon: Users, pro: true,
+    desc: 'Convide usuários da sua empresa (assentos do plano); cada pessoa tem login próprio.',
+    passos: [
+      'Como titular, digite o e-mail do colega e clique em "Gerar convite".',
+      'Copie o link exibido e envie para a pessoa (ou ela recebe por e-mail, se configurado).',
+      'A pessoa abre o link, cria a própria senha e passa a ter login próprio.',
+      'Remova um membro ou cancele um convite pelos ícones à direita de cada linha.',
+    ],
+    valor: 'Toda a equipe usa a mesma inteligência, cada um com seu acesso, dentro do limite do plano.',
+  },
+]
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ManualPage() {
+  const { data: session } = useSession()
+  const u = session?.user as { plano?: string | null; role?: string | null; status?: string | null } | undefined
+  const isPro = temAcessoPro({ plano: u?.plano, role: u?.role, status: u?.status })
+  const planoLabel = u?.role === 'master' ? 'Admin' : isPro ? 'Pro' : 'Essencial'
+  const TOC = TOC_BASE
+  const modulos = isPro ? MODULOS : MODULOS.filter((m) => !m.pro)
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Topbar title="Manual do Usuário" subtitle="Como a plataforma funciona" />
+        <Topbar title="Manual do Usuário" subtitle={`Funções disponíveis no seu plano · ${planoLabel}`} />
         <main className="flex-1 overflow-y-auto p-6 bg-bg">
           <div className="max-w-4xl mx-auto flex gap-8">
 
@@ -121,6 +308,63 @@ export default function ManualPage() {
                     ))}
                   </div>
                 </Card>
+              </Section>
+
+              {/* ── Funcionalidades (por plano) ── */}
+              <Section id="funcionalidades" title="Funcionalidades do seu plano" icon={LayoutGrid}>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className={clsx('inline-flex items-center gap-1.5 text-[11px] font-mono-custom px-2.5 py-1 rounded-full border',
+                    isPro ? 'bg-accent/10 border-accent/30 text-accent' : 'bg-bg3 border-subtle2 text-muted')}>
+                    <Crown size={11} /> Plano {planoLabel}
+                  </span>
+                  <span className="text-[12px] text-muted">
+                    {isPro
+                      ? 'Você tem acesso a todos os módulos abaixo.'
+                      : 'Estes são os módulos incluídos no seu plano.'}
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {modulos.map(({ label, icon: Icon, desc, pro, passos, valor }) => (
+                    <div key={label} className="bg-bg2 border border-subtle rounded-xl p-5">
+                      <div className="flex items-center gap-2.5 mb-2">
+                        <div className="w-8 h-8 rounded-lg bg-accent/15 flex items-center justify-center flex-shrink-0">
+                          <Icon size={14} className="text-accent" />
+                        </div>
+                        <span className="text-[14px] font-semibold text-strong">{label}</span>
+                        {pro && <span className="text-[8px] font-mono-custom uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">Pro</span>}
+                      </div>
+                      <p className="text-[12px] text-muted leading-relaxed mb-3">{desc}</p>
+                      <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-2">Passo a passo</div>
+                      <ol className="space-y-1.5 mb-3">
+                        {passos.map((p, i) => (
+                          <li key={i} className="flex gap-2.5 text-[12px] text-muted">
+                            <span className="w-4 h-4 rounded-full bg-bg4 text-[9px] font-mono-custom flex items-center justify-center flex-shrink-0 mt-0.5 text-strong">{i + 1}</span>
+                            <span className="leading-relaxed">{p}</span>
+                          </li>
+                        ))}
+                      </ol>
+                      <div className="flex items-start gap-2 bg-accent/5 border border-accent/15 rounded-lg px-3 py-2">
+                        <CheckCircle size={12} className="text-accent mt-0.5 flex-shrink-0" />
+                        <span className="text-[12px] text-muted leading-relaxed"><strong className="text-strong">Como extrair valor:</strong> {valor}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Upsell discreto para o plano Essencial */}
+                {!isPro && u?.role !== 'master' && (
+                  <div className="mt-3 p-4 bg-accent/5 border border-accent/20 rounded-xl flex items-start gap-3">
+                    <Lock size={14} className="text-accent mt-0.5 flex-shrink-0" />
+                    <div>
+                      <div className="text-[12px] font-semibold text-strong">Recursos Pro</div>
+                      <p className="text-[12px] text-muted mt-0.5 leading-relaxed">
+                        Portfólio inteligente, CRM/pipeline, mapa, análise de concorrentes, gestão de equipe e mais.{' '}
+                        <Link href="/assinar?plano=pro" className="text-accent hover:underline">Conhecer o plano Pro →</Link>
+                      </p>
+                    </div>
+                  </div>
+                )}
               </Section>
 
               {/* ── Fontes ── */}
