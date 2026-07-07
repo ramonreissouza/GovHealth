@@ -162,13 +162,13 @@ function TabContas() {
 
 function ContaModal({ modal, onClose, onSaved }: { modal: { tipo: 'criar' | 'editar'; user?: Usuario }; onClose: () => void; onSaved: (senha?: { email: string; senha: string }) => void }) {
   const u = modal.user
-  const [f, setF] = useState({ email: u?.email ?? '', nome: u?.nome ?? '', empresa: u?.empresa ?? '', instituicao: u?.instituicao ?? '', telefone: u?.telefone ?? '', cpf: u?.cpf ?? '', cnpj: u?.cnpj ?? '', endereco: u?.endereco ?? '', plano: u?.plano ?? 'trial', status_assinatura: u?.status_assinatura ?? 'trial', expira_em: u?.expira_em ?? '' })
+  const [f, setF] = useState({ email: u?.email ?? '', nome: u?.nome ?? '', empresa: u?.empresa ?? '', instituicao: u?.instituicao ?? '', telefone: u?.telefone ?? '', cpf: u?.cpf ?? '', cnpj: u?.cnpj ?? '', endereco: u?.endereco ?? '', plano: (u?.plano && ['pro', 'growth', 'enterprise'].includes(u.plano.toLowerCase())) ? 'pro' : 'essencial', status_assinatura: u?.status_assinatura ?? 'trial', expira_em: u?.expira_em ?? '' })
   const [erro, setErro] = useState('')
   const [salvando, setSalvando] = useState(false)
 
   async function salvar() {
     setSalvando(true); setErro('')
-    const body: Record<string, unknown> = { nome: f.nome || undefined, empresa: f.empresa || undefined, instituicao: f.instituicao || undefined, telefone: f.telefone || undefined, cpf: f.cpf || undefined, cnpj: f.cnpj || undefined, endereco: f.endereco || undefined, plano: f.plano || undefined, status_assinatura: f.status_assinatura || undefined, expira_em: f.expira_em || null }
+    const body: Record<string, unknown> = { nome: f.nome || undefined, empresa: f.empresa || undefined, instituicao: f.instituicao || undefined, telefone: f.telefone || undefined, cpf: f.cpf || undefined, cnpj: f.cnpj || undefined, endereco: f.endereco || undefined, plano: u?.role === 'master' ? undefined : (f.plano || undefined), status_assinatura: f.status_assinatura || undefined, expira_em: f.expira_em || null }
     let res: Response
     if (modal.tipo === 'criar') { body.email = f.email; res = await fetch('/api/admin/contas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) }
     else { res = await fetch(`/api/admin/contas/${encodeURIComponent(u!.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) }
@@ -195,7 +195,9 @@ function ContaModal({ modal, onClose, onSaved }: { modal: { tipo: 'criar' | 'edi
         </div>
         <Campo label="Endereço"><input value={f.endereco} onChange={(e) => setF({ ...f, endereco: e.target.value })} className={inp} placeholder="Rua, nº, cidade/UF" /></Campo>
         <div className="grid grid-cols-3 gap-2.5">
-          <Campo label="Plano"><select value={f.plano} onChange={(e) => setF({ ...f, plano: e.target.value })} className={inp}>{['trial', 'Starter', 'Growth', 'Enterprise'].map((p) => <option key={p}>{p}</option>)}</select></Campo>
+          <Campo label="Plano">{u?.role === 'master'
+            ? <div className={inp + ' flex items-center text-muted'}>master (admin)</div>
+            : <select value={f.plano} onChange={(e) => setF({ ...f, plano: e.target.value })} className={inp}><option value="essencial">Essencial</option><option value="pro">Pro</option></select>}</Campo>
           <Campo label="Assinatura"><select value={f.status_assinatura} onChange={(e) => setF({ ...f, status_assinatura: e.target.value })} className={inp}>{['trial', 'ativa', 'expirada'].map((p) => <option key={p}>{p}</option>)}</select></Campo>
           <Campo label="Expira em"><input type="date" value={f.expira_em ?? ''} onChange={(e) => setF({ ...f, expira_em: e.target.value })} className={inp} /></Campo>
         </div>

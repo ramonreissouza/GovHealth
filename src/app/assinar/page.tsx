@@ -6,6 +6,7 @@
 
 import { useState, Suspense } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useSearchParams } from 'next/navigation'
 import { clsx } from 'clsx'
 import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock } from 'lucide-react'
@@ -73,7 +74,7 @@ function Checkout() {
       <header className="border-b border-subtle bg-bg2/80 backdrop-blur">
         <div className="max-w-[900px] mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/inicio" className="flex items-center gap-1.5 text-[13px] text-muted hover:text-strong"><ArrowLeft size={15} /> Voltar</Link>
-          <span className="font-heading font-bold text-[14px]">GovHealth<span className="text-accent">.ai</span></span>
+          <Image src="/logo-govhealth.png" alt="GovHealth" width={130} height={59} priority className="h-6 w-auto" />
         </div>
       </header>
 
