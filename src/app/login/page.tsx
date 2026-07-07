@@ -8,7 +8,7 @@ import { useState, useEffect, Suspense, FormEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { clsx } from 'clsx'
-import { Loader2, Check } from 'lucide-react'
+import { Loader2, Check, Eye, EyeOff } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
 
 type Modo = 'entrar' | 'criar'
@@ -63,6 +63,7 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [otp, setOtp] = useState('')
+  const [showPass, setShowPass] = useState(false)
   const [etapa, setEtapa] = useState<'senha' | 'codigo'>('senha')
   const [error, setError] = useState('')
   const [info, setInfo] = useState(sp.get('motivo') === 'sessao'
@@ -142,8 +143,15 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
           </div>
           <div>
             <label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">Senha</label>
-            <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
-              className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors" />
+            <div className="relative">
+              <input type={showPass ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+                className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 pr-10 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors" />
+              <button type="button" onClick={() => setShowPass((v) => !v)} tabIndex={-1}
+                aria-label={showPass ? 'Ocultar senha' : 'Mostrar senha'}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint hover:text-strong transition-colors">
+                {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
           </div>
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading}
@@ -182,6 +190,7 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
   const [plano, setPlano] = useState<'essencial' | 'pro'>(planoInicial ?? 'pro')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showPass, setShowPass] = useState(false)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
   const inp = 'w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors'
 
@@ -220,7 +229,16 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
             <Campo label="E-mail *"><input type="email" className={inp} value={f.email} onChange={set('email')} placeholder="voce@empresa.com.br" /></Campo>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Campo label="Senha *"><input type="password" className={inp} value={f.senha} onChange={set('senha')} placeholder="mín. 6 caracteres" /></Campo>
+            <Campo label="Senha *">
+              <div className="relative">
+                <input type={showPass ? 'text' : 'password'} className={inp + ' pr-10'} value={f.senha} onChange={set('senha')} placeholder="mín. 6 caracteres" />
+                <button type="button" onClick={() => setShowPass((v) => !v)} tabIndex={-1}
+                  aria-label={showPass ? 'Ocultar senha' : 'Mostrar senha'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint hover:text-strong transition-colors">
+                  {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </Campo>
             <Campo label="Telefone"><input className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Campo>
           </div>
           <Campo label="Empresa / instituição"><input className={inp} value={f.empresa} onChange={set('empresa')} placeholder="Distribuidora, hospital…" /></Campo>

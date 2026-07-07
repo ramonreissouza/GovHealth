@@ -4,6 +4,7 @@
 // fora da área autenticada (ver matcher do middleware).
 
 import Link from 'next/link'
+import Image from 'next/image'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -73,16 +74,8 @@ export default function MetodologiaPage() {
       <header className="border-b border-subtle bg-bg2">
         <div className="max-w-[880px] mx-auto px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
-              <svg viewBox="0 0 16 16" fill="none" className="w-5 h-5">
-                <path d="M8 2L14 5.5V10.5L8 14L2 10.5V5.5L8 2Z" stroke="#000" strokeWidth="1.5" strokeLinejoin="round" />
-                <circle cx="8" cy="8" r="2" fill="#000" />
-              </svg>
-            </div>
-            <div>
-              <div className="font-heading font-bold text-[15px] leading-none">GovHealth.ai</div>
-              <div className="font-mono-custom text-[10px] text-faint mt-0.5 tracking-wide">Sales Intelligence</div>
-            </div>
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={150} height={68} priority className="h-8 w-auto" />
+            <span className="font-mono-custom text-[10px] text-faint tracking-wide hidden sm:inline">Sales Intelligence</span>
           </div>
           <Link href="/login" className="text-[12px] font-semibold text-black bg-accent hover:bg-accent2 px-3 py-1.5 rounded-md transition-colors">
             Entrar na plataforma
