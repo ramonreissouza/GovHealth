@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
 
-const SUPORTE = 'contato@govhealth.ai'
+const SUPORTE = 'contato@techealth.com.br'
 
 interface Conta {
   id: string; email: string; nome: string | null

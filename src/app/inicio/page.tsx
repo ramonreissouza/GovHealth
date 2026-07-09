@@ -214,7 +214,7 @@ export default async function InicioPage() {
                 </div>
               ))}
             </div>
-            <p className="text-center text-[11px] text-faint mt-5">Precisa de mais usuários ou plano corporativo? <a href="mailto:contato@govhealth.ai?subject=Plano%20corporativo" className="text-accent hover:underline">Fale com a gente</a>.</p>
+            <p className="text-center text-[11px] text-faint mt-5">Precisa de mais usuários ou plano corporativo? <a href="mailto:contato@techealth.com.br?subject=Plano%20corporativo" className="text-accent hover:underline">Fale com a gente</a>.</p>
           </div>
         </section>
 
@@ -241,7 +241,7 @@ export default async function InicioPage() {
           <div className="flex items-center gap-5 text-[12.5px]">
             <Link href="/metodologia" className="text-muted hover:text-accent">Metodologia</Link>
             <Link href="/login" className="text-muted hover:text-accent">Entrar</Link>
-            <a href="mailto:contato@govhealth.ai" className="text-muted hover:text-accent">Contato</a>
+            <a href="mailto:contato@techealth.com.br" className="text-muted hover:text-accent">Contato</a>
           </div>
         </div>
       </footer>

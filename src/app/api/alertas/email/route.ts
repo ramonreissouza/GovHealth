@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
   }
 
   const to = destinatario ?? process.env.AUTH_DEMO_EMAIL ?? 'demo@govhealth.ai'
-  const from = process.env.RESEND_FROM_EMAIL ?? 'alertas@govhealth.ai'
+  const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
 
   const resend = new Resend(apiKey)
 

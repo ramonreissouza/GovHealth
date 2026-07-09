@@ -8,7 +8,7 @@ import { planoPorId } from '@/lib/planos'
 async function enviar(to: string, subject: string, html: string): Promise<{ enviado: boolean; motivo?: string }> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) return { enviado: false, motivo: 'sem RESEND_API_KEY' }
-  const from = process.env.RESEND_FROM_EMAIL ?? 'contato@govhealth.ai'
+  const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
   try {
     const { Resend } = await import('resend')
     const { error } = await new Resend(apiKey).emails.send({ from, to, subject, html })
@@ -63,6 +63,17 @@ export async function enviarCodigoAcesso(params: { to: string; nome?: string | n
     <p style="font-size:30px;font-weight:bold;letter-spacing:6px;color:#0f172a;margin:18px 0;">${params.codigo}</p>
     <p style="font-size:13px;color:#64748b;">O código expira em 10 minutos. Se você não tentou entrar, ignore este e-mail e troque sua senha.</p>`
   return enviar(params.to, `Seu código de acesso GovHealth: ${params.codigo}`, moldura('Código de acesso', corpo))
+}
+
+/** Redefinição de senha ("esqueci minha senha"): link com token de uso único. */
+export async function enviarRedefinicaoSenha(params: { to: string; nome?: string | null; link: string }) {
+  const corpo = `
+    <p style="font-size:15px;color:#334155;">Olá${params.nome ? ' ' + params.nome : ''},</p>
+    <p style="font-size:15px;color:#334155;">Recebemos um pedido para redefinir a senha da sua conta GovHealth AI. Clique no botão abaixo para criar uma nova senha:</p>
+    ${btn(params.link, 'Redefinir minha senha')}
+    <p style="font-size:12px;color:#94a3b8;margin-top:16px;">Ou copie e cole no navegador: ${params.link}</p>
+    <p style="font-size:13px;color:#64748b;margin-top:12px;">O link expira em 30 minutos e só pode ser usado uma vez. Se você não pediu isso, ignore este e-mail — sua senha continua a mesma.</p>`
+  return enviar(params.to, 'Redefinir sua senha — GovHealth AI', moldura('Redefinição de senha', corpo))
 }
 
 /** Convite para entrar numa conta de equipe. */

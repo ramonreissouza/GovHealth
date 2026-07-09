@@ -2,7 +2,7 @@
 import type { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import CredentialsProvider from 'next-auth/providers/credentials'
-import { verificarLogin } from '@/lib/users'
+import { verificarLogin, buscarUsuario } from '@/lib/users'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
 import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao } from '@/lib/seguranca'
 
@@ -79,6 +79,23 @@ export const authOptions: NextAuthOptions = {
         token.status = u.status ?? null
         token.expiraEm = u.expiraEm ?? null
         token.sessaoId = u.sessaoId ?? null
+        token.rev = Date.now()
+        return token
+      }
+      // Revalida plano/status/expiração no banco no máximo a cada ~60s por sessão.
+      // Assim, quando o admin ativa a conta (status→'ativa'), o acesso volta sem
+      // exigir novo login. O master é isento (não sofre gate de plano/trial).
+      const rev = typeof token.rev === 'number' ? token.rev : 0
+      if (token.id && token.role !== 'master' && Date.now() - rev > 60_000) {
+        try {
+          const atual = await buscarUsuario(token.id as string)
+          if (atual) {
+            token.plano = atual.plano ?? null
+            token.status = atual.status_assinatura ?? null
+            token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+          }
+        } catch { /* mantém o token atual se o banco falhar */ }
+        token.rev = Date.now()
       }
       return token
     },

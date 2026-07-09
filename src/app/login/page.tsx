@@ -152,6 +152,9 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
                 {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
+            <div className="text-right mt-1.5">
+              <Link href="/esqueci-senha" className="text-[11.5px] text-muted hover:text-accent hover:underline transition-colors">Esqueci minha senha</Link>
+            </div>
           </div>
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading}
