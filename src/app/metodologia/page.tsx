@@ -152,7 +152,7 @@ export default function MetodologiaPage() {
 
         <div className="border-t border-subtle pt-6 flex items-center justify-between gap-4 flex-wrap">
           <p className="text-[12px] text-faint font-mono-custom">
-            Dúvidas sobre metodologia? <a href="mailto:contato@govhealth.ai?subject=Metodologia%20—%20GovHealth%20AI" className="text-accent hover:underline">contato@govhealth.ai</a>
+            Dúvidas sobre metodologia? <a href="mailto:contato@techealth.com.br?subject=Metodologia%20—%20GovHealth%20AI" className="text-accent hover:underline">contato@techealth.com.br</a>
           </p>
           <Link href="/login" className="text-[12px] text-accent hover:underline">Entrar na plataforma →</Link>
         </div>
