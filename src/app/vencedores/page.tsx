@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Search, Trophy, Database, ChevronRight, ExternalLink, Building2, Users, ListTree } from 'lucide-react'
+import { Search, Trophy, Database, ChevronRight, ExternalLink, Building2, ListTree } from 'lucide-react'
 import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
@@ -245,7 +245,7 @@ export default function VencedoresPage() {
                         {aberta && (
                           <tr className="bg-bg/40">
                             <td colSpan={7} className="px-4 py-4 border-b border-subtle">
-                              <DetalheResultado convenio={v.convenio} numeroItem={v.numero_item} vencedorAtual={v.vencedor} />
+                              <DetalheResultado convenio={v.convenio} numeroItem={v.numero_item} />
                             </td>
                           </tr>
                         )}
@@ -303,7 +303,7 @@ interface Detalhe {
   error?: string
 }
 
-function DetalheResultado({ convenio, numeroItem, vencedorAtual }: { convenio: string; numeroItem: number | null; vencedorAtual: string | null }) {
+function DetalheResultado({ convenio, numeroItem }: { convenio: string; numeroItem: number | null }) {
   const [det, setDet] = useState<Detalhe | null>(null)
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
@@ -330,8 +330,6 @@ function DetalheResultado({ convenio, numeroItem, vencedorAtual }: { convenio: s
   if (!det) return null
 
   const cab = det.cabecalho
-  const norm = (s: string | null) => (s ?? '').trim().toLowerCase()
-  const temMaisDeUm = det.concorrentes.length > 1
 
   return (
     <div className="grid grid-cols-3 gap-4">
@@ -368,52 +366,8 @@ function DetalheResultado({ convenio, numeroItem, vencedorAtual }: { convenio: s
         )}
       </div>
 
-      {/* Concorrentes do item */}
-      <div className="col-span-1 bg-bg2 border border-subtle2 rounded-lg p-3">
-        <div className="flex items-center gap-1.5 mb-2">
-          <Users size={12} className="text-accent" />
-          <span className="text-[10px] font-mono-custom uppercase tracking-wider text-faint">
-            Concorrentes do item{det.item?.codigo_catmat ? ` (${det.item.codigo_catmat})` : ''}
-          </span>
-        </div>
-        {det.concorrentes.length === 0 ? (
-          <div className="text-[11px] text-faint">Nenhum fornecedor registrado para este item.</div>
-        ) : (
-          <>
-            <div className="space-y-1">
-              {det.concorrentes.map((f, idx) => {
-                const venceu = norm(f.nome_fornecedor) === norm(vencedorAtual) || (idx === 0 && !vencedorAtual)
-                return (
-                  <div key={`${f.ni_fornecedor}-${idx}`}
-                    className={clsx('flex items-center justify-between gap-2 rounded px-2 py-1',
-                      venceu ? 'bg-amber/10' : 'bg-bg3/40')}>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {venceu
-                        ? <Trophy size={10} className="text-amber flex-shrink-0" />
-                        : <span className="text-[9px] font-mono-custom text-faint w-2.5 text-center flex-shrink-0">{f.ordem ?? idx + 1}</span>}
-                      <div className="min-w-0">
-                        <div className="text-[11px] text-strong truncate">{f.nome_fornecedor ?? '—'}</div>
-                        <div className="text-[9px] text-faint font-mono-custom">
-                          {f.ni_fornecedor ?? '—'}{f.porte_fornecedor ? ` · ${f.porte_fornecedor}` : ''}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="text-[11px] font-mono-custom font-bold text-strong flex-shrink-0">{formatBRL(f.valor)}</div>
-                  </div>
-                )
-              })}
-            </div>
-            {!temMaisDeUm && (
-              <div className="text-[10px] text-faint mt-2 leading-snug">
-                Apenas o vencedor foi homologado/registrado neste item pelo PNCP.
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Itens do processo */}
-      <div className="col-span-1 bg-bg2 border border-subtle2 rounded-lg p-3">
+      {/* Itens do processo — ocupa o espaço antes usado pelos concorrentes */}
+      <div className="col-span-2 bg-bg2 border border-subtle2 rounded-lg p-3">
         <div className="flex items-center gap-1.5 mb-2">
           <ListTree size={12} className="text-accent" />
           <span className="text-[10px] font-mono-custom uppercase tracking-wider text-faint">Itens do processo ({det.processoItens.length})</span>
@@ -421,14 +375,14 @@ function DetalheResultado({ convenio, numeroItem, vencedorAtual }: { convenio: s
         {det.processoItens.length === 0 ? (
           <div className="text-[11px] text-faint">Sem itens homologados neste processo.</div>
         ) : (
-          <div className="space-y-1 max-h-56 overflow-y-auto">
+          <div className="grid grid-cols-2 gap-1 max-h-80 overflow-y-auto">
             {det.processoItens.map((it, idx) => {
               const atual = it.numero_item === numeroItem
               return (
                 <div key={`${it.numero_item}-${idx}`}
-                  className={clsx('rounded px-2 py-1', atual ? 'bg-accent/10 border border-accent/30' : 'bg-bg3/40')}>
+                  className={clsx('rounded px-2 py-1.5', atual ? 'bg-accent/10 border border-accent/30' : 'bg-bg3/40')}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-[11px] text-strong truncate">
+                    <div className="text-[11px] text-strong truncate" title={it.item ?? undefined}>
                       {it.codigo_catmat ? <span className="font-mono-custom text-faint">{it.codigo_catmat} · </span> : null}{it.item}
                     </div>
                     <div className="text-[10px] font-mono-custom font-bold text-strong flex-shrink-0">{formatBRL(it.valor)}</div>
