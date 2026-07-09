@@ -17,9 +17,12 @@
     "stripe:migrate": "node scripts/migrate-stripe.mjs",
     "stripe:setup": "node scripts/stripe-setup.mjs",
     "trial:migrate": "node scripts/migrate-trial.mjs",
-    "equipe:migrate": "node scripts/migrate-equipe.mjs"
+    "equipe:migrate": "node scripts/migrate-equipe.mjs",
+    "reset:migrate": "node scripts/migrate-reset.mjs"
   },
   "dependencies": {
+    "@stripe/react-stripe-js": "^6.7.0",
+    "@stripe/stripe-js": "^9.9.0",
     "@types/mapbox-gl": "^3.1.0",
     "ai": "^3.3.0",
     "axios": "^1.7.3",
@@ -34,6 +37,7 @@
     "openai": "^4.52.0",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.21.0",
+    "qrcode.react": "^4.2.0",
     "react": "^18",
     "react-dom": "^18",
     "react-map-gl": "^8.1.1",

@@ -1,7 +1,8 @@
 // src/app/api/assinaturas/checkout/route.ts — inicia a assinatura por CARTÃO via
-// Stripe Checkout (hospedado, PCI-safe, cobrança recorrente automática).
-// Rota PÚBLICA. Registra a pendência, cria a sessão do Stripe e devolve a URL
-// de pagamento — o cliente é redirecionado para o checkout do Stripe.
+// Stripe EMBEDDED Checkout (PCI-safe, cobrança recorrente automática). O cartão é
+// preenchido dentro da própria página da GovHealth (iframe do Stripe) — sem sair
+// do site. Rota PÚBLICA. Registra a pendência, cria a sessão e devolve o
+// client_secret que o front usa para montar o checkout embutido.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -39,11 +40,13 @@ export async function POST(req: NextRequest) {
       plano: d.plano, metodo: 'cartao', valor: plano.preco,
     })
 
-    // 2) cria a sessão de checkout (assinatura recorrente)
+    // 2) cria a sessão de checkout EMBUTIDO (assinatura recorrente). Com ui_mode
+    //    'embedded' usamos return_url (não success_url/cancel_url).
     const stripe = getStripe()
     const base = appUrl()
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
+      ui_mode: 'embedded',
       payment_method_types: ['card'],
       line_items: [lineItemDoPlano(plano)],
       customer_email: d.email,
@@ -55,14 +58,13 @@ export async function POST(req: NextRequest) {
       subscription_data: {
         metadata: { assinatura_id: String(assinaturaId), plano: d.plano, email: d.email },
       },
-      success_url: `${base}/assinar/sucesso?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${base}/assinar?plano=${d.plano}&cancelado=1`,
+      return_url: `${base}/assinar/sucesso?session_id={CHECKOUT_SESSION_ID}`,
     })
 
     // 3) guarda a referência da sessão
     await marcarCheckoutIniciado(assinaturaId, session.id)
 
-    return NextResponse.json({ ok: true, url: session.url })
+    return NextResponse.json({ ok: true, clientSecret: session.client_secret })
   } catch (e) {
     console.error('[assinaturas/checkout]', e)
     return NextResponse.json({ error: 'Não foi possível iniciar o pagamento.' }, { status: 500 })
