@@ -316,6 +316,60 @@ export async function cancelarConvite(params: { titularId: string; conviteId: st
   return { ok: true }
 }
 
+// ── Minha Conta (área do próprio usuário logado) ─────────────────────────────
+
+/** Regra de senha forte: mín. 8 caracteres, com pelo menos uma letra e um número. */
+export function senhaForteOk(senha: string): boolean {
+  const s = (senha ?? '').trim()
+  return s.length >= 8 && /[A-Za-z]/.test(s) && /[0-9]/.test(s)
+}
+
+/**
+ * Troca a senha do próprio usuário: confere a senha atual, valida a força da nova
+ * e grava o novo hash. Nunca expõe o hash.
+ */
+export async function alterarSenha(
+  id: string, senhaAtual: string, novaSenha: string,
+): Promise<{ ok: true } | { ok: false; erro: 'conta' | 'credenciais' | 'senha_fraca' }> {
+  const uid = norm(id)
+  const row = await queryOne<{ senha_hash: string; deleted_at: string | null; suspenso: boolean }>(
+    `SELECT senha_hash, deleted_at, suspenso FROM usuarios WHERE id=$1`, [uid])
+  if (!row || row.deleted_at || row.suspenso) return { ok: false, erro: 'conta' }
+  const confere = await bcrypt.compare((senhaAtual ?? '').trim(), row.senha_hash)
+  if (!confere) return { ok: false, erro: 'credenciais' }
+  if (!senhaForteOk(novaSenha)) return { ok: false, erro: 'senha_fraca' }
+  const hash = await bcrypt.hash(novaSenha.trim(), 10)
+  await query(`UPDATE usuarios SET senha_hash=$1, atualizado_em=now() WHERE id=$2`, [hash, uid])
+  return { ok: true }
+}
+
+export interface ContaResumo {
+  id: string; email: string; nome: string | null; role: Role
+  empresa: string | null; telefone: string | null; instituicao: string | null
+  endereco: string | null; cpf: string | null; cnpj: string | null
+  plano: string | null; status_assinatura: string | null; expira_em: string | null
+  /** Há um cliente Stripe vinculado (cartão gerenciado no portal de cobrança). */
+  temPagamento: boolean
+}
+
+/** Dados da conta do próprio usuário para a tela "Minha Conta". */
+export async function contaResumo(id: string): Promise<ContaResumo | null> {
+  const row = await queryOne<ContaResumo & { stripe_customer_id: string | null }>(
+    `SELECT id,email,nome,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,
+            to_char(expira_em,'YYYY-MM-DD') AS expira_em, stripe_customer_id
+       FROM usuarios WHERE id=$1 AND deleted_at IS NULL`, [norm(id)])
+  if (!row) return null
+  const { stripe_customer_id, ...rest } = row
+  return { ...rest, temPagamento: !!stripe_customer_id }
+}
+
+/** Customer do Stripe vinculado à conta (para abrir o portal de cobrança). */
+export async function stripeCustomerIdDe(id: string): Promise<string | null> {
+  const r = await queryOne<{ c: string | null }>(
+    `SELECT stripe_customer_id AS c FROM usuarios WHERE id=$1`, [norm(id)])
+  return r?.c ?? null
+}
+
 /** Senha temporária legível (mostrada uma vez ao admin). */
 export function gerarSenhaTemporaria(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
