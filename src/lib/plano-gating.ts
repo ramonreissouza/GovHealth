@@ -5,7 +5,8 @@
 //
 // Essencial (núcleo): Dashboard, Licitações, Vencedores, Fornecedores, Radar de
 // Verba, Preços de referência, Alertas, Perfil, Manual, Portfólio? (não — Pro).
-// Pro adiciona as rotas abaixo. Trial e master têm acesso total.
+// Pro adiciona as rotas abaixo. O trial respeita o plano escolhido (trial do Pro
+// vê Pro; trial do Essencial vê só o Essencial). Master tem acesso total.
 
 export const ROTAS_PRO: string[] = [
   '/concorrentes',
@@ -16,7 +17,6 @@ export const ROTAS_PRO: string[] = [
   '/agenda',
   '/editais',
   '/portfolio',
-  '/minhas-disputas',
   '/equipe',
 ]
 
@@ -24,9 +24,11 @@ export function ehRotaPro(pathname: string): boolean {
   return ROTAS_PRO.some((r) => pathname === r || pathname.startsWith(`${r}/`))
 }
 
-/** Acesso Pro: master, plano 'pro', ou trial (experimenta tudo). Essencial = limitado. */
+/**
+ * Acesso Pro: master ou plano 'pro' (inclusive durante o trial do Pro). O trial do
+ * Essencial NÃO libera as rotas Pro — vale o plano escolhido, não o status trial.
+ */
 export function temAcessoPro(ctx: { plano?: string | null; role?: string | null; status?: string | null }): boolean {
   if (ctx.role === 'master') return true
-  if (ctx.status === 'trial') return true
   return ctx.plano === 'pro'
 }

@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle, Menu, X,
-  Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords,
+  Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords, CreditCard,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
@@ -56,6 +56,7 @@ const NAV_STATIC = [
     items: [
       { href: '/portfolio', label: 'Meu Portfólio', icon: Boxes, badge: null as string | null },
       { href: '/equipe', label: 'Equipe', icon: Users, badge: null as string | null },
+      { href: '/conta', label: 'Minha Conta', icon: CreditCard, badge: null as string | null },
       { href: '/perfil', label: 'Perfil & Preferências', icon: UserCircle, badge: null as string | null },
       { href: '/manual', label: 'Manual do usuário', icon: BookOpen, badge: null as string | null },
     ],

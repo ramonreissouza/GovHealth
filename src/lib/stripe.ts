@@ -41,6 +41,19 @@ function priceIdDe(plano: Plano): string | undefined {
 }
 
 /**
+ * Sessão do Portal de Cobrança do Stripe: o cliente gerencia o próprio cartão,
+ * vê faturas, troca de plano e cancela a assinatura — tudo hospedado (PCI-safe).
+ * Retorna a URL para redirecionar. Requer um customer do Stripe vinculado.
+ */
+export async function criarPortalSession(customerId: string, returnUrl: string): Promise<string | null> {
+  const session = await getStripe().billingPortal.sessions.create({
+    customer: customerId,
+    return_url: returnUrl,
+  })
+  return session.url ?? null
+}
+
+/**
  * line_item de assinatura mensal p/ o Checkout. Usa Price ID se configurado,
  * senão cria o preço inline (BRL, recorrente mensal).
  */
