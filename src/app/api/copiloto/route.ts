@@ -1,9 +1,9 @@
 // src/app/api/copiloto/route.ts
 // Copiloto IA com streaming — usa OpenAI + contexto de dados governamentais
 
-import { OpenAI } from 'openai'
 import { NextRequest, NextResponse } from 'next/server'
 import { IA_HABILITADA } from '@/lib/features'
+import { getLLM, LLM_MODEL, llmConfigurado } from '@/lib/llm'
 
 export const runtime = 'nodejs'
 
@@ -54,19 +54,19 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       )
     }
-    if (!process.env.OPENAI_API_KEY) {
+    if (!llmConfigurado()) {
       return NextResponse.json(
         {
-          error: 'OPENAI_API_KEY não configurada',
-          instrucoes: 'Adicione OPENAI_API_KEY no .env.local',
+          error: 'Provedor de IA não configurado',
+          instrucoes: 'Defina ZAI_API_KEY (chave da Z.ai) no ambiente.',
         },
-        { status: 401 }
+        { status: 503 }
       )
     }
 
     // Instanciado aqui (não no topo do módulo) para não quebrar o build quando
-    // OPENAI_API_KEY não existe no ambiente (IA desativada).
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    // a chave não existe no ambiente (IA desativada).
+    const openai = getLLM()
 
     const body: RequestBody = await req.json()
     const { messages, context } = body
@@ -88,13 +88,13 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         try {
           const completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini', // mais barato; trocar para gpt-4o para qualidade máxima
+            model: LLM_MODEL, // Z.ai GLM (padrão glm-4.7-flash, grátis)
             messages: [
               { role: 'system', content: systemPrompt },
               ...messages.slice(-10), // últimas 10 mensagens para contexto
             ],
             stream: true,
-            max_tokens: 800,
+            max_tokens: 2000,
             temperature: 0.7,
           })
 

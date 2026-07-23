@@ -119,7 +119,7 @@ export default function ChatInterface() {
             ? {
                 ...m,
                 content:
-                  'Erro ao conectar com o copiloto. Verifique se OPENAI_API_KEY está configurada no .env.local.',
+                  'Erro ao conectar com o copiloto. Verifique se ZAI_API_KEY está configurada no ambiente.',
               }
             : m
         )
