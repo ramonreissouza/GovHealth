@@ -3,10 +3,10 @@
 // estruturada (specs, habilitação, prazos, cláusulas restritivas, recomendações)
 // usando OpenAI em JSON mode. O PDF é extraído no cliente (lib/pdf.ts).
 
-import { OpenAI } from 'openai'
 import { NextRequest, NextResponse } from 'next/server'
 import type { AnaliseEdital } from '@/lib/types'
 import { IA_HABILITADA } from '@/lib/features'
+import { getLLM, LLM_MODEL, llmConfigurado } from '@/lib/llm'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -43,6 +43,15 @@ interface RequestBody {
   portfolio?: string[]   // nomes dos produtos do fornecedor (opcional)
 }
 
+// Extrai o objeto JSON da resposta — remove cercas ```json e qualquer texto ao
+// redor (defensivo: modelos de raciocínio às vezes prefixam/suffixam conteúdo).
+function extrairJson(s: string): string {
+  const t = s.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  const i = t.indexOf('{')
+  const j = t.lastIndexOf('}')
+  return i >= 0 && j > i ? t.slice(i, j + 1) : t
+}
+
 export async function POST(req: NextRequest) {
   try {
     if (!IA_HABILITADA) {
@@ -51,10 +60,10 @@ export async function POST(req: NextRequest) {
         { status: 503 },
       )
     }
-    if (!process.env.OPENAI_API_KEY) {
+    if (!llmConfigurado()) {
       return NextResponse.json(
-        { error: 'OPENAI_API_KEY não configurada', instrucoes: 'Adicione OPENAI_API_KEY no .env.local' },
-        { status: 401 },
+        { error: 'Provedor de IA não configurado', instrucoes: 'Defina ZAI_API_KEY (chave da Z.ai) no ambiente.' },
+        { status: 503 },
       )
     }
 
@@ -74,24 +83,24 @@ export async function POST(req: NextRequest) {
 
     const userContent = `EDITAL:\n${texto.slice(0, MAX_CHARS)}${portfolioStr}`
 
-    // Instanciado aqui (não no topo) para o build não exigir OPENAI_API_KEY.
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    // Instanciado aqui (não no topo) para o build não exigir a chave.
+    const openai = getLLM()
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: LLM_MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 2000,
+      max_tokens: 4000, // folga p/ modelos "com raciocínio" (evita JSON truncado)
       temperature: 0.2,
     })
 
     const raw = completion.choices[0]?.message?.content ?? '{}'
     let analise: AnaliseEdital
     try {
-      analise = JSON.parse(raw)
+      analise = JSON.parse(extrairJson(raw))
     } catch {
       return NextResponse.json({ error: 'Resposta do modelo não pôde ser interpretada.' }, { status: 502 })
     }
