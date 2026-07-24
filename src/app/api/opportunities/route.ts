@@ -100,6 +100,8 @@ interface ContratacaoRow {
   situacao_id: number | null
   categoria_saude: string | null
   tipo_fornecimento: string | null
+  fonte: string | null
+  link_externo: string | null
   aberto: boolean
 }
 
@@ -119,7 +121,9 @@ interface FiltroBanco {
   categoria?: string
 }
 function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {}): { whereSql: string; args: unknown[] } {
-  const where: string[] = ['valor_total_estimado >= 10000', "objeto_compra IS NOT NULL"]
+  // Fontes fora do PNCP (ex.: Licitações-e/BB) não expõem valor na listagem pública,
+  // então o piso de R$10k não se aplica a elas — senão sumiriam por terem valor nulo.
+  const where: string[] = ["(valor_total_estimado >= 10000 OR fonte <> 'pncp')", "objeto_compra IS NOT NULL"]
   const args: unknown[] = []
   if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
   else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
@@ -189,7 +193,7 @@ async function buscarDoBanco(params: {
             modalidade_nome, objeto_compra, ano_compra, sequencial_compra,
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
-            situacao_id, categoria_saude, tipo_fornecimento`
+            situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo`
   const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
 
   // Modo mapa: top-N por UF (janela) → toda UF com dado aparece, sem viés de recência.
@@ -209,9 +213,13 @@ async function buscarDoBanco(params: {
   const ops = rows.map((r) => {
     const uf = r.uf ?? 'N/D'
     const cnpj = r.cnpj_orgao ?? ''
-    const link = cnpj && r.ano_compra && r.sequencial_compra
-      ? `https://pncp.gov.br/app/editais/${cnpj}/${r.ano_compra}/${r.sequencial_compra}`
-      : 'https://pncp.gov.br'
+    // Fontes externas (Licitações-e) trazem o link do detalhe em link_externo; o PNCP
+    // monta a URL canônica do edital a partir de cnpj/ano/sequencial.
+    const link = r.link_externo
+      ? r.link_externo
+      : cnpj && r.ano_compra && r.sequencial_compra
+        ? `https://pncp.gov.br/app/editais/${cnpj}/${r.ano_compra}/${r.sequencial_compra}`
+        : 'https://pncp.gov.br'
     const licitacao: Licitacao = {
       id: r.numero_controle_pncp,
       numeroControlePNCP: r.numero_controle_pncp,
