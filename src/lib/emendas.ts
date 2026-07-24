@@ -26,9 +26,18 @@ export interface EmendaParlamentar {
   valorPago: string
 }
 
-export async function buscarEmendas(params: { ano?: number; pagina?: number } = {}): Promise<EmendaParlamentar[]> {
+// Código da função Saúde no Portal (confirmado ao vivo: codigoFuncao=10 → só Saúde).
+// Filtrar no SERVIDOR é essencial: sem isso, o /emendas devolve todas as funções
+// misturadas (Educação, Defesa…) — a pág. 1 de um ano pode ter ZERO saúde, e o
+// cap de páginas do chamador acabava puxando quase nenhuma emenda de saúde.
+export const CODIGO_FUNCAO_SAUDE = '10'
+
+export async function buscarEmendas(
+  params: { ano?: number; pagina?: number; codigoFuncao?: string } = {},
+): Promise<EmendaParlamentar[]> {
   const sp = new URLSearchParams({ pagina: String(params.pagina ?? 1) })
   if (params.ano) sp.set('ano', String(params.ano))
+  if (params.codigoFuncao) sp.set('codigoFuncao', params.codigoFuncao)
 
   const res = await fetch(`${BASE_URL}/emendas?${sp}`, { headers: buildHeaders(), next: { revalidate: 7200 } })
   if (!res.ok) throw new Error(`Emendas ${res.status}`)
@@ -36,19 +45,22 @@ export async function buscarEmendas(params: { ano?: number; pagina?: number } = 
   return Array.isArray(data) ? data : []
 }
 
-/** Filtro EXATO: funcao === "Saúde" (confirmado no debug) */
+/** Filtro EXATO: funcao === "Saúde" (confirmado no debug) — cinto e suspensório. */
 function isSaude(e: EmendaParlamentar): boolean {
   const f = (e.funcao ?? '').trim().toLowerCase()
   return f === 'saúde' || f === 'saude'
 }
 
-export async function buscarEmendasSaudeAno(ano: number, maxPaginas = 30): Promise<EmendaParlamentar[]> {
+// Puxa emendas de saúde de um ano com o filtro de função no SERVIDOR. Default alto
+// (200 págs × 15 ≈ 3.000) porque há ~1.200+ emendas/ano. Usado no fallback ao vivo
+// da rota; o caminho normal lê do cache do banco (ver src/lib/emendas-ingest.ts).
+export async function buscarEmendasSaudeAno(ano: number, maxPaginas = 200): Promise<EmendaParlamentar[]> {
   const todas: EmendaParlamentar[] = []
   for (let pagina = 1; pagina <= maxPaginas; pagina++) {
-    const lote = await buscarEmendas({ ano, pagina })
+    const lote = await buscarEmendas({ ano, pagina, codigoFuncao: CODIGO_FUNCAO_SAUDE })
     if (lote.length === 0) break
     todas.push(...lote.filter(isSaude))
-    await new Promise((r) => setTimeout(r, 700))
+    await new Promise((r) => setTimeout(r, 250))
   }
   return todas
 }

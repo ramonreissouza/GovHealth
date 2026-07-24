@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { buscarEmendasSaudeAno, type EmendaParlamentar } from '@/lib/emendas'
+import { lerEmendasSaude } from '@/lib/emendas-ingest'
 import { toEmendaRadar, type EmendaRadar } from '@/lib/radar-verba'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
@@ -30,11 +31,24 @@ export async function GET(req: NextRequest) {
     const anoAtual = new Date().getFullYear()
     const anos = anoParam ? [Number(anoParam)] : [anoAtual, anoAtual - 1, anoAtual - 2]
 
+    // Caminho normal: lê do cache do banco (populado pelo cron sync-emendas) — completo
+    // e instantâneo. Fallback ao vivo (limitado) só se o cache ainda estiver vazio, p/
+    // a tela não quebrar antes da 1ª sincronização (ou em dev sem cron).
     let brutas: EmendaParlamentar[] = []
     let anoUsado = anos[0]
-    for (const ano of anos) {
-      brutas = await buscarEmendasSaudeAno(ano, 8)
-      if (brutas.length > 0) { anoUsado = ano; break }
+    try {
+      const doBanco = await lerEmendasSaude(anos)
+      // Mantém a semântica de ano único das telas: usa o ano mais recente com dados.
+      anoUsado = doBanco.anoUsado
+      brutas = doBanco.brutas.filter((e) => e.ano === anoUsado)
+    } catch (e) {
+      console.warn('[radar-verba] cache indisponível, fallback ao vivo:', e)
+    }
+    if (brutas.length === 0) {
+      for (const ano of anos) {
+        brutas = await buscarEmendasSaudeAno(ano)
+        if (brutas.length > 0) { anoUsado = ano; break }
+      }
     }
 
     let emendas: EmendaRadar[] = brutas.map(toEmendaRadar)

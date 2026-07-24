@@ -11,6 +11,7 @@
     "db:setup": "node scripts/db-setup.mjs",
     "etl": "node scripts/etl-pncp.mjs",
     "etl:overnight": "node scripts/etl-overnight.mjs",
+    "etl:backfill": "node scripts/etl-backfill.mjs",
     "audit": "node audit/run-audit.mjs",
     "admin:seed": "node scripts/seed-admin.mjs",
     "admin:set-password": "node scripts/set-master-password.mjs",
@@ -18,7 +19,14 @@
     "stripe:setup": "node scripts/stripe-setup.mjs",
     "trial:migrate": "node scripts/migrate-trial.mjs",
     "equipe:migrate": "node scripts/migrate-equipe.mjs",
-    "reset:migrate": "node scripts/migrate-reset.mjs"
+    "reset:migrate": "node scripts/migrate-reset.mjs",
+    "radar:migrate": "node scripts/migrate-radar.mjs",
+    "emendas:migrate": "node scripts/migrate-emendas.mjs",
+    "emendas:ingest": "node scripts/ingest-emendas.mjs",
+    "radar:sync": "node scripts/radar/run.mjs",
+    "radar:connect": "node scripts/radar/connect.mjs",
+    "radar:connect-service": "node scripts/radar/connect-service.mjs",
+    "radar:browser-service": "node scripts/radar/browser-service.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",
