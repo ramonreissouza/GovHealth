@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS contratacoes (
   sequencial_compra    INT,
   valor_total_estimado NUMERIC,
   data_publicacao      DATE,
+  data_abertura_proposta     DATE,   -- início do recebimento de propostas
+  data_encerramento_proposta DATE,   -- prazo final para envio de propostas
   situacao_id          INT,
   categoria_saude      TEXT,           -- imagem, uti, laboratorio, etc.
   coletado_em          TIMESTAMPTZ DEFAULT now()

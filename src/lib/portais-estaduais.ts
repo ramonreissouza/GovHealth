@@ -211,6 +211,7 @@ function normalizarBECSP(raw: Record<string, unknown>): LicitacaoEstadual {
     descricao: String(raw.ds_objeto ?? raw.descricao ?? ''),
     valor: Number(raw.vl_estimado ?? raw.valor ?? 0),
     dataPublicacao: String(raw.dt_publicacao ?? raw.data ?? ''),
+    dataAbertura: raw.dt_abertura ? String(raw.dt_abertura) : undefined,
     dataEncerramento: raw.dt_encerramento ? String(raw.dt_encerramento) : undefined,
     situacao: String(raw.ds_situacao ?? raw.situacao ?? ''),
     modalidade: String(raw.no_modalidade ?? raw.modalidade ?? ''),
@@ -231,12 +232,16 @@ export interface LicitacaoEstadual {
   uf: string
   descricao: string
   valor: number
-  dataPublicacao: string
-  dataEncerramento?: string
+  dataPublicacao: string        // publicação/lançamento no PNCP
+  dataAbertura?: string         // início do recebimento de propostas
+  dataEncerramento?: string     // prazo final para envio de propostas
   situacao: string
   modalidade: string
   categoria: string
   link: string
+  // Status canônico (resultado homologado): true = ainda sem vencedor. Definido pela
+  // fonte do banco; nas fontes ao vivo fica undefined e o status cai na data/situação.
+  aberto?: boolean
   fonte: 'pncp' | 'bec-sp' | 'licitamg' | 'subg-rj' | 'compras-ba'
   // Chaves para buscar os itens da compra no PNCP (pré-análise do que está sendo orçado).
   anoCompra?: number
@@ -257,6 +262,7 @@ function pncpToEstadual(raw: PNCPContratacao): LicitacaoEstadual {
     descricao: norm.objetoCompra,
     valor: raw.valorTotalEstimado ?? raw.valorTotalHomologado ?? 0,
     dataPublicacao: raw.dataPublicacaoPncp ?? '',
+    dataAbertura: raw.dataAberturaProposta,
     dataEncerramento: raw.dataEncerramentoProposta,
     situacao: raw.situacaoCompraNome,
     modalidade: raw.modalidadeNome,

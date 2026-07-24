@@ -47,6 +47,8 @@ interface ContratacaoDBRow {
   sequencial_compra: number | null
   valor_total_estimado: number | null
   data_publicacao: string | null
+  data_abertura_proposta: string | null
+  data_encerramento_proposta: string | null
   situacao_id: number | null
   categoria_saude: string | null
   aberto: boolean
@@ -67,9 +69,11 @@ function dbRowToEstadual(r: ContratacaoDBRow): LicitacaoEstadual {
     descricao: r.objeto_compra ?? '',
     valor: r.valor_total_estimado ?? 0,
     dataPublicacao: r.data_publicacao ?? '',
-    dataEncerramento: undefined, // não coletado pelo ETL
+    dataAbertura: r.data_abertura_proposta ?? undefined,
+    dataEncerramento: r.data_encerramento_proposta ?? undefined,
     // 'Aberto' para casar com isAbertaLic/calcularKpis (que buscam 'aberto').
     situacao: aberto ? 'Aberto' : 'Encerrada',
+    aberto, // status canônico (resultado homologado) — prevalece sobre a data
     modalidade: r.modalidade_nome ?? '',
     categoria: cat,
     link: r.cnpj_orgao && r.ano_compra && r.sequencial_compra
@@ -146,6 +150,8 @@ async function buscarLicitacoesEstadoDB(
             modalidade_nome, objeto_compra, ano_compra, sequencial_compra,
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
+            to_char(data_abertura_proposta, 'YYYY-MM-DD') AS data_abertura_proposta,
+            to_char(data_encerramento_proposta, 'YYYY-MM-DD') AS data_encerramento_proposta,
             situacao_id, categoria_saude,
             ${abertoExpr('contratacoes')} AS aberto
        FROM contratacoes

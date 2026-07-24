@@ -23,6 +23,7 @@
     "radar:migrate": "node scripts/migrate-radar.mjs",
     "emendas:migrate": "node scripts/migrate-emendas.mjs",
     "emendas:ingest": "node scripts/ingest-emendas.mjs",
+    "datas:migrate": "node scripts/migrate-datas-proposta.mjs",
     "radar:sync": "node scripts/radar/run.mjs",
     "radar:connect": "node scripts/radar/connect.mjs",
     "radar:connect-service": "node scripts/radar/connect-service.mjs",

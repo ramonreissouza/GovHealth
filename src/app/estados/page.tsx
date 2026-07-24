@@ -39,6 +39,8 @@ function formatDate(s: string) {
 // Status de uma licitação (mesma lógica dos KPIs): aberta se ainda dentro do prazo
 // de encerramento, ou — sem data — se a situação indicar processo em andamento.
 function isAbertaLic(l: LicitacaoEstadual): boolean {
+  // Status canônico (resultado homologado) prevalece — a data-limite é só informativa.
+  if (typeof l.aberto === 'boolean') return l.aberto
   if (l.dataEncerramento) return new Date(l.dataEncerramento) > new Date()
   const s = (l.situacao ?? '').toLowerCase()
   return s.includes('aberto') || s.includes('publicad') || s.includes('divulgad') || s.includes('recebendo')
@@ -448,7 +450,9 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
                 <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Proponente</th>
                 <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Item / Categoria</th>
                 <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Status</th>
-                <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Data</th>
+                <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-2 py-2.5">Publicação</th>
+                <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-2 py-2.5">Abertura</th>
+                <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-2 py-2.5">Fechamento</th>
                 <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Valor</th>
                 <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Fonte</th>
               </tr>
@@ -457,9 +461,7 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
               {filtered.map((l, idx) => {
                 const isOpen = expanded.has(l.id)
                 const itSt = itensMap[l.id]
-                const estaAberto = l.dataEncerramento
-                  ? new Date(l.dataEncerramento) > new Date()
-                  : l.situacao.toLowerCase().includes('aberto')
+                const estaAberto = isAbertaLic(l)
                 const isEstadual = (ENTIDADES_SAUDE[uf] ?? []).some(
                   (e) => l.proponente.toLowerCase().includes(e.toLowerCase())
                 )
@@ -526,14 +528,22 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
                         </span>
                       </td>
 
-                      {/* Data */}
-                      <td className="px-3 py-2.5 text-center">
-                        <div className="text-[10px] font-mono-custom text-muted">{formatDate(l.dataPublicacao)}</div>
-                        {l.dataEncerramento && (
-                          <div className={clsx('text-[9px] font-mono-custom', estaAberto ? 'text-emerald-400' : 'text-faint')}>
-                            até {formatDate(l.dataEncerramento)}
-                          </div>
-                        )}
+                      {/* Publicação */}
+                      <td className="px-2 py-2.5 text-center">
+                        <span className="text-[10px] font-mono-custom text-muted">{formatDate(l.dataPublicacao)}</span>
+                      </td>
+
+                      {/* Abertura (início do recebimento de propostas) */}
+                      <td className="px-2 py-2.5 text-center">
+                        <span className="text-[10px] font-mono-custom text-muted">{formatDate(l.dataAbertura ?? '')}</span>
+                      </td>
+
+                      {/* Fechamento (prazo final de propostas) */}
+                      <td className="px-2 py-2.5 text-center">
+                        <span className={clsx('text-[10px] font-mono-custom',
+                          l.dataEncerramento ? (estaAberto ? 'text-emerald-400' : 'text-faint') : 'text-faint')}>
+                          {formatDate(l.dataEncerramento ?? '')}
+                        </span>
                       </td>
 
                       {/* Valor */}
@@ -556,7 +566,7 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
 
                     {isOpen && (
                       <tr className="border-b border-subtle bg-bg3/40">
-                        <td colSpan={6} className="px-6 py-4">
+                        <td colSpan={8} className="px-6 py-4">
                           <div className="grid grid-cols-2 gap-6 text-[12px]">
                             <div className="space-y-2">
                               <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1">Objeto completo</div>
@@ -580,9 +590,15 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
                                 <span className="text-faint w-20 flex-shrink-0">Publicação</span>
                                 <span className="text-strong">{formatDate(l.dataPublicacao)}</span>
                               </div>
+                              {l.dataAbertura && (
+                                <div className="flex gap-2">
+                                  <span className="text-faint w-20 flex-shrink-0">Abertura</span>
+                                  <span className="text-strong">{formatDate(l.dataAbertura)}</span>
+                                </div>
+                              )}
                               {l.dataEncerramento && (
                                 <div className="flex gap-2">
-                                  <span className="text-faint w-20 flex-shrink-0">Encerramento</span>
+                                  <span className="text-faint w-20 flex-shrink-0">Fechamento</span>
                                   <span className={estaAberto ? 'text-emerald-400' : 'text-strong'}>
                                     {formatDate(l.dataEncerramento)}
                                   </span>
