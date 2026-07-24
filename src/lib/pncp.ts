@@ -33,6 +33,7 @@ export interface PNCPSearchParams {
   uf?: string
   tamanhoPagina?: number
   maxPaginasPorModalidade?: number
+  budgetMs?: number // teto de tempo de parede da coleta (best-effort); usado pelo cron
 }
 
 /**
@@ -121,10 +122,37 @@ export function isSaudeRelated(texto: string): boolean {
   return isSaude(texto)
 }
 
+// GET com retry em falhas transitórias (timeout/429/5xx). O endpoint /proposta das
+// modalidades de alto volume (pregão/dispensa) responde devagar e às vezes estoura o
+// timeout na 1ª página; sem retry, uma falha zerava a modalidade inteira. Retorna o
+// JSON, ou null quando esgotam as tentativas (o chamador tolera e segue).
+async function fetchPncpJson(url: string, timeoutMs = 25_000, maxRetry = 2): Promise<PNCPContratacoesResponse | null> {
+  for (let tentativa = 0; tentativa <= maxRetry; tentativa++) {
+    try {
+      const res = await fetch(url, {
+        headers: buildHeaders(),
+        next: { revalidate: 900 },
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      if (res.ok) return res.json()
+      // 4xx não-transitório (exceto 429): não adianta repetir.
+      if (res.status !== 429 && res.status < 500) return null
+    } catch {
+      /* timeout/rede — cai no backoff abaixo */
+    }
+    if (tentativa < maxRetry) await new Promise((r) => setTimeout(r, 1500 * (tentativa + 1)))
+  }
+  return null
+}
+
 /**
  * Licitações de saúde ABERTAS (recebendo proposta) — endpoint /contratacoes/proposta,
  * com prazo de encerramento no futuro (janela até +90 dias). É a fonte certa das
  * "oportunidades em aberto" (a /publicacao olha para trás e traz sobretudo encerradas).
+ *
+ * Robusto a lentidão do PNCP: cada página tem timeout amplo + retry, e uma página que
+ * falha em definitivo só interrompe AQUELA modalidade (as outras seguem) — nunca zera
+ * a coleta inteira. Idempotente por dedup no fim.
  */
 export async function buscarLicitacoesAbertas(params: PNCPSearchParams = {}): Promise<PNCPContratacao[]> {
   const hoje = new Date()
@@ -132,30 +160,29 @@ export async function buscarLicitacoesAbertas(params: PNCPSearchParams = {}): Pr
   const dataFinal = params.dataFinal ?? toPncpDate(fim)
   const tamanhoPagina = Math.min(params.tamanhoPagina ?? 50, 50)
   const maxPaginas = params.maxPaginasPorModalidade ?? 5
+  // Orçamento de tempo: para de abrir páginas novas quando estoura, garantindo que a
+  // função serverless retorne dentro do limite mesmo com o PNCP lento. Best-effort:
+  // o que já veio é aproveitado; o resto entra na próxima rodada (as abertas persistem).
+  const inicio = Date.now()
+  const budgetMs = params.budgetMs ?? 40_000
 
   const todas: PNCPContratacao[] = []
   await Promise.all(
     MODALIDADES_SAUDE.map(async (mod) => {
       for (let pagina = 1; pagina <= maxPaginas; pagina++) {
-        try {
-          const sp = new URLSearchParams({
-            dataFinal,
-            codigoModalidadeContratacao: String(mod),
-            pagina: String(pagina),
-            tamanhoPagina: String(tamanhoPagina),
-          })
-          if (params.uf) sp.set('uf', params.uf)
-          const res = await fetch(`${PNCP_BASE}/contratacoes/proposta?${sp}`, {
-            headers: buildHeaders(),
-            next: { revalidate: 900 },
-            signal: AbortSignal.timeout(15_000),
-          })
-          if (!res.ok) break
-          const resp: PNCPContratacoesResponse = await res.json()
-          const dados = resp.data ?? []
-          todas.push(...dados.filter((c) => isSaudeRelated(c.objetoCompra ?? '')))
-          if (dados.length < tamanhoPagina || pagina >= (resp.totalPaginas ?? 1)) break
-        } catch { break }
+        if (Date.now() - inicio > budgetMs) break
+        const sp = new URLSearchParams({
+          dataFinal,
+          codigoModalidadeContratacao: String(mod),
+          pagina: String(pagina),
+          tamanhoPagina: String(tamanhoPagina),
+        })
+        if (params.uf) sp.set('uf', params.uf)
+        const resp = await fetchPncpJson(`${PNCP_BASE}/contratacoes/proposta?${sp}`)
+        if (!resp) break // falha persistente nesta página → encerra só esta modalidade
+        const dados = resp.data ?? []
+        todas.push(...dados.filter((c) => isSaudeRelated(c.objetoCompra ?? '')))
+        if (dados.length < tamanhoPagina || pagina >= (resp.totalPaginas ?? 1)) break
       }
     })
   )
