@@ -14,6 +14,7 @@ import { parseValorBR, type EmendaDetalhe } from '@/lib/emendas'
 import type { EmendaRadar, Temperatura } from '@/lib/radar-verba'
 import { getTerritorio } from '@/lib/territorio'
 import TerritorioToggle from '@/components/ui/TerritorioToggle'
+import CapagBadge from '@/components/ui/CapagBadge'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const PORTAL_URL = 'https://portaldatransparencia.gov.br/emendas'
@@ -187,6 +188,7 @@ export default function RadarVerbaPage() {
                       <th className="text-left font-medium px-3 py-2.5">Município / UF</th>
                       <th className="text-left font-medium px-3 py-2.5">Autor</th>
                       <th className="text-left font-medium px-3 py-2.5">Subfunção</th>
+                      <th className="text-center font-medium px-3 py-2.5" title="Capacidade de pagamento (CAPAG do Tesouro) do ente beneficiário">CAPAG</th>
                       <th className="text-right font-medium px-3 py-2.5">Empenhado</th>
                       <th className="text-right font-medium px-3 py-2.5">Pago</th>
                       <th className="text-right font-medium px-3 py-2.5">Disponível</th>
@@ -220,6 +222,9 @@ export default function RadarVerbaPage() {
                                 <AlertTriangle size={11} className="text-amber" />
                               </span>
                             )}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <CapagBadge cap={e.capacidadePagamento} />
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono-custom text-muted">{formatBRL(e.empenhado)}</td>
                           <td className="px-3 py-2.5 text-right font-mono-custom text-muted">
@@ -287,6 +292,11 @@ export default function RadarVerbaPage() {
                     </span>
                     {selected.baixaRastreabilidade && (
                       <span className="inline-flex items-center gap-1 text-[10px] text-amber"><AlertTriangle size={11} /> PIX</span>
+                    )}
+                    {selected.capacidadePagamento && selected.capacidadePagamento.fonte !== 'na' && (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-muted" title="Capacidade de pagamento da instituição">
+                        <CapagBadge cap={selected.capacidadePagamento} /> capac. pgto
+                      </span>
                     )}
                   </div>
                   <h2 className="font-heading font-bold text-[16px] text-strong mt-1.5">{selected.municipio || '—'} / {selected.uf || '—'}</h2>

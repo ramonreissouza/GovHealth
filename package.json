@@ -24,6 +24,8 @@
     "emendas:migrate": "node scripts/migrate-emendas.mjs",
     "emendas:ingest": "node scripts/ingest-emendas.mjs",
     "datas:migrate": "node scripts/migrate-datas-proposta.mjs",
+    "capag:migrate": "node scripts/migrate-capag.mjs",
+    "capag:ingest": "node scripts/ingest-capag.mjs",
     "licite:migrate": "node scripts/migrate-licite.mjs",
     "licite:sync": "node scripts/licite/run.mjs",
     "radar:sync": "node scripts/radar/run.mjs",

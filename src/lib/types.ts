@@ -59,6 +59,13 @@ export interface Oportunidade {
     historico: number
     orgao: number
     competicao: number
+    capacidade?: number // capacidade de pagamento (CAPAG/Serasa); ausente em fontes sem o dado
+  }
+  // Capacidade de pagamento da instituição (CAPAG p/ público, Serasa p/ privado).
+  capacidadePagamento?: {
+    fonte: 'capag' | 'serasa' | 'na'
+    nota: 'A' | 'B' | 'C' | 'D' | null
+    label: string
   }
   valorEstimado: number
   janelaEmDias: number

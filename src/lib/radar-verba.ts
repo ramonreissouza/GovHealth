@@ -4,6 +4,8 @@
 // A emenda é um LEAD A QUALIFICAR, não venda garantida — a linguagem da UI reflete isso.
 
 import { parseValorBR, type EmendaParlamentar } from '@/lib/emendas'
+// Type-only: apagado na compilação, não puxa o runtime (pg) de capacidade-pagamento.
+import type { CapacidadePagamento } from '@/lib/capacidade-pagamento'
 
 export type Temperatura = 'quente' | 'morno' | 'frio'
 
@@ -21,9 +23,11 @@ export interface EmendaRadar {
   disponivel: number          // empenhado − pago = "dinheiro em cima da mesa"
   percentualExecutado: number // 0-100
   execucaoInformada: boolean  // false = Portal não informou pago/liquidado (≠ "pago 0")
-  score: number               // 0-100
+  score: number               // 0-100 (já com a capacidade de pagamento embutida)
   temperatura: Temperatura
   baixaRastreabilidade: boolean // emenda PIX / transferência especial
+  // Capacidade de pagamento da instituição (CAPAG do município/UF beneficiário).
+  capacidadePagamento?: { fonte: 'capag' | 'serasa' | 'na'; nota: 'A' | 'B' | 'C' | 'D' | null; label: string }
 }
 
 // O Portal às vezes NÃO informa liquidação/pagamento (campo vazio), o que é diferente
@@ -93,11 +97,14 @@ export function temperaturaDe(score: number): Temperatura {
 }
 
 // Converte a emenda crua (Portal) na linha do radar, com score e disponível.
-export function toEmendaRadar(e: EmendaParlamentar): EmendaRadar {
+// capacidade (opcional) entra como fator aditivo ponderado (15%): quando presente,
+// score = 0,85·base + 0,15·capacidade — a saúde fiscal do ente beneficiário pesa no lead.
+export function toEmendaRadar(e: EmendaParlamentar, capacidade?: CapacidadePagamento): EmendaRadar {
   const empenhado = parseValorBR(e.valorEmpenhado)
   const pago = parseValorBR(e.valorPago)
   const disponivel = Math.max(empenhado - pago, 0)
-  const score = calcularScore(empenhado, pago, e.subfuncao, e.tipoEmenda)
+  const base = calcularScore(empenhado, pago, e.subfuncao, e.tipoEmenda)
+  const score = capacidade && base > 0 ? Math.round(0.85 * base + 0.15 * capacidade.score) : base
   return {
     codigoEmenda: e.codigoEmenda,
     numeroEmenda: e.numeroEmenda,
@@ -115,5 +122,8 @@ export function toEmendaRadar(e: EmendaParlamentar): EmendaRadar {
     score,
     temperatura: temperaturaDe(score),
     baixaRastreabilidade: eBaixaRastreabilidade(e.tipoEmenda),
+    capacidadePagamento: capacidade
+      ? { fonte: capacidade.fonte, nota: capacidade.nota, label: capacidade.label }
+      : undefined,
   }
 }

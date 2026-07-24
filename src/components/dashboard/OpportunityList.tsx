@@ -7,6 +7,7 @@ import { Star } from 'lucide-react'
 import { Oportunidade } from '@/lib/types'
 import { clsx } from 'clsx'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
+import CapagBadge from '@/components/ui/CapagBadge'
 import type { OpportunitiesData } from './DashboardView'
 
 interface Props {
@@ -146,6 +147,9 @@ export default function OpportunityList({ data, loading, error, limit = 6 }: Pro
                 <span className="text-[10px] text-faint font-mono-custom">
                   {opp.municipio} / {opp.uf}
                 </span>
+                {opp.capacidadePagamento && opp.capacidadePagamento.fonte !== 'na' && (
+                  <CapagBadge cap={opp.capacidadePagamento} className="w-5 h-4 text-[9px]" />
+                )}
                 {lic?.modalidadeNome && (
                   <span className="text-[10px] text-faint">· {lic.modalidadeNome}</span>
                 )}

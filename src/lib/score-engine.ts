@@ -7,13 +7,21 @@ import { Convenio, Oportunidade, CategoriaEquipamento, TipoFornecimento } from '
 import { stripAccents, normalizeKey } from './text'
 import { diasAteVencimento } from './transferegov'
 import { isSaudeRelated } from './pncp'
+// Type-only: não puxa o runtime (pg) de capacidade-pagamento para o bundle.
+import type { CapacidadePagamento } from './capacidade-pagamento'
 
-// Pesos dos sub-scores (somam 1.0)
+// Score neutro de capacidade quando não há dado (federal/União ou ente sem CAPAG).
+// Espelha NEUTRO_SCORE de capacidade-pagamento.ts (inline p/ manter este módulo puro).
+const CAPACIDADE_NEUTRA = 60
+
+// Pesos dos sub-scores (somam 1.0). A capacidade de pagamento da instituição entra
+// como fator aditivo ponderado (15%), redistribuindo os pesos anteriores.
 const PESOS = {
-  convenio: 0.30,
-  historico: 0.28,
-  orgao: 0.22,
-  competicao: 0.20,
+  convenio: 0.26,
+  historico: 0.24,
+  orgao: 0.18,
+  competicao: 0.17,
+  capacidade: 0.15,
 }
 
 // Ciclos médios de compra por categoria (em meses)
@@ -38,6 +46,7 @@ export interface ScoreInput {
   concorrentePerdeuUltimoPregao?: boolean
   leitos?: number
   categoriaHospital?: 'federal' | 'estadual' | 'municipal' | 'privado'
+  capacidadePagamento?: CapacidadePagamento // CAPAG/Serasa da instituição pagadora
 }
 
 export interface ScoreResult {
@@ -47,6 +56,7 @@ export interface ScoreResult {
     historico: number
     orgao: number
     competicao: number
+    capacidade: number
   }
   probabilidadeEdital: number // 0-1
   janelaEmDias: number
@@ -65,12 +75,14 @@ export function calcularScore(input: ScoreInput): ScoreResult {
   const s2 = calcularSubScoreHistorico(input)
   const s3 = calcularSubScoreOrgao(input)
   const s4 = calcularSubScoreCompeticao(input)
+  const s5 = calcularSubScoreCapacidade(input)
 
   const score = Math.round(
     s1 * PESOS.convenio +
     s2 * PESOS.historico +
     s3 * PESOS.orgao +
-    s4 * PESOS.competicao
+    s4 * PESOS.competicao +
+    s5 * PESOS.capacidade
   )
 
   const probabilidadeEdital = score / 100
@@ -82,7 +94,7 @@ export function calcularScore(input: ScoreInput): ScoreResult {
 
   return {
     score,
-    subScores: { convenio: s1, historico: s2, orgao: s3, competicao: s4 },
+    subScores: { convenio: s1, historico: s2, orgao: s3, competicao: s4, capacidade: s5 },
     probabilidadeEdital,
     janelaEmDias,
     urgencia,
@@ -213,6 +225,13 @@ function calcularSubScoreCompeticao(input: ScoreInput): number {
   return clamp(score, 0, 100)
 }
 
+// Capacidade de pagamento da instituição pagadora (CAPAG A/B/C/D → 100/70/40/10;
+// Serasa p/ entes privados). Sem dado (federal/União, ente não classificado) = neutro,
+// para não penalizar nem inflar o lead. Resolvido pelo chamador (lookup no banco).
+function calcularSubScoreCapacidade(input: ScoreInput): number {
+  return clamp(input.capacidadePagamento?.score ?? CAPACIDADE_NEUTRA, 0, 100)
+}
+
 // --- Helpers ---
 
 function calcularJanela(input: ScoreInput, score: number): number {
@@ -279,6 +298,14 @@ function gerarExplicacao(
   if (dias > 0 && dias <= 90)
     ex.push(`Convênio vence em ${dias} dias — alta urgência de execução`)
 
+  const cap = input.capacidadePagamento
+  if (cap && cap.fonte !== 'na' && cap.nota) {
+    if (cap.nota === 'A' || cap.nota === 'B')
+      ex.push(`Instituição com boa capacidade de pagamento (${cap.label}) — baixo risco de calote`)
+    else
+      ex.push(`Atenção: capacidade de pagamento frágil (${cap.label}) — risco de atraso/inadimplência`)
+  }
+
   return ex
 }
 
@@ -289,16 +316,21 @@ function gerarExplicacao(
 export function gerarOportunidadesDeConvenios(
   convenios: Convenio[],
   contexto: Partial<ScoreInput> = {},
-  municipiosComEmendas: Set<string> = new Set()
+  municipiosComEmendas: Set<string> = new Set(),
+  // Resolver de capacidade de pagamento (injetado p/ manter este módulo puro/sem db).
+  // O chamador pré-carrega o índice CAPAG e passa idx.resolvePublico.
+  capacidadeDe?: (uf: string, municipio: string) => CapacidadePagamento,
 ): Oportunidade[] {
   return convenios
     .filter((c) => c.percentualExecutado >= 30 && c.valorTotal > 100_000)
     .map((convenio) => {
       const categoria = inferirCategoria(convenio.objeto)
+      const capacidadePagamento = capacidadeDe?.(convenio.uf, convenio.municipio)
       const input: ScoreInput = {
         convenio,
         categoriaEquipamento: categoria,
         ...contexto,
+        capacidadePagamento,
         temEmendaParlamentar:
           contexto.temEmendaParlamentar ||
           (municipiosComEmendas.size > 0 &&
@@ -319,6 +351,9 @@ export function gerarOportunidadesDeConvenios(
         categoria,
         score: resultado.score,
         subScores: resultado.subScores,
+        capacidadePagamento: capacidadePagamento
+          ? { fonte: capacidadePagamento.fonte, nota: capacidadePagamento.nota, label: capacidadePagamento.label }
+          : undefined,
         valorEstimado: Math.round(convenio.valorTotal * 0.6), // estimativa
         janelaEmDias: resultado.janelaEmDias,
         urgencia: resultado.urgencia,

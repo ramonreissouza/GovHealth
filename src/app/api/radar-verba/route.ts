@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buscarEmendasSaudeAno, type EmendaParlamentar } from '@/lib/emendas'
 import { lerEmendasSaude } from '@/lib/emendas-ingest'
 import { toEmendaRadar, type EmendaRadar } from '@/lib/radar-verba'
+import { carregarIndiceCapag } from '@/lib/capacidade-pagamento'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
 export const runtime = 'nodejs'
@@ -51,7 +52,12 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    let emendas: EmendaRadar[] = brutas.map(toEmendaRadar)
+    // Capacidade de pagamento (CAPAG) do ente beneficiário entra no score da emenda.
+    // Índice carregado em lote (cacheado); resolvido por UF/município da localidade do gasto.
+    const capagIdx = await carregarIndiceCapag()
+    let emendas: EmendaRadar[] = brutas.map((e) =>
+      toEmendaRadar(e, capagIdx.resolveLocalidade(e.localidadeDoGasto)),
+    )
 
     // Filtros
     if (ufs?.length) emendas = emendas.filter((e) => ufs.includes(e.uf))

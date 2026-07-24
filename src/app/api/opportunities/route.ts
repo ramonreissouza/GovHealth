@@ -12,6 +12,7 @@ import { query } from '@/lib/db'
 import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
+import { carregarIndiceCapag, type IndiceCapag } from '@/lib/capacidade-pagamento'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -82,6 +83,21 @@ function montarOportunidade(input: {
     licitacaoRelacionada: input.licitacao,
     createdAt: agora,
     updatedAt: agora,
+  }
+}
+
+// Enriquece a oportunidade com a capacidade de pagamento (CAPAG) da instituição e
+// mistura como fator aditivo ponderado (15%) no score: score' = 0,85·base + 0,15·cap.
+// Sem dado (federal/União ou ente sem CAPAG) → neutro, não distorce o lead.
+function aplicarCapacidade(o: Oportunidade, idx: IndiceCapag): Oportunidade {
+  const cap = idx.resolvePublico(o.uf, o.municipio)
+  const score = Math.round(0.85 * o.score + 0.15 * cap.score)
+  return {
+    ...o,
+    score,
+    status: score >= 75 ? 'quente' : score >= 50 ? 'morno' : 'frio',
+    subScores: { ...o.subScores, capacidade: cap.score },
+    capacidadePagamento: { fonte: cap.fonte, nota: cap.nota, label: cap.label },
   }
 }
 
@@ -394,6 +410,16 @@ export async function GET(req: NextRequest) {
       }
       serieMensal = Object.entries(mAcc).map(([mes, v]) => ({ mes, ...v })).sort((a, b) => a.mes.localeCompare(b.mes))
       porCategoria = Object.entries(cAcc).map(([categoria, v]) => ({ categoria, ...v })).sort((a, b) => b.count - a.count)
+    }
+
+    // Capacidade de pagamento (CAPAG): enriquece o score de cada lead com a saúde
+    // fiscal do órgão pagador. Índice carregado em lote (cacheado) para as UFs presentes.
+    try {
+      const ufsPresentes = [...new Set(oportunidades.map((o) => o.uf).filter((u) => u && u !== 'N/D'))]
+      const capagIdx = await carregarIndiceCapag(ufsPresentes.length ? ufsPresentes : undefined)
+      oportunidades = oportunidades.map((o) => aplicarCapacidade(o, capagIdx))
+    } catch (capErr) {
+      console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
     }
 
     // Dedup por município+categoria+valor

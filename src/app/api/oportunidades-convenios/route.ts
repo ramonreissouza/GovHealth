@@ -9,6 +9,7 @@ import {
   getMunicipiosComEmendasSaude,
 } from '@/lib/transferegov'
 import { gerarOportunidadesDeConvenios } from '@/lib/score-engine'
+import { carregarIndiceCapag } from '@/lib/capacidade-pagamento'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
 export const runtime = 'nodejs'
@@ -35,7 +36,14 @@ export async function GET(req: NextRequest) {
       ? await getMunicipiosComEmendasSaude(uf)
       : new Set<string>()
 
-    let oportunidades = gerarOportunidadesDeConvenios(convenios, {}, municipiosComEmendas)
+    // Capacidade de pagamento (CAPAG) — índice carregado em lote (1 query) para as UFs
+    // relevantes; o score-engine consome via resolver, sem N consultas ao banco.
+    const capagIdx = await carregarIndiceCapag(uf ? [uf] : undefined)
+
+    let oportunidades = gerarOportunidadesDeConvenios(
+      convenios, {}, municipiosComEmendas,
+      (u, m) => capagIdx.resolvePublico(u, m),
+    )
     if (minScore > 0) oportunidades = oportunidades.filter((o) => o.score >= minScore)
     oportunidades = oportunidades.slice(0, limit)
 
