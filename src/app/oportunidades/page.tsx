@@ -111,12 +111,23 @@ function ItemsRow({ opp, preloaded }: { opp: Oportunidade; preloaded?: ItemPNCP[
             <span className="text-[10px] font-mono-custom text-faint flex-shrink-0 whitespace-nowrap mt-0.5">
               {item.quantidade} {item.unidadeMedida}
             </span>
-            <span className="text-[11px] font-mono-custom font-bold text-accent flex-shrink-0 whitespace-nowrap mt-0.5 w-24 text-right">
-              {formatBRL(item.quantidade * item.valorUnitarioEstimado)}
+            {/* Valor UNITÁRIO (total ÷ quantidade) — base de comparação justa com o
+                Compras.gov, cuja referência é sempre por unidade. */}
+            <span className="flex-shrink-0 whitespace-nowrap mt-0.5 w-24 text-right leading-tight">
+              <span className="block text-[11px] font-mono-custom font-bold text-strong">
+                {formatBRL(item.quantidade > 0 ? (item.quantidade * item.valorUnitarioEstimado) / item.quantidade : item.valorUnitarioEstimado)}
+              </span>
+              <span className="block text-[8px] font-mono-custom text-faint uppercase tracking-wide">unitário</span>
+            </span>
+            <span className="flex-shrink-0 whitespace-nowrap mt-0.5 w-24 text-right leading-tight">
+              <span className="block text-[11px] font-mono-custom font-bold text-accent">
+                {formatBRL(item.quantidade * item.valorUnitarioEstimado)}
+              </span>
+              <span className="block text-[8px] font-mono-custom text-faint uppercase tracking-wide">total</span>
             </span>
             {/* Preço de referência à direita — a tela tem espaço aqui. */}
             <div className="flex-shrink-0 w-[260px]">
-              <PrecoRefItem descricao={item.descricao} valorUnitario={item.valorUnitarioEstimado} uf={opp.uf} />
+              <PrecoRefItem descricao={item.descricao} valorUnitario={item.valorUnitarioEstimado} uf={opp.uf} unidadeEdital={item.unidadeMedida} />
             </div>
           </div>
         ))}

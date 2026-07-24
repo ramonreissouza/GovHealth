@@ -362,8 +362,19 @@ export async function buscarMaterialCATMAT(
 
 export function calcularEstatisticas(precos: PrecoPainelItem[]): EstatisticaPrecos {
   if (precos.length === 0) {
-    return { total: 0, valorMin: 0, valorMax: 0, valorMedio: 0, valorMediano: 0, fornecedoresUnicos: 0, orgaosUnicos: 0 }
+    return { total: 0, valorMin: 0, valorMax: 0, valorMedio: 0, valorMediano: 0, fornecedoresUnicos: 0, orgaosUnicos: 0, unidades: [] }
   }
+
+  // Distribuição das unidades de fornecimento (mais frequente primeiro) — expõe o
+  // descasamento de unidade que, sem CATMAT, distorce a comparação por unidade.
+  const contUnidades = new Map<string, number>()
+  for (const p of precos) {
+    const u = (p.unidadeMedida ?? '').trim().toUpperCase()
+    if (u) contUnidades.set(u, (contUnidades.get(u) ?? 0) + 1)
+  }
+  const unidades = [...contUnidades.entries()]
+    .map(([sigla, n]) => ({ sigla, n }))
+    .sort((a, b) => b.n - a.n)
 
   const valores = precos
     .map((p) => p.valorUnitario)
@@ -386,6 +397,7 @@ export function calcularEstatisticas(precos: PrecoPainelItem[]): EstatisticaPrec
     valorMediano: Math.round(mediana),
     fornecedoresUnicos: new Set(precos.map((p) => p.cnpjFornecedor).filter(Boolean)).size,
     orgaosUnicos: new Set(precos.map((p) => p.nomeOrgao).filter(Boolean)).size,
+    unidades,
   }
 }
 

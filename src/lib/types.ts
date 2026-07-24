@@ -193,6 +193,11 @@ export interface EstatisticaPrecos {
   valorMediano: number
   fornecedoresUnicos: number
   orgaosUnicos: number
+  // Unidades de fornecimento predominantes nos preços do Compras.gov (mais frequentes
+  // primeiro). Serve para tornar VISÍVEL o descasamento de unidade vs. o edital
+  // (ex.: "CX C/100" no Compras.gov × "UN" no edital) — principal causa de referência
+  // aparentemente distante quando não há CATMAT para casar exatamente.
+  unidades?: { sigla: string; n: number }[]
 }
 
 // --- CNES types ---
