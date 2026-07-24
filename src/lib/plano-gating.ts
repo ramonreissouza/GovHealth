@@ -9,6 +9,7 @@
 // vê Pro; trial do Essencial vê só o Essencial). Master tem acesso total.
 
 export const ROTAS_PRO: string[] = [
+  '/radar',
   '/concorrentes',
   '/concorrentes-estado',
   '/breakdown',

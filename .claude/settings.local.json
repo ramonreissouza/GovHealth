@@ -37,7 +37,27 @@
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(node scripts/migrate-tipo-fornecimento.mjs)",
       "Bash(grep -v \"SECURITY WARNING\\\\|treated as aliases\\\\|prepare for this\\\\|want the current\\\\|want libpq\\\\|postgresql.org\\\\|libpq SSL\\\\|trace-warnings\\\\|^$\\\\|^-\\\\|^To \\\\|^If you\")",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npm install *)",
+      "Bash(node scripts/etl-refresh.mjs)",
+      "Bash(ETL_UF=\"RJ,MG,RS,PR,BA,SC,GO,PE,CE,DF,ES,PA,MT,MS,AM,MA,RN,PB,PI,AL,SE,RO,TO,AC,AP,RR\" node scripts/etl-refresh.mjs)",
+      "Bash(node --check scripts/etl-backfill.mjs)",
+      "Bash(node --check scripts/etl-refresh.mjs)",
+      "PowerShell(vercel *)",
+      "Bash(node scripts/licite/_test.mjs)",
+      "Bash(node scripts/migrate-licite.mjs)",
+      "Bash(ETL_DIAS=60 node scripts/backfill-datas.mjs)",
+      "WebFetch(domain:www.tesourotransparente.gov.br)",
+      "Bash(node scripts/licite/run.mjs)",
+      "Bash(node scripts/_probe-capag.mjs)",
+      "Bash(tail -4 \"C:\\\\Users\\\\souza\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean\\\\40489f39-eedc-4ad6-a7aa-ee078cfbe27c\\\\tasks\\\\bl644dper.output\")",
+      "Bash(powershell -NoProfile -Command 'if \\(Get-CimInstance Win32_Process -Filter \"Name='\\\\''node.exe'\\\\''\" | Where-Object { $_.CommandLine -match '\\\\''backfill-datas'\\\\'' }\\) { '\\\\''backfill-datas VIVO'\\\\'' } else { '\\\\''backfill-datas terminou'\\\\'' }')",
+      "Bash(grep -vE \"SECURITY|sslmode|libpq|next major|current behavior|postgresql|trace-warnings|these modes|To prepare|want the|See https|^$\")",
+      "Bash(node scripts/_verify-capag.mjs)",
+      "PowerShell(Get-CimInstance *)",
+      "Bash(git rev-list *)",
+      "Bash(git pull *)",
+      "Bash(node scripts/_verify-capag-prod.mjs)"
     ]
   }
 }

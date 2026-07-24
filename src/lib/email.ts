@@ -44,6 +44,55 @@ function moldura(titulo: string, corpo: string): string {
 const btn = (href: string, label: string) =>
   `<a href="${href}" style="display:inline-block;margin-top:14px;background:#2f80ed;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px;">${label}</a>`
 
+/** Formata número em BRL (para os e-mails do Radar). */
+function brl(v?: number | null): string {
+  if (v == null) return '—'
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+}
+
+/**
+ * RADAR — Alerta de NOVA LICITAÇÃO relevante ao perfil do fornecedor.
+ * Disparado pela seleção automática (lib/radar/selecao) quando surge um processo
+ * que casa com as preferências (UFs/categorias/termos/portfólio).
+ */
+export async function enviarNovaLicitacaoRadar(params: {
+  to: string; nome?: string | null; objeto: string; uf?: string | null; municipio?: string | null;
+  valor?: number | null; motivo?: string | null; link: string
+}): Promise<{ enviado: boolean; motivo?: string }> {
+  const local = [params.municipio, params.uf].filter(Boolean).join(' / ')
+  const corpo = `
+    <p style="font-size:14px;color:#334155;margin:0 0 12px;">${params.nome ? params.nome + ', ' : ''}o Radar encontrou uma <strong>nova licitação</strong> que combina com o seu perfil:</p>
+    <table style="width:100%;font-size:13px;color:#334155;border-collapse:collapse;margin:0 0 8px;">
+      <tr><td style="padding:4px 0;color:#64748b;width:90px;">Objeto</td><td style="padding:4px 0;font-weight:600;">${params.objeto || '—'}</td></tr>
+      ${local ? `<tr><td style="padding:4px 0;color:#64748b;">Local</td><td style="padding:4px 0;">${local}</td></tr>` : ''}
+      <tr><td style="padding:4px 0;color:#64748b;">Valor est.</td><td style="padding:4px 0;">${brl(params.valor)}</td></tr>
+      ${params.motivo ? `<tr><td style="padding:4px 0;color:#64748b;">Combinou por</td><td style="padding:4px 0;">${params.motivo}</td></tr>` : ''}
+    </table>
+    ${btn(params.link, 'Ver a licitação')}
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Você recebe este alerta porque a licitação corresponde às preferências do seu perfil no GovHealth. Ajuste-as em Perfil & Preferências.</p>`
+  return enviar(params.to, `📡 Nova licitação para o seu perfil`, moldura('Nova licitação no Radar', corpo))
+}
+
+/**
+ * RADAR — Alerta de NOVA MENSAGEM/convocação de chat em processo monitorado.
+ * Disparado pela captura (worker) → cron radar-notify.
+ */
+export async function enviarAlertaRadar(params: {
+  to: string; nome?: string | null; processo: string; autor?: string | null; trecho: string;
+  categorias?: string[]; link: string
+}): Promise<{ enviado: boolean; motivo?: string }> {
+  const tags = (params.categorias ?? []).length
+    ? `<p style="margin:0 0 10px;">${params.categorias!.map((c) => `<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-right:6px;">${c}</span>`).join('')}</p>`
+    : ''
+  const corpo = `
+    <p style="font-size:14px;color:#334155;margin:0 0 10px;">${params.nome ? params.nome + ', ' : ''}há uma <strong>nova mensagem</strong> no chat do processo <strong>${params.processo}</strong>${params.autor ? ` (${params.autor})` : ''}:</p>
+    ${tags}
+    <blockquote style="margin:0 0 12px;padding:10px 14px;background:#f8fafc;border-left:3px solid #2f80ed;font-size:13px;color:#334155;">${params.trecho}</blockquote>
+    ${btn(params.link, 'Abrir no Radar')}
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Responda no portal dentro do prazo. Este alerta é do monitoramento de chat do GovHealth.</p>`
+  return enviar(params.to, `🔔 Nova mensagem — ${params.processo}`, moldura('Mensagem no chat da licitação', corpo))
+}
+
 /** Formata 'YYYY-MM-DD' → 'DD/MM/YYYY'. */
 function dataBR(iso?: string | null): string {
   if (!iso) return ''

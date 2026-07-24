@@ -1,0 +1,104 @@
+Siga rigorosamente as etapas abaixo:
+1. ANÁLISE FORMAL E LEGAL
+* Verifique a conformidade do edital com a Lei 14.133/2021 e demais normas aplicáveis
+* Identifique ilegalidades, cláusulas restritivas, omissões e ambiguidades
+* Aponte possíveis violações aos princípios da legalidade, isonomia, competitividade e julgamento objetivo
+* Indique fundamentos legais específicos para cada apontamento
+2. ANÁLISE TÉCNICA DO OBJETO
+* Avalie se o objeto está claramente definido
+* Identifique excesso de especificações (direcionamento) ou falta de precisão (risco de execução)
+* Verifique inconsistências entre termo de referência, edital e anexos
+3. ANÁLISE DE EXIGÊNCIAS DE HABILITAÇÃO
+* Examine exigências de qualificação técnica, econômico-financeira e jurídica
+* Identifique exigências ilegais, excessivas ou restritivas
+* Avalie riscos de inabilitação indevida
+* Sugira ajustes estratégicos para viabilizar a participação do licitante
+4. ANÁLISE DE CRITÉRIOS DE JULGAMENTO
+* Verifique o tipo de licitação e critério adotado (menor preço, técnica e preço, etc.)
+* Identifique subjetividade indevida ou critérios mal definidos
+* Avalie riscos de manipulação ou julgamento arbitrário
+5. ANÁLISE DE PRAZOS E CONDIÇÕES CONTRATUAIS
+* Avalie prazos de execução, entrega e vigência
+* Identifique cláusulas abusivas ou desproporcionais
+* Verifique matriz de riscos (quando aplicável)
+* Analise penalidades e sua proporcionalidade
+6. ANÁLISE DE RISCOS PARA O LICITANTE
+* Liste todos os riscos jurídicos, financeiros e operacionais
+* Classifique os riscos por grau (alto, médio, baixo)
+* Indique estratégias de mitigação
+7. OPORTUNIDADES E ESTRATÉGIAS
+* Identifique oportunidades competitivas no edital
+* Sugira estratégias para aumentar chances de vitória
+* Aponte pontos que podem ser explorados em impugnações ou pedidos de esclarecimento
+8. IMPUGNAÇÃO E QUESTIONAMENTOS
+* Liste todos os pontos passíveis de impugnação
+* Redija fundamentos objetivos para cada questionamento
+* Indique prioridade (crítico, relevante, opcional)
+
+9. CHECKLIST FINAL
+* Crie um checklist completo para o licitante validar antes de participar
+10. CONCLUSÃO EXECUTIVA
+* Apresente um parecer final claro indicando:
+ * Se vale a pena participar
+ * Principais riscos
+ * Principais vantagens
+REGRAS DE EXECUÇÃO
+* Seja extremamente rigoroso, crítico e detalhista
+* Não faça suposições sem base no edital
+* Sempre fundamente juridicamente
+* Estruture a resposta de forma organizada e profissional
+* Utilize linguagem técnica, clara e objetiva
+* Aja como se sua análise fosse auditada por um Tribunal de Contas
+MÓDULO DE IMPUGNAÇÃO AUTOMÁTICA
+11. DETECÇÃO AUTOMÁTICA DE IMPUGNAÇÃO
+Com base na análise realizada, identifique TODOS os pontos do edital que:
+* violem a Lei nº 14.133/2021
+* restrinjam a competitividade
+* apresentem vícios de legalidade
+* contenham exigências desproporcionais ou ilegais
+* apresentem omissões relevantes
+Para cada ponto, classifique:
+* Grau de relevância: (Crítico / Alto / Médio / Baixo)
+* Probabilidade de êxito: (Alta / Média / Baixa)
+* Impacto no resultado da licitação
+12. DECISÃO ESTRATÉGICA AUTOMÁTICA
+Com base nos achados, responda objetivamente:
+* Vale a pena impugnar? (Sim/Não)
+* A impugnação é:
+ * Total (compromete o edital inteiro)
+ * Parcial (pontos específicos)
+* Melhor estratégia:
+ * Impugnação formal
+ * Pedido de esclarecimento
+ * Participar sem questionar
+ * Combinação dos anteriores
+Justifique tecnicamente.
+13. GERAÇÃO AUTOMÁTICA DA IMPUGNAÇÃO
+Elabore a peça completa de impugnação, com estrutura profissional:
+Estrutura obrigatória:
+1. Endereçamento correto (órgão licitante)
+2. Identificação do processo/licitação
+3. Qualificação do impugnante (genérica, adaptável)
+4. Tempestividade
+5. Síntese do edital
+6. FUNDAMENTAÇÃO JURÍDICA (núcleo principal):
+ * Um tópico para cada irregularidade
+ * Indicação expressa da violação legal
+ * Fundamentação na Lei 14.133/2021
+ * Quando possível, referência a entendimentos de Tribunais de Contas
+7. Pedido:
+ * Correção específica de cada cláusula
+ * Suspensão do certame (se aplicável)
+8. Fechamento formal
+9. REDAÇÃO ESTRATÉGICA
+* Linguagem técnica, firme e respeitosa
+* Argumentação lógica e persuasiva
+* Evitar excesso de subjetividade
+* Foco em ilegalidade + impacto na competitividade
+* Escrita pronta para protocolo imediato
+15. VERSÃO EXECUTIVA (DIFERENCIAL)
+Apresente também:
+* Resumo da impugnação em 5 bullets
+* Lista dos pontos mais fortes
+* Riscos de indeferimento
+* Sugestão de postura após resposta da Administração

@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle, Menu, X,
-  Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords, CreditCard,
+  Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords, CreditCard, Radar,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
@@ -48,6 +48,7 @@ const NAV_STATIC = [
       { href: '/contratos', label: 'Contratos.gov', icon: FileSignature, badge: null as string | null },
       { href: '/estados', label: 'Portais Estaduais', icon: Globe2, badge: '27' as string | null },
       { href: '/radar-verba', label: 'Radar de Verba', icon: Flame, badge: 'novo' as string | null },
+      { href: '/radar', label: 'Radar de Chat', icon: Radar, badge: 'novo' as string | null },
       { href: '/alertas', label: 'Alertas', icon: Bell, badge: null as string | null },
     ],
   },

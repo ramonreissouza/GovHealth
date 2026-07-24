@@ -10,6 +10,7 @@ const KEY_TO_CHAVE: Record<string, string> = {
   'govhealth:crm:deals': 'crm',
   'govhealth:alertas:configs': 'alertas-config',
   'govhealth:alertas:notifs': 'alertas-notif',
+  'govhealth:preferences': 'perfil',
 }
 const UID_KEY = 'govhealth:__uid'
 export const HYDRATED_EVENT = 'govhealth:hydrated'

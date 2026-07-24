@@ -1,23 +1,26 @@
-// scripts/etl-refresh.mjs — REFRESH INCREMENTAL (quinzenal) do ETL do PNCP.
+// scripts/etl-refresh.mjs — REFRESH INCREMENTAL (a cada 3 dias) do ETL do PNCP.
 //
 // Diferente do etl-overnight (scan histórico de 12 meses com cap por UF), este
 // pega só a janela RECENTE (default 21 dias) em TODAS as 27 UFs, SEM cap, para
 // capturar as contratações de saúde novas/atualizadas desde o último refresh.
 // É idempotente (UPSERT): contratos já no banco são pulados barato (jaProcessada).
 //
-// Janela de 21 dias cobre a cadência de 14 dias + 7 de folga p/ publicações
-// atrasadas. Checkpoint é isolado por janela (--dias), então não conflita com o
-// scan histórico.
+// Janela de 21 dias cobre a cadência de 3 dias com folga ampla p/ publicações
+// atrasadas do PNCP. Checkpoint é isolado por janela (--dias), então não conflita
+// com o scan histórico.
+//
+// ORDEM DAS UFs: dos MAIORES estados (mais contratações de saúde) para os menores,
+// então uma interrupção preserva primeiro o que mais importa (SP, RJ, MG…).
 //
 // Uso:  node scripts/etl-refresh.mjs
-//   Ajuste fino por env: ETL_DIAS=21  ETL_DELAY=120  ETL_UF=AC,AL,...
+//   Ajuste fino por env: ETL_DIAS=21  ETL_DELAY=120  ETL_UF=SP,RJ,...
 //
-// Pensado para rodar via Windows Task Scheduler a cada 2 semanas.
+// Pensado para rodar via Windows Task Scheduler a cada 3 dias.
 
 import { spawn } from 'node:child_process'
 
-// 27 UFs (todas).
-const UF = process.env.ETL_UF ?? 'AC,AL,AP,AM,BA,CE,DF,ES,GO,MA,MG,MS,MT,PA,PB,PE,PI,PR,RJ,RN,RO,RR,RS,SC,SE,SP,TO'
+// 27 UFs, priorizadas dos maiores estados para os menores (economia/volume de saúde).
+const UF = process.env.ETL_UF ?? 'SP,RJ,MG,RS,PR,BA,SC,GO,PE,CE,DF,ES,PA,MT,MS,AM,MA,RN,PB,PI,AL,SE,RO,TO,AC,AP,RR'
 const DIAS = process.env.ETL_DIAS ?? '21'
 const DELAY = process.env.ETL_DELAY ?? '120'
 const NOCAP = '99999999' // sem teto: pega tudo que for saúde na janela

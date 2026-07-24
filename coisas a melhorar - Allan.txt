@@ -1,0 +1,34 @@
+no meu portfolio, fazer com que apareca pre-filtros estados, emendas que possam envolver seus produtos para ja aparecer/receber email quando tiver relacao de oportunidade com o que trabalho. colocar alertas
+
+parte do score: capacidade de pagamento, colocar junto do calculo (Nota A, Nota B, etc). verificar com o pessoal do financeiro de onde eles tiram (instituicao)
+
+em vencedores, o filtro esta com problema de fugir o filtro. colocar filtro por ano. ta faltando coisas da Sesab para a Prime
+
+Fornecedores. acho que tela esta puxando muita pouca coisa em 2026. POderia rodar mensal para atualizar.
+
+focar em ter licitacoes que estao aparecendo a todo momento, atualizar DIARIAMENTE.
+
+em breakdown, colocar filtro por estado.
+
+em portal estadual: colocar data de lancamento. transparencia.ba.gov.br
+
+Alertas: ao clicar no lead de notificacao, poder direcionar para o lead
+
+Contratos.gov (MIndray - 09342946000100) - nao esta puxando nada. tem 55Mi de contratos com a Sesab, e aqui so tem 5-6Mi
+
+puxar mais base de dados, para cobrir mais coisas (processos ganhos, para nao dar mismatch e perder a confianca dos clientes)
+
+PLataformas de licitacao:
+compras.net
+do banco do brasil
+
+Seven imports: 1mil por usuario (so para Hospmult)
++ plataforma de licitacao (cada um ta pagando o seu)
+
+Vender para empresa de consultoria para posicionamento de mercado (quando uma empresa quer vir pro Brasil) - Allan para nos passar quais consultorias
+
+____
+Melhorar base de dados. (URGENTE) Garantir que os editais estao sempre aparecendo. COncorrentes esta batendo com a realidade
+Plataforma ja esta muito boa.
+implementar o chatbot
+Chamar equipe do ALlan de licitacao para participar da proxima reuniao

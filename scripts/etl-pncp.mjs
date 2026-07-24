@@ -40,6 +40,13 @@ const MAX_UF = Object.fromEntries(String(args.maxuf ?? '').split(',').map((s) =>
   .map((p) => { const [u, n] = p.split(':'); return [u.toUpperCase(), Number(n)] }))
 const maxDaUf = (uf) => MAX_UF[uf] ?? MAX_CONTRATACOES
 const DELAY = Number(args.delay ?? 400)
+// Range de datas EXPLÍCITO (YYYYMMDD) — usado no backfill fatiado por ano; o PNCP
+// limita a janela a ~1 ano por consulta. Sobrepõe --dias/--meses quando presente.
+const DATA_INI = args.dataInicial ? String(args.dataInicial).replace(/-/g, '') : null
+const DATA_FIM = args.dataFinal ? String(args.dataFinal).replace(/-/g, '') : null
+// Teto de páginas por UF/modalidade (paginação profunda). Configurável p/ varrer
+// anos inteiros de estados grandes (ex.: SP/2024 tem ~1.400 páginas).
+const MAXPAG = Number(args.maxpag ?? 400)
 
 const CONSULTA = 'https://pncp.gov.br/api/consulta/v1'
 const PNCP = 'https://pncp.gov.br/api/pncp/v1'
@@ -48,11 +55,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const yyyymmdd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '')
 
 const hoje = new Date()
-const inicio = new Date(hoje)
-if (DIAS) inicio.setDate(hoje.getDate() - DIAS)
-else inicio.setMonth(hoje.getMonth() - MESES)
-const dataInicial = yyyymmdd(inicio)
-const dataFinal = yyyymmdd(hoje)
+let dataInicial, dataFinal
+if (DATA_INI && DATA_FIM) {
+  dataInicial = DATA_INI; dataFinal = DATA_FIM // range explícito (backfill por ano)
+} else {
+  const inicio = new Date(hoje)
+  if (DIAS) inicio.setDate(hoje.getDate() - DIAS)
+  else inicio.setMonth(hoje.getMonth() - MESES)
+  dataInicial = yyyymmdd(inicio)
+  dataFinal = yyyymmdd(hoje)
+}
 
 // Retorna o JSON, ou null SÓ quando o servidor responde 404 (recurso inexistente).
 // Erros transitórios (rede, timeout, 429, 5xx) são retentados com backoff; se
@@ -119,16 +131,21 @@ async function upsertContratacao(c) {
   await dbQuery(
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
-       data_publicacao, situacao_id, categoria_saude)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       data_publicacao, data_abertura_proposta, data_encerramento_proposta, situacao_id, categoria_saude)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (numero_controle_pncp) DO UPDATE SET
        valor_total_estimado = EXCLUDED.valor_total_estimado,
+       data_abertura_proposta = EXCLUDED.data_abertura_proposta,
+       data_encerramento_proposta = EXCLUDED.data_encerramento_proposta,
        situacao_id = EXCLUDED.situacao_id,
        categoria_saude = EXCLUDED.categoria_saude`,
     [c.numeroControlePNCP, c.orgaoEntidade?.cnpj ?? '', c.orgaoEntidade?.razaoSocial ?? null,
      c.unidadeOrgao?.municipioNome ?? null, c.unidadeOrgao?.ufSigla ?? UF, c.modalidadeNome ?? null,
      c.objetoCompra ?? null, c.anoCompra ?? null, c.sequencialCompra ?? null, c.valorTotalEstimado ?? null,
-     (c.dataPublicacaoPncp ?? '').slice(0, 10) || null, c.situacaoCompraId ?? null, categoria(c.objetoCompra)],
+     (c.dataPublicacaoPncp ?? '').slice(0, 10) || null,
+     (c.dataAberturaProposta ?? '').slice(0, 10) || null,
+     (c.dataEncerramentoProposta ?? '').slice(0, 10) || null,
+     c.situacaoCompraId ?? null, categoria(c.objetoCompra)],
   )
 }
 
@@ -192,14 +209,18 @@ for (const ufAtual of UF_LIST) {
   console.log(`\n── UF ${UF} ── (${nContrat} já no banco · alvo ${capUF})`)
 
   for (const mod of MODALIDADES) {
-    // No modo incremental (--dias), o checkpoint é isolado pela janela (dataInicial),
-    // pra não herdar a paginação do scan histórico (chave estável uf:UF:mod:mod).
-    const chave = DIAS ? `uf:${UF}:mod:${mod}:d${dataInicial}` : `uf:${UF}:mod:${mod}`
+    // Checkpoint isolado por JANELA para não herdar paginação de outra profundidade:
+    //  - incremental (--dias): chave por data inicial (uf:UF:mod:M:dYYYYMMDD)
+    //  - histórico (--meses): chave por profundidade em meses (uf:UF:mod:M:mNN),
+    //    estável entre dias (o dataInicial só desliza 1 dia/dia — irrelevante no
+    //    backfill; UPSERT/jaProcessada cobrem a sobreposição).
+    const chave = (DATA_INI && DATA_FIM) ? `uf:${UF}:mod:${mod}:r${dataInicial}_${dataFinal}`
+      : DIAS ? `uf:${UF}:mod:${mod}:d${dataInicial}` : `uf:${UF}:mod:${mod}:m${MESES}`
     let pagina = (await lerCheckpoint(chave)) + 1
     if (pagina > 1) console.log(`  retomando ${UF}/mod${mod} da página ${pagina}`)
 
     let falhasSeguidas = 0
-    for (; pagina <= 400; pagina++) {
+    for (; pagina <= MAXPAG; pagina++) {
       const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf: UF, pagina: String(pagina), tamanhoPagina: '50' })
       let resp
       try {

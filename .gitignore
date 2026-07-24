@@ -9,3 +9,15 @@ dist/
 .DS_Store
 .vercel
 tsconfig.tsbuildinfo
+
+.vercel
+
+# Modelo de OCR baixado pelo tesseract.js (worker Licitações-e) — não versionar
+*.traineddata
+scripts/licite/licite.log
+
+# Mídia/documentos soltos na raiz (screenshots, avaliações) — arquivos locais, não código
+/*.png
+/*.jpeg
+/*.jpg
+/*.docx

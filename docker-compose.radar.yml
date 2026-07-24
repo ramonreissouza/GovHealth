@@ -1,0 +1,23 @@
+# docker-compose.radar.yml — infra do Radar (navegador hospedado).
+# Sobe o steel-browser (navegador open-source self-hosted) para a captura de sessão
+# do gov.br com live view embutível. A sessão do fornecedor fica NA SUA INFRA.
+#
+# Local:   docker compose -f docker-compose.radar.yml up -d
+# Depois:  npm run radar:browser-service   (serviço que fala com o steel + captura)
+#
+# Portas do steel (mapeadas p/ não colidir com o Next em 3000):
+#   3100 -> 3000  (API REST + UI em http://localhost:3100/ui)
+#   9223 -> 9223  (CDP / debugger)
+# Em VPS: coloque atrás de HTTPS/reverse-proxy e restrinja o acesso à 9223.
+
+services:
+  steel:
+    image: ghcr.io/steel-dev/steel-browser:latest
+    container_name: radar-steel
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+      - "9223:9223"
+    # Em produção, defina origem permitida do iframe e limites conforme a doc do steel.
+    environment:
+      - NODE_ENV=production
