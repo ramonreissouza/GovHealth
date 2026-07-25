@@ -11,8 +11,9 @@ import { getLLM, LLM_MODEL, llmConfigurado } from '@/lib/llm'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-// Limita o texto enviado ao modelo (controle de custo/contexto). ~48k chars ≈ edital típico.
-const MAX_CHARS = 48_000
+// Limita o texto enviado ao modelo (controle de custo/contexto/timeout). ~100k chars
+// (~33 páginas) cobre bem editais longos; ainda cabe no contexto do modelo e nos 60s.
+const MAX_CHARS = 100_000
 
 const SYSTEM_PROMPT = `Você é um ADVOGADO especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde (equipamentos, medicamentos, OPME, serviços). Analise o EDITAL/Termo de Referência com o rigor de uma auditoria de Tribunal de Contas.
 
