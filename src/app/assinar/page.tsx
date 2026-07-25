@@ -8,11 +8,12 @@ import { useState, useCallback, Suspense } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useSearchParams } from 'next/navigation'
+import { signOut, useSession } from 'next-auth/react'
 import { clsx } from 'clsx'
 import { QRCodeSVG } from 'qrcode.react'
 import { loadStripe } from '@stripe/stripe-js'
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js'
-import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock, Copy, Mail } from 'lucide-react'
+import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock, Copy, Mail, LogOut } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
 import { PIX, CONTATO_EMAIL } from '@/lib/pix'
 
@@ -62,6 +63,7 @@ export default function AssinarPage() {
 
 function Checkout() {
   const sp = useSearchParams()
+  const { status: authStatus } = useSession()
   const plano = planoPorId(sp.get('plano')) ?? PLANOS.find((p) => p.destaque) ?? PLANOS[0]
 
   const [f, setF] = useState({ nome: '', email: '', empresa: '', instituicao: '', cpfCnpj: '', telefone: '', endereco: '' })
@@ -115,7 +117,19 @@ function Checkout() {
       <header className="border-b border-subtle bg-bg2/80 backdrop-blur">
         <div className="max-w-[900px] mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/inicio" className="flex items-center gap-1.5 text-[13px] text-muted hover:text-strong"><ArrowLeft size={15} /> Voltar</Link>
-          <Image src="/logo-govhealth.png" alt="GovHealth" width={130} height={59} priority className="h-6 w-auto" />
+          <div className="flex items-center gap-4">
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={130} height={59} priority className="h-6 w-auto" />
+            {/* Escape do loop: um trial EXPIRADO cai aqui e não tinha como sair da conta.
+                "Sair" desloga e volta à landing (podendo entrar com outra conta). */}
+            {authStatus === 'authenticated' && (
+              <button
+                onClick={() => signOut({ callbackUrl: '/inicio' })}
+                className="flex items-center gap-1.5 text-[13px] text-muted hover:text-strong"
+              >
+                <LogOut size={15} /> Sair
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
