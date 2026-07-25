@@ -4,9 +4,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { buscarEmendasSaudeAno, type EmendaParlamentar } from '@/lib/emendas'
-import { lerEmendasSaude } from '@/lib/emendas-ingest'
-import { toEmendaRadar, type EmendaRadar } from '@/lib/radar-verba'
-import { carregarIndiceCapag } from '@/lib/capacidade-pagamento'
+import { lerEmendasSaude, lerEmendasEstaduais } from '@/lib/emendas-ingest'
+import { toEmendaRadar, toEmendaRadarEstadual, type EmendaRadar } from '@/lib/radar-verba'
+import { carregarIndiceCapag, carregarComportamentoPagamento, orgaoKey } from '@/lib/capacidade-pagamento'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
 export const runtime = 'nodejs'
@@ -58,6 +58,26 @@ export async function GET(req: NextRequest) {
     let emendas: EmendaRadar[] = brutas.map((e) =>
       toEmendaRadar(e, capagIdx.resolveLocalidade(e.localidadeDoGasto)),
     )
+
+    // Emendas ESTADUAIS (portais de transparência estaduais; piloto BA) — lead que o
+    // Portal federal não tem. Entram como fonte adicional (esfera='estadual'), com a
+    // CAPAG do estado. Respeitam o filtro de UF (só aparecem p/ a UF selecionada / nacional).
+    const ufsFiltro = ufs?.length ? ufs : uf ? [uf] : undefined
+    const estaduais = await lerEmendasEstaduais(ufsFiltro)
+    if (estaduais.length) {
+      // Item 1: comportamento de pagamento do órgão (BA) enriquece a capacidade —
+      // "órgão pagou R$X em 12m" mostra que o pagador efetivamente disbursa.
+      const comportBA = await carregarComportamentoPagamento('BA')
+      const brl = (v: number) => v >= 1e9 ? `R$${(v / 1e9).toFixed(1)}bi` : v >= 1e6 ? `R$${(v / 1e6).toFixed(0)}mi` : `R$${Math.round(v)}`
+      emendas = emendas.concat(estaduais.map((e) => {
+        const cap = capagIdx.resolvePublico(e.uf, null)
+        const comp = comportBA.get(orgaoKey(e.orgao))
+        if (comp && comp.valorPago12m > 0) {
+          cap.label = `${cap.label} · ${e.orgao} pagou ${brl(comp.valorPago12m)}/12m (${comp.qtdPagamentos.toLocaleString('pt-BR')} pagtos)`
+        }
+        return toEmendaRadarEstadual(e, cap)
+      }))
+    }
 
     // Filtros
     if (ufs?.length) emendas = emendas.filter((e) => ufs.includes(e.uf))

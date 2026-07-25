@@ -117,6 +117,26 @@ function rowToEmenda(r: EmendaRow): EmendaParlamentar {
   }
 }
 
+// Lê as emendas ESTADUAIS de saúde (portais de transparência estaduais; piloto BA).
+// Complementa o Radar de Verba com um lead que o Portal federal não tem.
+export interface EmendaEstadualRow {
+  num_codigo: string; ano: number | null; autor: string; orgao: string; acao: string
+  uf: string; empenhado: number; liquidado: number; pago: number
+}
+export async function lerEmendasEstaduais(ufs?: string[]): Promise<EmendaEstadualRow[]> {
+  try {
+    const base = `SELECT num_codigo, ano, autor, orgao, acao, uf,
+        empenhado::float8 AS empenhado, liquidado::float8 AS liquidado, pago::float8 AS pago
+      FROM emendas_estaduais WHERE categoria_saude = true`
+    return ufs?.length
+      ? await query<EmendaEstadualRow>(`${base} AND uf = ANY($1::text[])`, [ufs.map((u) => u.toUpperCase())])
+      : await query<EmendaEstadualRow>(base)
+  } catch (e) {
+    console.warn('[emendas-estaduais] indisponível:', e instanceof Error ? e.message : e)
+    return []
+  }
+}
+
 // Lê do cache as emendas de saúde dos anos pedidos. Retorna as cruas (a rota aplica
 // score/filtros/ordenação) e o ano mais recente que tem dados.
 export async function lerEmendasSaude(anos: number[]): Promise<{ brutas: EmendaParlamentar[]; anoUsado: number }> {

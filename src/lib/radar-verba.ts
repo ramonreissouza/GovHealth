@@ -28,6 +28,50 @@ export interface EmendaRadar {
   baixaRastreabilidade: boolean // emenda PIX / transferência especial
   // Capacidade de pagamento da instituição (CAPAG do município/UF beneficiário).
   capacidadePagamento?: { fonte: 'capag' | 'serasa' | 'na'; nota: 'A' | 'B' | 'C' | 'D' | null; label: string }
+  esfera?: 'federal' | 'estadual' // origem: Portal da Transparência (federal) ou portal estadual
+}
+
+// Emenda ESTADUAL (portal de transparência do estado) crua, para o radar.
+export interface EmendaEstadualRaw {
+  num_codigo: string
+  ano: number | null
+  autor: string
+  orgao: string
+  acao: string
+  uf: string
+  empenhado: number
+  liquidado: number
+  pago: number
+}
+
+// Converte a emenda estadual em linha do radar (mesma régua de score do federal).
+// tipo='Estadual' (nunca PIX/transferência especial). capacidade entra no blend 85/15.
+export function toEmendaRadarEstadual(e: EmendaEstadualRaw, capacidade?: CapacidadePagamento): EmendaRadar {
+  const empenhado = e.empenhado
+  const pago = e.pago
+  const disponivel = Math.max(empenhado - pago, 0)
+  const base = calcularScore(empenhado, pago, e.acao, 'Estadual')
+  const score = capacidade && base > 0 ? Math.round(0.85 * base + 0.15 * capacidade.score) : base
+  return {
+    codigoEmenda: e.num_codigo,
+    numeroEmenda: e.num_codigo,
+    ano: e.ano ?? 0,
+    autor: e.autor,
+    tipo: 'Emenda estadual',
+    subfuncao: e.acao,
+    municipio: e.orgao, // estado não tem município; mostra o órgão beneficiário
+    uf: e.uf,
+    empenhado,
+    pago,
+    disponivel,
+    percentualExecutado: empenhado > 0 ? Math.round((pago / empenhado) * 100) : 0,
+    execucaoInformada: pago > 0 || e.liquidado > 0,
+    score,
+    temperatura: temperaturaDe(score),
+    baixaRastreabilidade: false,
+    capacidadePagamento: capacidade ? { fonte: capacidade.fonte, nota: capacidade.nota, label: capacidade.label } : undefined,
+    esfera: 'estadual',
+  }
 }
 
 // O Portal às vezes NÃO informa liquidação/pagamento (campo vazio), o que é diferente

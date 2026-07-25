@@ -128,6 +128,33 @@ export async function carregarIndiceCapag(ufs?: string[]): Promise<IndiceCapag> 
   return idx
 }
 
+// ── Comportamento de pagamento (Item 1 — portais estaduais; piloto BA) ────────────
+// Atividade real de disbursos por órgão (valor pago 12m + nº de pagamentos), da ordem
+// cronológica. Sinal de que o pagador efetivamente paga (complementa a nota CAPAG).
+
+export interface ComportamentoPagamento { valorPago12m: number; qtdPagamentos: number; orgaoNome: string }
+
+export async function carregarComportamentoPagamento(uf: string): Promise<Map<string, ComportamentoPagamento>> {
+  const chave = `pagcomport:${uf.toUpperCase()}`
+  const cached = getCached<Map<string, ComportamentoPagamento>>(chave)
+  if (cached) return cached
+  const m = new Map<string, ComportamentoPagamento>()
+  try {
+    const rows = await query<{ orgao_key: string; orgao_nome: string; valor_pago_12m: number; qtd_fila: number }>(
+      'SELECT orgao_key, orgao_nome, valor_pago_12m::float8 AS valor_pago_12m, qtd_fila FROM pagamento_comportamento WHERE uf = $1',
+      [uf.toUpperCase()],
+    )
+    for (const r of rows) m.set(r.orgao_key, { valorPago12m: Number(r.valor_pago_12m) || 0, qtdPagamentos: r.qtd_fila || 0, orgaoNome: r.orgao_nome })
+    setCached(chave, m, TTL.LONG)
+  } catch (e) {
+    console.warn('[comportamento-pagamento] indisponível:', e instanceof Error ? e.message : e)
+  }
+  return m
+}
+
+// Chave de órgão p/ casar com pagamento_comportamento (mesma normalização do ingest).
+export function orgaoKey(nome: string): string { return normalizeKey(nome) }
+
 // ── Serasa (Fase 2 — entes privados/filantrópicos) ───────────────────────────────
 // Atrás de SERASA_API_KEY. Sem a chave, retorna neutro (feature inerte até o contrato
 // e a validação com o financeiro). O mapeamento score→nota segue as faixas usuais do
