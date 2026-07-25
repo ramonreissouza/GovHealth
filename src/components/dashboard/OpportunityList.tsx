@@ -1,13 +1,14 @@
 'use client'
 // src/components/dashboard/OpportunityList.tsx
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Star } from 'lucide-react'
+import { Star, Boxes } from 'lucide-react'
 import { Oportunidade } from '@/lib/types'
 import { clsx } from 'clsx'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import CapagBadge from '@/components/ui/CapagBadge'
+import { produtosQueCasam, type ProdutoPortfolio } from '@/lib/portfolio'
 import type { OpportunitiesData } from './DashboardView'
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   loading: boolean
   error?: boolean
   limit?: number
+  produtos?: ProdutoPortfolio[]
 }
 
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR } from '@/lib/categorias'
@@ -29,7 +31,7 @@ const SITUACAO_CLASS: Record<number, string> = {
   4: 'bg-bg4 text-faint border border-subtle2',
 }
 
-export default function OpportunityList({ data, loading, error, limit = 6 }: Props) {
+export default function OpportunityList({ data, loading, error, limit = 6, produtos = [] }: Props) {
   const router = useRouter()
   const [favs, setFavs] = useState<string[]>([])
   useEffect(() => { setFavs(getFavoriteOrgaos()) }, [])
@@ -41,11 +43,26 @@ export default function OpportunityList({ data, loading, error, limit = 6 }: Pro
     setFavs(toggleFavoriteOrgao(nome))
   }
 
-  // Recorta score >= 40 (relevantes) e sobe os órgãos favoritos ao topo (sort estável
-  // preserva a ordem por score dentro de cada grupo). Dados vêm do DashboardView.
+  // IDs das oportunidades que casam com o portfólio ativo — base da priorização e do selo.
+  const casaPortfolio = useMemo(() => {
+    const ativos = produtos.filter((p) => p.ativo)
+    const ids = new Set<string>()
+    if (ativos.length) {
+      for (const o of data?.oportunidades ?? []) {
+        if (produtosQueCasam(ativos, o).length) ids.add(o.id)
+      }
+    }
+    return ids
+  }, [produtos, data])
+
+  // Recorta score >= 40 (relevantes) e ordena por: casa com portfólio > órgão favorito
+  // > (score, já vindo ordenado da API). Sort estável preserva a ordem dentro de cada grupo.
   const opps: Oportunidade[] = (data?.oportunidades ?? [])
     .filter((o) => o.score >= 40)
-    .sort((a, b) => Number(isFav(b.hospital)) - Number(isFav(a.hospital)))
+    .sort((a, b) =>
+      (Number(casaPortfolio.has(b.id)) - Number(casaPortfolio.has(a.id))) ||
+      (Number(isFav(b.hospital)) - Number(isFav(a.hospital))),
+    )
 
   if (loading) {
     return (
@@ -129,6 +146,14 @@ export default function OpportunityList({ data, loading, error, limit = 6 }: Pro
                 <span className="text-[12px] font-semibold text-strong truncate">
                   {opp.hospital ?? opp.municipio}
                 </span>
+                {casaPortfolio.has(opp.id) && (
+                  <span
+                    title="Casa com um produto do seu portfólio"
+                    className="flex items-center gap-0.5 text-[8px] font-mono-custom px-1.5 py-0.5 rounded-full uppercase tracking-wide flex-shrink-0 bg-accent/15 text-accent border border-accent/30"
+                  >
+                    <Boxes size={9} /> Portfólio
+                  </span>
+                )}
                 <span className={clsx('text-[8px] font-mono-custom px-1.5 py-0.5 rounded-full uppercase tracking-wide flex-shrink-0', SITUACAO_CLASS[situacaoId] ?? SITUACAO_CLASS[4])}>
                   {lic?.situacaoCompraNome ?? 'Encerrado'}
                 </span>

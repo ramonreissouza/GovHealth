@@ -12,7 +12,8 @@
 
 import { useState, useEffect } from 'react'
 import { clsx } from 'clsx'
-import { MapPin, X, Loader2, Star, Trash2 } from 'lucide-react'
+import Link from 'next/link'
+import { MapPin, X, Loader2, Star, Trash2, Target, Boxes } from 'lucide-react'
 import KPICards from './KPICards'
 import OpportunityList from './OpportunityList'
 import AlertsFeed from './AlertsFeed'
@@ -22,10 +23,19 @@ import { TIPO_LABEL } from '@/lib/categorias'
 import type { Oportunidade } from '@/lib/types'
 import {
   getSavedViews, createSavedView, deleteSavedView, savedViewExists,
-  getLastFilter, setLastFilter, type SavedView,
+  getLastFilter, setLastFilter, type SavedView, type DashboardFilter,
 } from '@/lib/saved-views'
-import { getTerritorio } from '@/lib/territorio'
+import { getTerritorio, setTerritorio } from '@/lib/territorio'
+import { getProdutos, type ProdutoPortfolio } from '@/lib/portfolio'
+import { getPreferences } from '@/lib/preferences'
+import { HYDRATED_EVENT } from '@/lib/synced'
 import TerritorioToggle from '@/components/ui/TerritorioToggle'
+
+// Um filtro só "conta" como escolha explícita do usuário se tiver UF ou tipo — um
+// last-filter vazio ({}) é gravado na 1ª busca e não deve bloquear a personalização.
+function filtroExplicito(f: DashboardFilter | null): boolean {
+  return !!f && (!!f.uf || !!f.tipo)
+}
 
 export interface OpportunitiesData {
   oportunidades: Oportunidade[]
@@ -53,6 +63,8 @@ export default function DashboardView() {
   const [views, setViews] = useState<SavedView[]>([])
   const [terrAtivo, setTerrAtivo] = useState(false)
   const [terr, setTerr] = useState<string[]>([])
+  const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([]) // portfólio → prioriza leads
+  const [personalizado, setPersonalizado] = useState(false)        // dashboard semeado pelo setup
 
   const [oppData, setOppData] = useState<OpportunitiesData | null>(null)
   const [oppLoading, setOppLoading] = useState(true)
@@ -64,15 +76,45 @@ export default function DashboardView() {
   const ativo = !!uf || tipo !== 'todos' || usandoTerritorio
   const ufsKey = usandoTerritorio ? terr.join(',') : ''
 
-  // Ao montar: carrega filtros salvos, território e restaura o último filtro aplicado.
+  // Personaliza o dashboard pelo SETUP DO CLIENTE (preferências da conta): na 1ª
+  // visita, sem filtro escolhido nem território salvo, semeia as UFs de atuação —
+  // assim a home já abre focada no que é do vendedor, não em "Brasil / Todos".
+  function personalizarPeloSetup() {
+    if (filtroExplicito(getLastFilter())) return   // usuário já escolheu um filtro
+    if (getTerritorio().length) return             // já tem território definido
+    const prefs = getPreferences()
+    if (!prefs.ufs.length) return
+    const seed = setTerritorio(prefs.ufs)
+    if (!seed.length) return
+    setTerr(seed)
+    if (seed.length > 1) setTerrAtivo(true)         // multi-UF → território
+    else setUf(seed[0])                             // uma UF → seletor simples
+    setPersonalizado(true)
+  }
+
+  // Ao montar: carrega filtros salvos, portfólio, território e restaura o último
+  // filtro aplicado; se for a 1ª visita, personaliza pelo setup do cliente.
   useEffect(() => {
     setViews(getSavedViews())
+    setProdutos(getProdutos())
     setTerr(getTerritorio())
     const last = getLastFilter()
-    if (last) {
-      if (last.uf) setUf(last.uf)
-      if (last.tipo) setTipo(last.tipo)
+    if (filtroExplicito(last)) {
+      if (last!.uf) setUf(last!.uf)
+      if (last!.tipo) setTipo(last!.tipo)
+    } else {
+      personalizarPeloSetup()
     }
+
+    // Após o login, os dados da conta são hidratados de forma assíncrona: recarrega
+    // o portfólio (p/ os selos) e re-tenta a personalização com as preferências já sincronizadas.
+    const onHidratado = () => {
+      setProdutos(getProdutos())
+      personalizarPeloSetup()
+    }
+    window.addEventListener(HYDRATED_EVENT, onHidratado)
+    return () => window.removeEventListener(HYDRATED_EVENT, onHidratado)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Uma única busca de oportunidades por filtro — compartilhada por KPIs, lista e gráfico.
@@ -211,6 +253,29 @@ export default function DashboardView() {
         </div>
       )}
 
+      {/* Faixa de personalização — deixa explícito que a home reflete o setup do cliente */}
+      {produtos.filter((p) => p.ativo).length > 0 ? (
+        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20 text-[11px]">
+          <Target size={13} className="text-accent flex-shrink-0" />
+          <span className="text-strong">
+            Priorizando pelo seu portfólio — <strong>{produtos.filter((p) => p.ativo).length} produto(s)</strong> ativos
+            {personalizado && terr.length > 0 && <> · {terr.length} UF(s) do seu território</>}.
+          </span>
+          <Link href="/portfolio" className="ml-auto text-accent hover:underline whitespace-nowrap flex-shrink-0">Ajustar setup →</Link>
+        </div>
+      ) : (
+        <Link
+          href="/portfolio"
+          className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-bg3 border border-subtle2 border-dashed text-[11px] hover:border-accent/40 transition-colors group"
+        >
+          <Boxes size={13} className="text-faint group-hover:text-accent flex-shrink-0" />
+          <span className="text-muted group-hover:text-strong">
+            Configure seu <strong>portfólio</strong> e suas <strong>UFs de atuação</strong> para o dashboard priorizar as oportunidades certas.
+          </span>
+          <span className="ml-auto text-accent whitespace-nowrap flex-shrink-0">Configurar →</span>
+        </Link>
+      )}
+
       {/* KPIs */}
       <KPICards data={oppData} loading={oppLoading} tipo={filtros.tipo} />
 
@@ -223,7 +288,7 @@ export default function DashboardView() {
               Oportunidades prioritárias
             </span>
           </div>
-          <OpportunityList data={oppData} loading={oppLoading} error={oppError} limit={6} />
+          <OpportunityList data={oppData} loading={oppLoading} error={oppError} limit={6} produtos={produtos} />
         </div>
 
         <div className="flex flex-col gap-3">
