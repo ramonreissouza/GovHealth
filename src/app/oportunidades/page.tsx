@@ -154,7 +154,9 @@ function OportunidadesInner() {
   const [queryProponente, setQueryProponente] = useState('')
   const [queryConvenio, setQueryConvenio] = useState('')
   const [categoria, setCategoria] = useState('todos')
-  const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
+  const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(
+    () => { const u = searchParams.get('uf'); return u ? new Set(u.toUpperCase().split(',').map((s) => s.trim()).filter(Boolean)) : new Set() },
+  )
   const [terrUFs, setTerrUFs] = useState<string[]>([])
   useEffect(() => { setTerrUFs(getTerritorio()) }, [])
   // Território ativo = ufsAtivos exatamente igual ao conjunto do território.

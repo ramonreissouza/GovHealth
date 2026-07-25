@@ -31,6 +31,7 @@ export interface AlertaNotificacao {
   descricao: string
   urgencia: 'alta' | 'media' | 'normal'
   link?: string
+  uf?: string
   lida: boolean
   criadoEm: string
 }
@@ -150,6 +151,7 @@ export function gerarNotificacoesDosMatches(
           descricao: item.descricao,
           urgencia: item.urgencia ?? 'media',
           link: item.link,
+          uf: item.uf,
           lida: false,
           criadoEm: new Date().toISOString(),
         })

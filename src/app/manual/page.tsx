@@ -69,7 +69,7 @@ const TOC_BASE = [
   { id: 'funcionalidades', label: 'Funcionalidades' },
   { id: 'fontes', label: 'Fontes de dados' },
   { id: 'score', label: 'Opportunity Score' },
-  { id: 'sub-scores', label: 'Sub-scores' },
+  { id: 'sub-scores', label: 'Sub-scores & CAPAG' },
   { id: 'status', label: 'Status e urgência' },
   { id: 'categorias', label: 'Categorias' },
   { id: 'filtros', label: 'Filtros e busca' },
@@ -471,15 +471,21 @@ export default function ManualPage() {
               </Section>
 
               {/* ── Sub-scores ── */}
-              <Section id="sub-scores" title="Sub-scores (oportunidades de convênio)" icon={TrendingUp}>
+              <Section id="sub-scores" title="Sub-scores e Capacidade de Pagamento" icon={TrendingUp}>
                 <Card>
+                  <p className="text-[13px] text-muted leading-relaxed mb-3">
+                    O score final combina o <strong className="text-strong">score base</strong> (as quatro dimensões abaixo, que valem 85% no conjunto) com a <strong className="text-strong">Capacidade de Pagamento</strong> do ente público (15%). Os pesos efetivos de cada fator no score final ficam assim:
+                  </p>
+                  <div className="bg-bg3 rounded-lg p-3 mb-4 font-mono-custom text-[12px] text-muted">
+                    <span className="text-accent">score final</span> = 0,85 × base + 0,15 × capacidade de pagamento
+                  </div>
                   <p className="text-[13px] text-muted leading-relaxed mb-4">
-                    Para oportunidades geradas a partir de convênios do TransfereGov, o score é decomposto em quatro dimensões — visíveis ao passar o mouse sobre o badge de score ou ao expandir o card.
+                    As dimensões do score base são visíveis ao passar o mouse sobre o badge de score ou ao expandir o card. A capacidade de pagamento é aplicada a <strong className="text-strong">todas</strong> as oportunidades (convênio e histórico).
                   </p>
                   <div className="space-y-4">
                     {[
                       {
-                        name: 'Convênio (peso 30%)',
+                        name: 'Convênio (25% do score final · 30% do base)',
                         color: 'text-accent',
                         items: [
                           'Percentual executado (≥80% = +40 pts)',
@@ -489,7 +495,7 @@ export default function ManualPage() {
                         ],
                       },
                       {
-                        name: 'Histórico (peso 28%)',
+                        name: 'Histórico (24% do score final · 28% do base)',
                         color: 'text-brand-blue',
                         items: [
                           'Idade do equipamento vs. ciclo médio da categoria',
@@ -498,7 +504,7 @@ export default function ManualPage() {
                         ],
                       },
                       {
-                        name: 'Órgão (peso 22%)',
+                        name: 'Órgão (19% do score final · 22% do base)',
                         color: 'text-brand-purple',
                         items: [
                           'Emenda parlamentar aprovada (+50 pts — sinal fortíssimo)',
@@ -507,12 +513,21 @@ export default function ManualPage() {
                         ],
                       },
                       {
-                        name: 'Competição (peso 20%)',
+                        name: 'Competição (17% do score final · 20% do base)',
                         color: 'text-amber',
                         items: [
                           'Concorrente líder perdeu último pregão (+40 pts)',
                           'Share do líder regional (<30% = mercado aberto)',
                           'Número de concorrentes históricos (≤2 = baixa disputa)',
+                        ],
+                      },
+                      {
+                        name: 'Capacidade de pagamento — CAPAG (15% do score final)',
+                        color: 'text-emerald-400',
+                        items: [
+                          'Nota CAPAG do Tesouro Nacional (A/B/C/D) do município/estado — capacidade fiscal de honrar o contrato',
+                          'Ente nota A/B pontua mais; C/D reduz o score (risco de calote/atraso)',
+                          'Sem CAPAG (União/órgão federal) → fator neutro, não distorce o lead',
                         ],
                       },
                     ].map(({ name, color, items }) => (

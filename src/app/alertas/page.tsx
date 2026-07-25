@@ -2,6 +2,7 @@
 // src/app/alertas/page.tsx — Alertas & Monitoramento
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -291,6 +292,15 @@ export default function AlertasPage() {
   const [loadingFeed, setLoadingFeed] = useState(false)
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailResult, setEmailResult] = useState<'ok' | 'err' | null>(null)
+  const [ufFiltro, setUfFiltro] = useState<string>('')
+  const router = useRouter()
+
+  // Abre o lead relacionado ao alerta (marca como lida e navega).
+  const abrirAlerta = useCallback((n: AlertaNotificacao) => {
+    marcarLida(n.id)
+    setNotifs(getNotificacoes())
+    if (n.link) router.push(n.link)
+  }, [router])
 
   const reload = useCallback(() => {
     setConfigs(getAlertaConfigs())
@@ -310,7 +320,8 @@ export default function AlertasPage() {
         titulo: a.titulo,
         descricao: a.descricao,
         urgencia: a.urgencia,
-        link: undefined,
+        uf: a.uf,
+        link: a.href,        // leva ao lead em /oportunidades (?opp=… ou ?uf=…)
       }))
 
       const matched = gerarNotificacoesDosMatches(items, allConfigs)
@@ -321,6 +332,8 @@ export default function AlertasPage() {
         titulo: a.titulo,
         descricao: a.descricao,
         urgencia: a.urgencia,
+        uf: a.uf,
+        link: a.href,
         lida: false,
         criadoEm: a.createdAt,
       }))
@@ -375,6 +388,9 @@ export default function AlertasPage() {
   }
 
   const naoLidas = notifs.filter((n) => !n.lida).length
+  // UFs presentes nas notificações (para popular o filtro) + lista filtrada.
+  const ufsDisponiveis = Array.from(new Set(notifs.map((n) => n.uf).filter(Boolean) as string[])).sort()
+  const notifsFiltradas = ufFiltro ? notifs.filter((n) => n.uf === ufFiltro) : notifs
 
   return (
     <div className="flex h-screen bg-bg overflow-hidden">
@@ -439,11 +455,27 @@ export default function AlertasPage() {
             <div>
               {/* Toolbar */}
               <div className="flex items-center justify-between mb-3">
-                <p className="text-[12px] text-faint font-mono-custom">
-                  {loadingFeed
-                    ? 'Atualizando feed…'
-                    : `${notifs.length} notificação${notifs.length !== 1 ? 'ões' : ''} · ${naoLidas} não lida${naoLidas !== 1 ? 's' : ''}`}
-                </p>
+                <div className="flex items-center gap-3">
+                  <p className="text-[12px] text-faint font-mono-custom">
+                    {loadingFeed
+                      ? 'Atualizando feed…'
+                      : `${notifsFiltradas.length} notificação${notifsFiltradas.length !== 1 ? 'ões' : ''} · ${naoLidas} não lida${naoLidas !== 1 ? 's' : ''}`}
+                  </p>
+                  {/* Filtro por estado */}
+                  <div className="flex items-center gap-1">
+                    <MapPin size={11} className="text-faint" />
+                    <select
+                      value={ufFiltro}
+                      onChange={(e) => setUfFiltro(e.target.value)}
+                      className="bg-bg3 border border-subtle rounded-md px-2 py-1 text-[11px] font-mono-custom text-strong focus:outline-none focus:border-accent"
+                    >
+                      <option value="">Todos os estados</option>
+                      {ufsDisponiveis.map((uf) => (
+                        <option key={uf} value={uf}>{uf}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => fetchFeed()}
@@ -482,18 +514,18 @@ export default function AlertasPage() {
                 </div>
               </div>
 
-              {notifs.length === 0 ? (
+              {notifsFiltradas.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                   <Bell size={28} className="text-faint mb-3" />
-                  <p className="text-[13px] text-muted">Nenhuma notificação ainda.</p>
-                  <p className="text-[12px] text-faint mt-1">Configure um monitor para começar a receber alertas.</p>
+                  <p className="text-[13px] text-muted">{ufFiltro ? `Nenhuma notificação em ${ufFiltro}.` : 'Nenhuma notificação ainda.'}</p>
+                  <p className="text-[12px] text-faint mt-1">{ufFiltro ? 'Troque o filtro de estado ou crie um monitor.' : 'Configure um monitor para começar a receber alertas.'}</p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {notifs.map((n) => (
+                  {notifsFiltradas.map((n) => (
                     <div
                       key={n.id}
-                      onClick={() => { marcarLida(n.id); setNotifs(getNotificacoes()) }}
+                      onClick={() => abrirAlerta(n)}
                       className={clsx(
                         'flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-all',
                         n.lida
@@ -515,11 +547,13 @@ export default function AlertasPage() {
                             <span className={clsx('text-[10px] font-mono-custom px-2 py-0.5 rounded-full', URGENCIA_CLASS[n.urgencia])}>
                               {n.urgencia}
                             </span>
+                            {n.uf && <span className="text-[10px] font-mono-custom text-faint">{n.uf}</span>}
                           </div>
                         </div>
                         <div className="flex items-center gap-3 mt-2">
                           <span className="text-[10px] font-mono-custom text-faint">{formatDate(n.criadoEm)}</span>
                           <span className="text-[10px] font-mono-custom text-faint">via {n.alertaNome}</span>
+                          {n.link && <span className="text-[10px] font-mono-custom text-accent ml-auto">ver lead →</span>}
                         </div>
                       </div>
                     </div>

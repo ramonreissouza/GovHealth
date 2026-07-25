@@ -12,6 +12,14 @@ export const runtime = 'nodejs'
 export const revalidate = 600
 export const maxDuration = 30 // fallback de emendas pode varrer múltiplos anos
 
+const UFS_VALIDAS = new Set(['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'])
+// Extrai a UF do texto de localidade da emenda (ex.: "CAMPINAS - SP", "SP", "BA/SALVADOR").
+function ufDaLocalidade(loc?: string): string | undefined {
+  if (!loc) return undefined
+  const tokens = loc.toUpperCase().match(/[A-Z]{2}/g) ?? []
+  return tokens.find((t) => UFS_VALIDAS.has(t))
+}
+
 interface EditalRow {
   numero_controle_pncp: string
   razao_social_orgao: string | null
@@ -37,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   // Alertas de editais recentes — banco (ETL) primeiro; PNCP ao vivo como fallback.
   try {
-    const where: string[] = ['valor_total_estimado >= 10000', 'objeto_compra IS NOT NULL']
+    const where: string[] = ["(valor_total_estimado >= 10000 OR fonte <> 'pncp')", 'objeto_compra IS NOT NULL']
     const args: unknown[] = []
     if (uf) { args.push(uf.toUpperCase()); where.push(`uf = $${args.length}`) }
     if (tipo) { args.push(tipo); where.push(`tipo_fornecimento = $${args.length}`) }
@@ -65,6 +73,7 @@ export async function GET(req: NextRequest) {
           createdAt: e.data_publicacao ? `${e.data_publicacao}T00:00:00.000Z` : agora,
           lida: false,
           href: `/oportunidades?opp=${encodeURIComponent(`pncp-${e.numero_controle_pncp}`)}`,
+          uf: e.uf ?? undefined,
         })
       }
     } else {
@@ -108,6 +117,7 @@ export async function GET(req: NextRequest) {
 
     for (const emenda of emendas.slice(0, 3)) {
       const valor = parseValorBR(emenda.valorEmpenhado)
+      const uf = ufDaLocalidade(emenda.localidadeDoGasto)
       alerts.push({
         id: randomUUID(),
         tipo: 'emenda',
@@ -116,7 +126,10 @@ export async function GET(req: NextRequest) {
         urgencia: 'media',
         createdAt: agora,
         lida: false,
-        href: '/radar-verba',
+        // Emenda não é um edital: leva às oportunidades ABERTAS da mesma UF (a demanda
+        // que aquele dinheiro tende a gerar). Sem UF resolvida, cai no Radar de Verba.
+        href: uf ? `/oportunidades?uf=${uf}&status=aberto` : '/radar-verba',
+        uf,
       })
     }
   } catch (e) {

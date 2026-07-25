@@ -129,6 +129,7 @@ export interface Alert {
   createdAt: string
   lida: boolean
   href?: string // destino ao clicar no alerta (drill-down)
+  uf?: string   // estado, para o filtro por UF e o match por monitor
 }
 
 export interface DashboardKPIs {
