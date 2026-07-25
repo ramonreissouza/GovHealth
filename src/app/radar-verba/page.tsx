@@ -3,12 +3,12 @@
 // Onde a verba de saúde existe (empenhada) mas ainda não virou compra (não paga).
 // Cada emenda é um LEAD A QUALIFICAR — nunca "venda garantida".
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Loader2, AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Building2, FileText } from 'lucide-react'
+import { Loader2, AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Building2, FileText, ArrowRight } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { createDeal, dealExists } from '@/lib/crm'
 import { parseValorBR, type EmendaDetalhe } from '@/lib/emendas'
@@ -36,7 +36,7 @@ interface Resposta {
   instrucoes?: string
 }
 
-export default function RadarVerbaPage() {
+function RadarVerbaConteudo() {
   const anoAtual = new Date().getFullYear()
   // Deep-link vindo dos Alertas (?emenda=<codigo>&uf=&ano=): foca a emenda clicada.
   const searchParams = useSearchParams()
@@ -343,9 +343,14 @@ export default function RadarVerbaPage() {
 
                 {/* Empenhos = para onde o dinheiro vai */}
                 <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <FileText size={13} className="text-accent" />
-                    <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Para onde o dinheiro vai</span>
+                  <div className="mb-2">
+                    <div className="flex items-center gap-2">
+                      <FileText size={13} className="text-accent" />
+                      <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Empenhos já executados</span>
+                    </div>
+                    <p className="text-[10px] text-faint mt-1 leading-snug">
+                      O que já foi comprometido. O valor <strong className="text-muted">disponível ({formatBRL(selected.disponivel)})</strong> ainda não tem destino definido — é a oportunidade a trabalhar.
+                    </p>
                   </div>
 
                   {detalheLoading ? (
@@ -381,6 +386,28 @@ export default function RadarVerbaPage() {
                   )}
                 </div>
 
+                {/* Próximos passos — para o lead NÃO morrer no detalhe. */}
+                <div className="space-y-2">
+                  <div className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Próximos passos</div>
+                  {selected.uf && (
+                    <a href={`/oportunidades?uf=${selected.uf}&status=aberto`}
+                       className="flex items-center justify-between bg-bg3 border border-subtle rounded-lg px-3 py-2.5 hover:border-accent transition-colors">
+                      <span className="text-[12px] text-strong">Ver licitações abertas em {selected.uf}</span>
+                      <ArrowRight size={14} className="text-accent flex-shrink-0" />
+                    </a>
+                  )}
+                  <a href={PORTAL_URL} target="_blank" rel="noopener noreferrer"
+                     className="flex items-center justify-between bg-bg3 border border-subtle rounded-lg px-3 py-2.5 hover:border-accent transition-colors">
+                    <span className="text-[12px] text-strong">Abrir no Portal da Transparência</span>
+                    <ExternalLink size={13} className="text-accent flex-shrink-0" />
+                  </a>
+                  <button onClick={() => adicionarCrm(selected)} disabled={addedCrm.has(selected.codigoEmenda)}
+                     className="w-full flex items-center justify-between bg-bg3 border border-subtle rounded-lg px-3 py-2.5 hover:border-accent transition-colors disabled:opacity-60">
+                    <span className="text-[12px] text-strong">{addedCrm.has(selected.codigoEmenda) ? 'Já no seu CRM' : 'Adicionar ao CRM (qualificar)'}</span>
+                    {addedCrm.has(selected.codigoEmenda) ? <Check size={14} className="text-emerald-400 flex-shrink-0" /> : <Plus size={14} className="text-accent flex-shrink-0" />}
+                  </button>
+                </div>
+
                 <p className="text-[10px] text-faint">
                   Lead a qualificar — a verba disponível não é venda garantida. Ligue, entenda o objeto e trabalhe o contato cedo.
                 </p>
@@ -390,6 +417,15 @@ export default function RadarVerbaPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// useSearchParams (deep-link ?emenda=) exige um Suspense boundary no App Router.
+export default function RadarVerbaPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-bg"><Loader2 size={22} className="animate-spin text-faint" /></div>}>
+      <RadarVerbaConteudo />
+    </Suspense>
   )
 }
 
