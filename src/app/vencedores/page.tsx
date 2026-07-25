@@ -73,6 +73,8 @@ export default function VencedoresPage() {
   const [empresa, setEmpresa] = useState('')
   const [empresaQuery, setEmpresaQuery] = useState('')
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
+  // Ano padrão 2026 (recente) — carrega rápido; 'todos' varre todos os anos (muito mais lento).
+  const [ano, setAno] = useState('2026')
   const [expandida, setExpandida] = useState<string | null>(null) // linha aberta (chave única)
 
   // debounce do campo empresa
@@ -85,13 +87,14 @@ export default function VencedoresPage() {
       if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
       if (empresaQuery) params.set('empresa', empresaQuery)
       if (catAtiva) params.set('categoria', catAtiva)
+      if (ano !== 'todos') params.set('ano', ano)
       const res = await fetch(`/api/resultados/vencedores?${params}`)
       const json: ApiResponse = await res.json()
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
       else { setData(json); publishDataStatus(json) }
     } catch (e) { setErro({ msg: String(e) }); setData(null) }
     finally { setLoading(false) }
-  }, [ufsAtivos, empresaQuery, catAtiva])
+  }, [ufsAtivos, empresaQuery, catAtiva, ano])
 
   useEffect(() => { load() }, [load])
 
@@ -125,6 +128,25 @@ export default function VencedoresPage() {
                 <div className="text-[18px] font-mono-custom font-bold text-strong mt-0.5 leading-tight">{value}</div>
               </div>
             ))}
+          </div>
+
+          {/* Filtro de ano — 2026 por padrão (rápido); "Todos" varre todos os anos (lento). */}
+          <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
+            <div className="flex gap-1 flex-wrap items-center">
+              <span className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mr-1">Ano</span>
+              {['2026', '2025', '2024', '2023'].map((a) => (
+                <button key={a} onClick={() => setAno(a)}
+                  className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                    ano === a ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                  {a}
+                </button>
+              ))}
+              <button onClick={() => setAno('todos')}
+                className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                  ano === 'todos' ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                Todos <span className="text-[9px] opacity-70">(lento)</span>
+              </button>
+            </div>
           </div>
 
           {/* Filtros */}
@@ -206,10 +228,13 @@ export default function VencedoresPage() {
                 </thead>
                 <tbody>
                   {vencedores.map((v, i) => {
-                    const chave = `${v.convenio}::${v.numero_item ?? '-'}::${i}`
+                    const reactKey = `${v.convenio}::${v.numero_item ?? '-'}::${i}`
+                    // Chave de EXPANSÃO estável (não usa índice): sobrevive a re-fetch/re-ordenação,
+                    // então o detalhe aberto não "fecha sozinho" quando a lista re-renderiza.
+                    const chave = `${v.convenio}::${v.numero_item ?? '-'}::${v.vencedor ?? '-'}`
                     const aberta = expandida === chave
                     return (
-                      <React.Fragment key={chave}>
+                      <React.Fragment key={reactKey}>
                         <tr
                           onClick={() => setExpandida(aberta ? null : chave)}
                           className={clsx('border-b border-subtle last:border-0 cursor-pointer transition-colors',

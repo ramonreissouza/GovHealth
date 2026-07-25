@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const uf = searchParams.get('uf')?.toUpperCase().trim() || undefined        // "CE" ou "CE,BA"
   const empresa = searchParams.get('empresa')?.trim() || undefined
+  const anoParam = searchParams.get('ano')?.trim() || undefined                // YYYY (ex.: 2026)
+  const ano = anoParam && /^\d{4}$/.test(anoParam) ? Number(anoParam) : undefined
   const dataIni = searchParams.get('dataIni') || undefined                     // YYYY-MM-DD
   const dataFim = searchParams.get('dataFim') || undefined
   const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
@@ -52,6 +54,7 @@ export async function GET(req: NextRequest) {
   const baseParams: unknown[] = []
   if (uf) { baseParams.push(uf.split(',')); whereBase.push(`r.uf = ANY($${baseParams.length})`) }
   if (empresa) { baseParams.push(`%${empresa}%`); whereBase.push(`r.nome_fornecedor ILIKE $${baseParams.length}`) }
+  if (ano) { baseParams.push(ano); whereBase.push(`r.ano = $${baseParams.length}`) }
   if (dataIni) { baseParams.push(dataIni); whereBase.push(`r.data_resultado >= $${baseParams.length}`) }
   if (dataFim) { baseParams.push(dataFim); whereBase.push(`r.data_resultado <= $${baseParams.length}`) }
   const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
