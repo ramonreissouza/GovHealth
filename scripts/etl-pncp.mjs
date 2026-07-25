@@ -47,6 +47,11 @@ const DATA_FIM = args.dataFinal ? String(args.dataFinal).replace(/-/g, '') : nul
 // Teto de páginas por UF/modalidade (paginação profunda). Configurável p/ varrer
 // anos inteiros de estados grandes (ex.: SP/2024 tem ~1.400 páginas).
 const MAXPAG = Number(args.maxpag ?? 400)
+// Modo LEVE: grava só o cabeçalho da contratação (+ as 3 datas de proposta, que vêm
+// na listagem) e PULA itens/resultados. 1 chamada por página de 50 → varredura muito
+// mais leve, permitindo paralelizar UFs sem estourar o rate-limit do PNCP. O
+// enriquecimento (itens/resultados) fica para um passe posterior sem a flag.
+const SO_CABECALHO = args.soCabecalho === true || args.soCabecalho === '1' || process.env.ETL_SO_CABECALHO === '1'
 
 const CONSULTA = 'https://pncp.gov.br/api/consulta/v1'
 const PNCP = 'https://pncp.gov.br/api/pncp/v1'
@@ -75,13 +80,17 @@ async function fetchJson(url, tentativa = 0) {
     // PNCP às vezes deixa a conexão pendurada sem responder; sem timeout o fetch
     // trava pra sempre e congela o ETL. AbortSignal.timeout aborta → vira retry.
     const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
-    if (res.status === 404) return null
+    // 404 = inexistente; 204 = SEM conteúdo (página além do fim dos dados). Ambos → null:
+    // o chamador trata null/[] como "fim", encerra a modalidade e segue — não é falha.
+    if (res.status === 404 || res.status === 204) return null
     if ((res.status === 429 || res.status >= 500) && tentativa < MAX) {
       console.warn(`  [rate-limit] HTTP ${res.status} — retry ${tentativa + 1}/${MAX} em ${2 * (tentativa + 1)}s`)
       await sleep(2000 * (tentativa + 1)); return fetchJson(url, tentativa + 1)
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    return await res.json()
+    // Corpo vazio (ex.: 200 sem body) também é fim-de-dados, não erro de parse.
+    const txt = await res.text()
+    return txt ? JSON.parse(txt) : null
   } catch (e) {
     if (tentativa < MAX) { await sleep(2000 * (tentativa + 1)); return fetchJson(url, tentativa + 1) }
     throw new Error(`falha após ${MAX} tentativas em ${url}: ${e.message}`)
@@ -254,6 +263,9 @@ for (const ufAtual of UF_LIST) {
       for (const c of lista) {
         if (nContrat >= capUF) { hitMax = true; break }
         await upsertContratacao(c); totC++
+
+        // Modo leve: cabeçalho + datas já gravados no upsert acima; pula enriquecimento.
+        if (SO_CABECALHO) continue
 
         // Resumo barato: se a contratação já tem itens no banco, pula chamadas caras.
         // Não conta no cap (nContrat) — assim a retomada avança para as novas.
