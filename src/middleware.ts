@@ -88,14 +88,21 @@ export async function middleware(req: NextRequest) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
 
   if (token) {
+    const t = token as { status?: string | null; expiraEm?: string | null; plano?: string | null; role?: string | null }
+    const trialBloqueado = t.status === 'trial' && typeof t.expiraEm === 'string' && trialExpirado(t.expiraEm)
+
+    // Logado não deve ficar no login/landing → vai pro dashboard. EXCEÇÃO: trial
+    // EXPIRADO precisa poder ver a landing pública /inicio — senão fica preso no
+    // /assinar (toda rota interna o manda de volta pra lá, sem "página principal"
+    // acessível). Assim o botão "Voltar" do /assinar tem para onde ir.
     if (pathname === '/login' || pathname === '/inicio') {
+      if (trialBloqueado && pathname === '/inicio') return NextResponse.next()
       return NextResponse.redirect(new URL('/', req.url))
     }
     // Gate de teste grátis: trial expirado → pede pagamento (só páginas internas;
     // não afeta APIs nem rotas públicas como /assinar, /metodologia).
-    const t = token as { status?: string | null; expiraEm?: string | null; plano?: string | null; role?: string | null }
     if (
-      t.status === 'trial' && typeof t.expiraEm === 'string' && trialExpirado(t.expiraEm) &&
+      trialBloqueado &&
       !pathname.startsWith('/api/') && !ehPublica(pathname)
     ) {
       const url = new URL('/assinar', req.url)
