@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import {
   getAlertaConfigs, createAlertaConfig, updateAlertaConfig, deleteAlertaConfig,
-  getNotificacoes, addNotificacoes, marcarLida, marcarTodasLidas, contarNaoLidas,
+  getNotificacoes, sincronizarNotificacoes, marcarLida, marcarTodasLidas, contarNaoLidas,
   gerarNotificacoesDosMatches,
   type AlertaConfig, type AlertaNotificacao, type AlertaCategoria,
 } from '@/lib/alertas'
@@ -338,7 +338,9 @@ export default function AlertasPage() {
         criadoEm: a.createdAt,
       }))
 
-      addNotificacoes([...matched, ...direct])
+      // Substitui o feed atual (limpa notificações antigas com link desatualizado e
+      // evita duplicatas), preservando o que já foi lido.
+      sincronizarNotificacoes([...matched, ...direct])
       setNotifs(getNotificacoes())
     } catch { /* silent */ }
     finally { setLoadingFeed(false) }

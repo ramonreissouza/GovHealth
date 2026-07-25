@@ -119,16 +119,20 @@ export async function GET(req: NextRequest) {
       const valor = parseValorBR(emenda.valorEmpenhado)
       const uf = ufDaLocalidade(emenda.localidadeDoGasto)
       alerts.push({
-        id: randomUUID(),
+        // ID estável (por código da emenda) — evita acumular notificações duplicadas a
+        // cada atualização do feed (antes usava UUID aleatório → pilha de duplicatas).
+        id: `emenda-${emenda.codigoEmenda}`,
         tipo: 'emenda',
         titulo: `Emenda parlamentar de saúde (${anoEmendas})`,
         descricao: `${emenda.localidadeDoGasto ?? 'Localidade N/D'} — R$${(valor / 1000).toFixed(0)}K empenhados. Autor: ${emenda.autor ?? 'N/D'}.`,
         urgencia: 'media',
         createdAt: agora,
         lida: false,
-        // Leva DIRETO à emenda no Radar de Verba (foca + abre o detalhe). uf/ano ajudam
-        // a tela a carregar o subconjunto certo antes de focar.
-        href: `/radar-verba?emenda=${encodeURIComponent(emenda.codigoEmenda)}${uf ? `&uf=${uf}` : ''}&ano=${anoEmendas}`,
+        // Leva DIRETO à emenda no Radar de Verba (foca + abre o detalhe). SEM &uf= de
+        // propósito: a UF derivada aqui pode divergir da UF calculada no Radar de Verba
+        // (parse de localidade diferente) e filtraria a emenda para fora da lista,
+        // impedindo o foco. Carregamos o ano inteiro e focamos pelo código.
+        href: `/radar-verba?emenda=${encodeURIComponent(emenda.codigoEmenda)}&ano=${anoEmendas}`,
         uf,
       })
     }

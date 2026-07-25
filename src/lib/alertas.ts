@@ -88,6 +88,22 @@ export function addNotificacoes(notifs: AlertaNotificacao[]) {
   }
 }
 
+/**
+ * SUBSTITUI a lista de notificações pela atual (feed + matches), preservando o estado
+ * de 'lida' de ids já vistos. Evita duas patologias: (a) acúmulo infinito de duplicatas
+ * e (b) notificações ESTAGNADAS com link antigo (ex.: emenda que apontava para a tela
+ * errada). O que sai da API some; o que entra aparece; o que foi lido continua lido.
+ * Requer IDs ESTÁVEIS nos itens (ex.: `emenda-<codigo>`, `edital-<numero>`).
+ */
+export function sincronizarNotificacoes(atuais: AlertaNotificacao[]) {
+  const lidas = new Set(getNotificacoes().filter((n) => n.lida).map((n) => n.id))
+  const dedup = new Map<string, AlertaNotificacao>()
+  for (const n of atuais) {
+    if (!dedup.has(n.id)) dedup.set(n.id, { ...n, lida: n.lida || lidas.has(n.id) })
+  }
+  saveNotificacoes([...dedup.values()])
+}
+
 export function marcarLida(id: string) {
   saveNotificacoes(getNotificacoes().map((n) => (n.id === id ? { ...n, lida: true } : n)))
 }
