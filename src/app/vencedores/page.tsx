@@ -11,6 +11,7 @@ import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import type { ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
@@ -75,6 +76,7 @@ export default function VencedoresPage() {
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
   // Ano padrão 2026 (recente) — carrega rápido; 'todos' varre todos os anos (muito mais lento).
   const [ano, setAno] = useState('2026')
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
   const [expandida, setExpandida] = useState<string | null>(null) // linha aberta (chave única)
 
   // debounce do campo empresa
@@ -83,7 +85,7 @@ export default function VencedoresPage() {
   const load = useCallback(async () => {
     setLoading(true); setErro(null)
     try {
-      const params = new URLSearchParams({ limit: '500' })
+      const params = new URLSearchParams({ limit: String(pageSize) })
       if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
       if (empresaQuery) params.set('empresa', empresaQuery)
       if (catAtiva) params.set('categoria', catAtiva)
@@ -94,7 +96,7 @@ export default function VencedoresPage() {
       else { setData(json); publishDataStatus(json) }
     } catch (e) { setErro({ msg: String(e) }); setData(null) }
     finally { setLoading(false) }
-  }, [ufsAtivos, empresaQuery, catAtiva, ano])
+  }, [ufsAtivos, empresaQuery, catAtiva, ano, pageSize])
 
   useEffect(() => { load() }, [load])
 
@@ -196,6 +198,7 @@ export default function VencedoresPage() {
                 placeholder="Buscar empresa vencedora…"
                 className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
             </div>
+            <PageSizeSelector value={pageSize} onChange={setPageSize} className="bg-bg2 border border-subtle2 rounded-lg px-2 py-1.5" />
             <ExportButton data={vencedores} columns={COLS_EXPORT} filename="govhealth-vencedores" title="Vencedores — GovHealth AI" />
           </div>
 

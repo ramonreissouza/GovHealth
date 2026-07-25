@@ -10,6 +10,7 @@ import type { ItemPNCP } from '@/lib/pncp'
 import { clsx } from 'clsx'
 import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
@@ -177,7 +178,8 @@ function OportunidadesInner() {
   const [itensTotal, setItensTotal] = useState(0)
   // Renderização em lotes ("mostrar mais") — evita pintar milhares de linhas de
   // uma vez (abertas ~1,4 mil). Reinicia quando os filtros mudam.
-  const [visibleCount, setVisibleCount] = useState(400)
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_PADRAO)
   // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
   // as linhas carregadas. porTipo alimenta as contagens das abas.
   const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number } | null>(null)
@@ -264,7 +266,7 @@ function OportunidadesInner() {
   useEffect(() => { setTipo(searchParams.get('tipo') ?? 'todos') }, [searchParams])
 
   // Reinicia o lote visível sempre que os filtros/dados mudam.
-  useEffect(() => { setVisibleCount(400) }, [opps, tipo, statusFiltro, anoFiltro, categoria, query, queryProponente, queryConvenio, minScore, soPortfolio, ufsAtivos])
+  useEffect(() => { setVisibleCount(pageSize) }, [pageSize, opps, tipo, statusFiltro, anoFiltro, categoria, query, queryProponente, queryConvenio, minScore, soPortfolio, ufsAtivos])
 
   // Client-side filtering
   const filtered = opps.filter((o) => {
@@ -422,6 +424,8 @@ function OportunidadesInner() {
                 { key: 'urgencia', label: 'Urgência' },
               ]}
             />
+
+            <PageSizeSelector value={pageSize} onChange={setPageSize} className="bg-bg2 border border-subtle2 rounded-lg px-2 py-1.5" />
 
             {/* View toggle */}
             <div className="ml-auto flex gap-0.5 bg-bg2 border border-subtle2 rounded-lg p-1">
@@ -844,10 +848,10 @@ function OportunidadesInner() {
                 Mostrando {visible.length} de {filtered.length}
               </span>
               <button
-                onClick={() => setVisibleCount((n) => n + 400)}
+                onClick={() => setVisibleCount((n) => n + pageSize)}
                 className="text-[12px] font-mono-custom px-4 py-2 rounded-lg bg-bg2 border border-subtle2 text-strong hover:border-accent hover:text-accent transition-all"
               >
-                Mostrar mais 400
+                Mostrar mais {pageSize}
               </button>
             </div>
           )}
