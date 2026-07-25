@@ -7,7 +7,7 @@ import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
   FileText, Upload, Loader2, Sparkles, AlertTriangle, CheckCircle2, Clock,
-  ShieldAlert, ListChecks, Building2, Boxes, X, FileWarning,
+  ShieldAlert, ListChecks, Building2, Boxes, X, FileWarning, Gavel, Scale, Copy, Check,
 } from 'lucide-react'
 import { extrairTextoPDF } from '@/lib/pdf'
 import { getProdutos } from '@/lib/portfolio'
@@ -196,6 +196,27 @@ function Resultado({ a }: { a: AnaliseEdital }) {
         </div>
       </div>
 
+      {/* Conclusão executiva — o veredito primeiro */}
+      {a.conclusao && (
+        <Bloco icon={CheckCircle2} title="Conclusão executiva" accent>
+          <p className="text-[13px] text-strong leading-relaxed mb-3">{a.conclusao.participar}</p>
+          <div className="grid grid-cols-2 gap-4">
+            {a.conclusao.principaisVantagens?.length ? (
+              <div>
+                <div className="text-[11px] font-mono-custom text-emerald-400 uppercase tracking-wider mb-1.5">Vantagens</div>
+                <Lista items={a.conclusao.principaisVantagens} />
+              </div>
+            ) : null}
+            {a.conclusao.principaisRiscos?.length ? (
+              <div>
+                <div className="text-[11px] font-mono-custom text-amber-400 uppercase tracking-wider mb-1.5">Riscos</div>
+                <Lista items={a.conclusao.principaisRiscos} />
+              </div>
+            ) : null}
+          </div>
+        </Bloco>
+      )}
+
       {/* Aderência ao portfólio */}
       {a.aderenciaPortfolio && (
         <Bloco icon={Boxes} title="Aderência ao seu portfólio" accent>
@@ -221,6 +242,31 @@ function Resultado({ a }: { a: AnaliseEdital }) {
           </div>
         </Bloco>
       )}
+
+      {/* Análise legal (Lei 14.133) */}
+      {a.analiseLegal?.length ? (
+        <Bloco icon={Scale} title="Análise legal (Lei 14.133/2021)" warn>
+          <Lista items={a.analiseLegal} />
+        </Bloco>
+      ) : null}
+
+      {/* Riscos para o licitante */}
+      {a.riscos?.length ? (
+        <Bloco icon={AlertTriangle} title="Riscos para o licitante">
+          <div className="space-y-2">
+            {a.riscos.map((r, i) => (
+              <div key={i} className="border border-subtle rounded-lg p-3 bg-bg3/40">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[12px] text-strong leading-snug flex-1">{r.descricao}</span>
+                  <span className={clsx('text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full border flex-shrink-0 uppercase',
+                    r.grau === 'alto' ? SEV_STYLE.alta : r.grau === 'medio' ? SEV_STYLE.media : SEV_STYLE.baixa)}>{r.grau}</span>
+                </div>
+                {r.mitigacao && <p className="text-[11px] text-faint leading-snug mt-1">Mitigação: {r.mitigacao}</p>}
+              </div>
+            ))}
+          </div>
+        </Bloco>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-4">
         {/* Especificações */}
@@ -269,9 +315,55 @@ function Resultado({ a }: { a: AnaliseEdital }) {
         )}
       </div>
 
+      {/* Impugnação automática — o diferencial jurídico */}
+      {a.impugnacao && (a.impugnacao.recomendada || (a.impugnacao.pontos?.length ?? 0) > 0) && (
+        <Bloco icon={Gavel} title="Impugnação" warn>
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className={clsx('text-[10px] font-mono-custom px-2 py-0.5 rounded-full border uppercase',
+              a.impugnacao.recomendada ? 'bg-red-500/15 text-red-400 border-red-500/30' : 'bg-bg4 text-faint border-subtle2')}>
+              {a.impugnacao.recomendada ? 'Impugnação recomendada' : 'Impugnação não recomendada'}
+            </span>
+            {a.impugnacao.tipo && a.impugnacao.tipo !== 'nao' && <span className="text-[11px] text-muted">({a.impugnacao.tipo})</span>}
+          </div>
+          {a.impugnacao.estrategia && <p className="text-[12px] text-muted mb-3"><span className="text-faint">Estratégia:</span> {a.impugnacao.estrategia}</p>}
+          {a.impugnacao.pontos?.length ? (
+            <div className="space-y-2 mb-3">
+              {a.impugnacao.pontos.map((p, i) => (
+                <div key={i} className="border border-subtle rounded-lg p-3 bg-bg3/40">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-[12px] text-strong leading-snug flex-1">{p.ponto}</span>
+                    <span className="text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full border border-subtle2 text-faint uppercase flex-shrink-0 whitespace-nowrap">{p.relevancia} · êxito {p.probabilidadeExito}</span>
+                  </div>
+                  {p.fundamento && <p className="text-[11px] text-faint leading-snug mt-1">{p.fundamento}</p>}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {a.impugnacao.minuta && <MinutaImpugnacao texto={a.impugnacao.minuta} />}
+        </Bloco>
+      )}
+
       <p className="text-[10px] text-faint font-mono-custom text-center pt-1">
         Análise gerada por IA — confira sempre contra o edital original antes de decidir.
       </p>
+    </div>
+  )
+}
+
+function MinutaImpugnacao({ texto }: { texto: string }) {
+  const [copiado, setCopiado] = useState(false)
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Minuta pronta para protocolo</span>
+        <button
+          onClick={() => navigator.clipboard.writeText(texto).then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 2000) }).catch(() => {})}
+          className="flex items-center gap-1 text-[11px] text-muted hover:text-accent transition-colors"
+        >
+          {copiado ? <><Check size={12} /> Copiado</> : <><Copy size={12} /> Copiar</>}
+        </button>
+      </div>
+      <pre className="text-[11px] text-muted leading-relaxed whitespace-pre-wrap bg-bg3/40 border border-subtle rounded-lg p-3 max-h-[380px] overflow-y-auto" style={{ fontFamily: 'inherit' }}>{texto}</pre>
     </div>
   )
 }

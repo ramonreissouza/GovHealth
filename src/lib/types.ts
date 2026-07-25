@@ -238,6 +238,13 @@ export interface ClausulaRestritiva {
   severidade: 'alta' | 'media' | 'baixa'
 }
 
+export interface PontoImpugnacao {
+  ponto: string                        // a irregularidade/cláusula
+  fundamento: string                   // violação legal (art. da Lei 14.133 etc.)
+  relevancia: 'critico' | 'alto' | 'medio' | 'baixo'
+  probabilidadeExito: 'alta' | 'media' | 'baixa'
+}
+
 export interface AnaliseEdital {
   resumo: string                       // 2-3 frases
   objeto: string
@@ -251,6 +258,21 @@ export interface AnaliseEdital {
   clausulasRestritivas: ClausulaRestritiva[]  // possível direcionamento
   recomendacoes: string[]              // pontos de atenção p/ a proposta
   aderenciaPortfolio?: string          // análise de match c/ portfólio (se enviado)
+  // Análise jurídica rigorosa (Lei 14.133/2021) — conformidade + impugnação + veredito.
+  analiseLegal?: string[]              // ilegalidades/vícios/omissões com fundamento legal
+  riscos?: { descricao: string; grau: 'alto' | 'medio' | 'baixo'; mitigacao?: string }[]
+  impugnacao?: {
+    recomendada: boolean               // vale a pena impugnar?
+    tipo?: 'total' | 'parcial' | 'nao'
+    estrategia?: string                // impugnação formal / pedido de esclarecimento / participar sem questionar
+    pontos?: PontoImpugnacao[]
+    minuta?: string                    // peça de impugnação pronta para protocolo (texto)
+  }
+  conclusao?: {
+    participar: string                 // veredito: vale a pena participar? + justificativa
+    principaisRiscos?: string[]
+    principaisVantagens?: string[]
+  }
 }
 
 // --- Contratos.gov.br (Comprasnet Contratos) ---

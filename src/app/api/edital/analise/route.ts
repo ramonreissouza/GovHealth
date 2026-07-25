@@ -14,11 +14,21 @@ export const maxDuration = 60
 // Limita o texto enviado ao modelo (controle de custo/contexto). ~48k chars ≈ edital típico.
 const MAX_CHARS = 48_000
 
-const SYSTEM_PROMPT = `Você é um especialista em licitações públicas de saúde no Brasil (Lei 14.133/2021) que assessora FORNECEDORES de equipamentos, medicamentos, OPME e serviços de saúde.
+const SYSTEM_PROMPT = `Você é um ADVOGADO especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde (equipamentos, medicamentos, OPME, serviços). Analise o EDITAL/Termo de Referência com o rigor de uma auditoria de Tribunal de Contas.
 
-Analise o EDITAL/Termo de Referência fornecido e extraia informações acionáveis para o time comercial decidir se e como participar. Seja específico e cite trechos quando possível.
+Siga esta metodologia:
+1. FORMAL/LEGAL: conformidade com a Lei 14.133/2021; ilegalidades, cláusulas restritivas, omissões e ambiguidades; violações à isonomia, competitividade e julgamento objetivo — com FUNDAMENTO legal específico (cite o artigo).
+2. OBJETO/TÉCNICO: objeto claro? excesso de especificação (direcionamento) ou imprecisão (risco)?
+3. HABILITAÇÃO: exigências ilegais/excessivas/restritivas; risco de inabilitação indevida.
+4. JULGAMENTO: critério adotado; subjetividade indevida.
+5. PRAZOS/CONTRATO: prazos exequíveis; cláusulas abusivas; penalidades proporcionais.
+6. RISCOS ao licitante (jurídico/financeiro/operacional), classificados por grau + mitigação.
+7. IMPUGNAÇÃO: detecte TODOS os pontos impugnáveis (violação legal, restrição à competitividade, exigência desproporcional, omissão). Decida se vale impugnar (total/parcial), a melhor estratégia, e GERE uma MINUTA de impugnação pronta para protocolo.
+8. CONCLUSÃO EXECUTIVA: vale a pena participar? principais riscos e vantagens.
 
-Atenção especial a CLÁUSULAS RESTRITIVAS / possível DIRECIONAMENTO: exigências de marca específica sem "ou similar", especificações que apontam para um único fabricante, atestados de capacidade técnica desproporcionais, prazos de entrega inexequíveis, exigências de amostra/visita técnica restritivas. Classifique a severidade (alta/media/baixa).
+Regras: seja rigoroso e detalhista; NÃO faça suposições sem base no edital; sempre fundamente juridicamente; cite trechos quando possível; linguagem técnica.
+
+Atenção especial a DIRECIONAMENTO: marca específica sem "ou similar", specs que apontam um único fabricante, atestados desproporcionais, prazos inexequíveis, amostra/visita restritivas.
 
 Responda SOMENTE com um objeto JSON válido, sem markdown, neste formato exato:
 {
@@ -33,10 +43,24 @@ Responda SOMENTE com um objeto JSON válido, sem markdown, neste formato exato:
   "penalidades": ["penalidade 1", "..."],
   "clausulasRestritivas": [{"trecho":"trecho do edital","motivo":"por que é restritivo","severidade":"alta|media|baixa"}],
   "recomendacoes": ["ponto de atenção/recomendação p/ a proposta 1", "..."],
-  "aderenciaPortfolio": "análise de aderência aos produtos do fornecedor, ou null se não houver portfólio"
+  "aderenciaPortfolio": "análise de aderência aos produtos do fornecedor, ou null se não houver portfólio",
+  "analiseLegal": ["ilegalidade/vício/omissão com fundamento legal (art. da Lei 14.133) 1", "..."],
+  "riscos": [{"descricao":"risco","grau":"alto|medio|baixo","mitigacao":"como mitigar"}],
+  "impugnacao": {
+    "recomendada": true,
+    "tipo": "total|parcial|nao",
+    "estrategia": "impugnação formal | pedido de esclarecimento | participar sem questionar | combinação",
+    "pontos": [{"ponto":"a irregularidade","fundamento":"violação (art. da Lei 14.133)","relevancia":"critico|alto|medio|baixo","probabilidadeExito":"alta|media|baixa"}],
+    "minuta": "PEÇA DE IMPUGNAÇÃO completa e pronta para protocolo (endereçamento ao órgão; identificação do processo; tempestividade; síntese; FUNDAMENTAÇÃO JURÍDICA com um tópico por irregularidade citando a Lei 14.133/2021; PEDIDO de correção/suspensão; fechamento). Use \\n para quebras de linha. Se não recomendada, use null."
+  },
+  "conclusao": {
+    "participar": "veredito claro: vale a pena participar? por quê (1-3 frases)",
+    "principaisRiscos": ["risco 1", "..."],
+    "principaisVantagens": ["vantagem 1", "..."]
+  }
 }
 
-Se alguma informação não constar no edital, use lista vazia ou null. Não invente dados. Responda em português brasileiro.`
+Se alguma informação não constar no edital, use lista vazia, false ou null. Não invente dados. Responda em português brasileiro.`
 
 interface RequestBody {
   texto: string
@@ -93,7 +117,7 @@ export async function POST(req: NextRequest) {
         { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },
-      max_tokens: 4000, // folga p/ modelos "com raciocínio" (evita JSON truncado)
+      max_tokens: 8000, // análise rigorosa + minuta de impugnação são longas
       temperature: 0.2,
     })
 
