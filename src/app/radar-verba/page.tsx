@@ -3,7 +3,8 @@
 // Onde a verba de saúde existe (empenhada) mas ainda não virou compra (não paga).
 // Cada emenda é um LEAD A QUALIFICAR — nunca "venda garantida".
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -37,8 +38,11 @@ interface Resposta {
 
 export default function RadarVerbaPage() {
   const anoAtual = new Date().getFullYear()
-  const [uf, setUf] = useState('')
-  const [ano, setAno] = useState('')
+  // Deep-link vindo dos Alertas (?emenda=<codigo>&uf=&ano=): foca a emenda clicada.
+  const searchParams = useSearchParams()
+  const focoEmenda = searchParams.get('emenda')
+  const [uf, setUf] = useState(searchParams.get('uf') ?? '')
+  const [ano, setAno] = useState(searchParams.get('ano') ?? '')
   const [subfuncao, setSubfuncao] = useState('')
   const [soQuentes, setSoQuentes] = useState(false)
   const [terrAtivo, setTerrAtivo] = useState(false)
@@ -52,6 +56,8 @@ export default function RadarVerbaPage() {
   const [selected, setSelected] = useState<EmendaRadar | null>(null)
   const [detalhe, setDetalhe] = useState<EmendaDetalhe | null>(null)
   const [detalheLoading, setDetalheLoading] = useState(false)
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const focadoRef = useRef(false)
 
   function abrirDetalhe(e: EmendaRadar) {
     setSelected(e)
@@ -81,6 +87,19 @@ export default function RadarVerbaPage() {
   }, [uf, ano, subfuncao, soQuentes, usandoTerritorio, terr])
 
   useEffect(() => { carregar() }, [carregar])
+
+  // Deep-link ?emenda=<codigo>: quando os dados chegam, abre o detalhe e destaca/rola
+  // até a emenda que o usuário clicou nos Alertas. Roda uma única vez (focadoRef).
+  useEffect(() => {
+    if (!focoEmenda || focadoRef.current || !data?.emendas?.length) return
+    const alvo = data.emendas.find((e) => e.codigoEmenda === focoEmenda)
+    if (!alvo) return
+    focadoRef.current = true
+    abrirDetalhe(alvo)
+    setHighlightId(alvo.codigoEmenda)
+    setTimeout(() => document.getElementById(`emenda-row-${alvo.codigoEmenda}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120)
+    setTimeout(() => setHighlightId(null), 3500)
+  }, [focoEmenda, data])
 
   function adicionarCrm(e: EmendaRadar) {
     const oportunidadeId = `emenda-${e.codigoEmenda}`
@@ -203,9 +222,11 @@ export default function RadarVerbaPage() {
                       return (
                         <tr
                           key={e.codigoEmenda}
+                          id={`emenda-row-${e.codigoEmenda}`}
                           onClick={() => abrirDetalhe(e)}
                           className={clsx('border-b border-subtle last:border-0 hover:bg-bg3 transition-colors cursor-pointer',
-                            selected?.codigoEmenda === e.codigoEmenda && 'bg-bg3')}
+                            selected?.codigoEmenda === e.codigoEmenda && 'bg-bg3',
+                            highlightId === e.codigoEmenda && 'ring-2 ring-accent ring-inset bg-accent/5')}
                         >
                           <td className="px-3 py-2.5">
                             <span className={clsx('text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full uppercase', tm.cls)}>{tm.label} {e.score}</span>
@@ -213,6 +234,10 @@ export default function RadarVerbaPage() {
                           <td className="px-3 py-2.5">
                             <span className="text-strong">{e.municipio || '—'}</span>
                             <span className="text-faint"> / {e.uf || '—'}</span>
+                            {e.esfera === 'estadual' && (
+                              <span title="Emenda de deputado estadual (portal de transparência do estado)"
+                                className="ml-1.5 text-[8px] font-mono-custom px-1 py-0.5 rounded bg-brand-purple/15 text-brand-purple border border-brand-purple/30 uppercase align-middle">Est</span>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-muted truncate max-w-[160px]">{e.autor || '—'}</td>
                           <td className="px-3 py-2.5">

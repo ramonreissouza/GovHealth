@@ -126,9 +126,9 @@ export async function GET(req: NextRequest) {
         urgencia: 'media',
         createdAt: agora,
         lida: false,
-        // Emenda não é um edital: leva às oportunidades ABERTAS da mesma UF (a demanda
-        // que aquele dinheiro tende a gerar). Sem UF resolvida, cai no Radar de Verba.
-        href: uf ? `/oportunidades?uf=${uf}&status=aberto` : '/radar-verba',
+        // Leva DIRETO à emenda no Radar de Verba (foca + abre o detalhe). uf/ano ajudam
+        // a tela a carregar o subconjunto certo antes de focar.
+        href: `/radar-verba?emenda=${encodeURIComponent(emenda.codigoEmenda)}${uf ? `&uf=${uf}` : ''}&ano=${anoEmendas}`,
         uf,
       })
     }
