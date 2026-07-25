@@ -13,7 +13,7 @@ import type Stripe from 'stripe'
 import { getStripe } from '@/lib/stripe'
 import { ativarPorSession, atualizarStatusPorSubscription } from '@/lib/assinaturas'
 import { provisionarPorAssinatura, marcarStatusAssinatura } from '@/lib/users'
-import { enviarBoasVindas } from '@/lib/email'
+import { enviarBoasVindas, enviarPagamentoFalhou, enviarAssinaturaCancelada } from '@/lib/email'
 
 export const runtime = 'nodejs'
 // Precisamos do corpo CRU para validar a assinatura — não deixar o Next parsear.
@@ -80,14 +80,20 @@ export async function POST(req: NextRequest) {
         const subId = subscriptionIdDaInvoice(inv)
         if (subId) {
           const a = await atualizarStatusPorSubscription(subId, 'inadimplente')
-          if (a?.email) await marcarStatusAssinatura(a.email, 'inadimplente')
+          if (a?.email) {
+            await marcarStatusAssinatura(a.email, 'inadimplente')
+            await enviarPagamentoFalhou({ email: a.email, nome: a.nome, plano: a.plano })
+          }
         }
         break
       }
       case 'customer.subscription.deleted': {
         const sub = event.data.object as Stripe.Subscription
         const a = await atualizarStatusPorSubscription(sub.id, 'cancelada')
-        if (a?.email) await marcarStatusAssinatura(a.email, 'cancelada')
+        if (a?.email) {
+          await marcarStatusAssinatura(a.email, 'cancelada')
+          await enviarAssinaturaCancelada({ email: a.email, nome: a.nome, plano: a.plano })
+        }
         break
       }
       default:

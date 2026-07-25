@@ -203,3 +203,43 @@ export async function enviarBoasVindas(params: {
     <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Emitimos nota fiscal.</p>`
   return enviar(params.email, `GovHealth.ai — assinatura ${nomePlano} ativada`, moldura('Assinatura confirmada 🎉', corpo))
 }
+
+/**
+ * PAGAMENTO RECUSADO — disparado no webhook do Stripe (invoice.payment_failed).
+ * Avisa o cliente para atualizar a forma de pagamento antes de suspender o acesso.
+ */
+export async function enviarPagamentoFalhou(params: {
+  email: string; nome?: string | null; plano: string
+}): Promise<{ enviado: boolean; motivo?: string }> {
+  const nomePlano = planoPorId(params.plano)?.nome ?? params.plano
+  const corpo = `
+    <p style="font-size:13px;color:#334155;margin:0 0 12px;">
+      ${params.nome ? params.nome + ', ' : ''}não conseguimos processar o pagamento da sua assinatura <strong>${nomePlano}</strong>.
+    </p>
+    <p style="font-size:13px;color:#334155;margin:0 0 12px;">
+      Costuma ser cartão vencido, sem limite ou dados desatualizados. Atualize a forma de pagamento para <strong>manter seu acesso sem interrupção</strong> — faremos novas tentativas automaticamente.
+    </p>
+    ${btn(`${appUrl()}/conta`, 'Atualizar pagamento')}
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Se o pagamento não for regularizado, o acesso pode ser suspenso. Dúvidas? Responda este e-mail.</p>`
+  return enviar(params.email, 'Problema no pagamento da sua assinatura — GovHealth AI', moldura('Falha no pagamento ⚠️', corpo))
+}
+
+/**
+ * ASSINATURA CANCELADA — disparado no webhook do Stripe (customer.subscription.deleted).
+ * Confirma o cancelamento, tranquiliza sobre os dados e convida a reativar.
+ */
+export async function enviarAssinaturaCancelada(params: {
+  email: string; nome?: string | null; plano: string
+}): Promise<{ enviado: boolean; motivo?: string }> {
+  const nomePlano = planoPorId(params.plano)?.nome ?? params.plano
+  const corpo = `
+    <p style="font-size:13px;color:#334155;margin:0 0 12px;">
+      ${params.nome ? params.nome + ', ' : ''}sua assinatura do plano <strong>${nomePlano}</strong> foi cancelada e o acesso será encerrado ao fim do período já pago.
+    </p>
+    <p style="font-size:13px;color:#334155;margin:0 0 12px;">
+      Seus dados (portfólio, monitores e CRM) ficam <strong>guardados</strong> — se você voltar, está tudo lá. Você pode reativar quando quiser.
+    </p>
+    ${btn(`${appUrl()}/assinar?plano=${params.plano}`, 'Reativar assinatura')}
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Cancelou por engano ou quer nos dar um feedback? É só responder este e-mail.</p>`
+  return enviar(params.email, 'Sua assinatura foi cancelada — GovHealth AI', moldura('Assinatura cancelada', corpo))
+}
