@@ -203,6 +203,26 @@ export async function reivindicarLembretesTrial(): Promise<Array<{ id: string; e
   )
 }
 
+/**
+ * Reivindica os trials que EXPIRARAM recentemente (nos últimos 3 dias) e ainda não
+ * receberam o e-mail de "teste acabou". A janela de 3 dias evita disparo em massa para
+ * trials antigos quando a coluna é criada. Marca `trial_expirado_em` (idempotente).
+ */
+export async function reivindicarExpiradosTrial(): Promise<Array<{ id: string; email: string; nome: string | null; plano: string | null; expira_em: string }>> {
+  return query(
+    `UPDATE usuarios
+        SET trial_expirado_em = now()
+      WHERE status_assinatura = 'trial'
+        AND role <> 'master'
+        AND deleted_at IS NULL
+        AND suspenso = false
+        AND trial_expirado_em IS NULL
+        AND expira_em < CURRENT_DATE
+        AND expira_em >= (CURRENT_DATE - 3)
+      RETURNING id, email, nome, plano, to_char(expira_em,'YYYY-MM-DD') AS expira_em`,
+  )
+}
+
 // ── Equipe / assentos (N usuários por CNPJ) ──────────────────────────────────
 // O titular é a conta que assinou (titular_id NULL) e detém os `assentos`. Os
 // membros têm titular_id = id do titular e herdam plano/CNPJ. Cada um tem senha

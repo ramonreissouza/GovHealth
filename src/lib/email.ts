@@ -178,6 +178,26 @@ export async function enviarLembreteTrial(params: {
 }
 
 /**
+ * Disparado quando o teste grátis EXPIROU (dia seguinte ao fim). Convida a assinar
+ * para retomar o acesso — os dados do usuário continuam guardados.
+ */
+export async function enviarTesteExpirado(params: {
+  email: string; nome?: string | null; plano: string
+}): Promise<{ enviado: boolean; motivo?: string }> {
+  const nomePlano = planoPorId(params.plano)?.nome ?? params.plano
+  const corpo = `
+    <p style="font-size:13px;color:#334155;margin:0 0 12px;">
+      ${params.nome ? params.nome + ', ' : ''}seu teste grátis do GovHealth.ai <strong>terminou</strong>.
+    </p>
+    <p style="font-size:13px;color:#334155;margin:0 0 12px;">
+      Para voltar a acompanhar as <strong>licitações de saúde</strong>, os <strong>vencedores/concorrentes</strong> e os <strong>alertas de oportunidade</strong>, assine o plano <strong>${nomePlano}</strong> — leva 2 minutos e seus dados (portfólio, monitores, CRM) continuam guardados.
+    </p>
+    ${btn(`${appUrl()}/assinar?plano=${params.plano}`, `Assinar ${nomePlano} e voltar`)}
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Sem fidelidade — cancele quando quiser. Emitimos nota fiscal. Dúvidas? Responda este e-mail.</p>`
+  return enviar(params.email, `Seu teste acabou — assine para voltar ao GovHealth.ai`, moldura('Seu teste grátis acabou', corpo))
+}
+
+/**
  * E-mail de boas-vindas após a assinatura ser ativada.
  * `senhaTemporaria` só é enviada quando a conta foi criada agora.
  */
