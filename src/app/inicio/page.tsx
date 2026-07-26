@@ -141,7 +141,7 @@ export default async function InicioPage() {
           <div className="max-w-[1080px] mx-auto px-6 py-7 grid grid-cols-2 md:grid-cols-4 gap-6">
             {PROVAS.map((p, i) => (
               <div key={p.l} className="reveal text-center md:text-left" style={{ '--d': `${i * 0.06}s` } as React.CSSProperties}>
-                <div className="font-mono-custom font-semibold text-[22px] sm:text-[26px] text-strong tracking-tight">{p.v}</div>
+                <div className="font-mono-custom font-semibold text-[22px] sm:text-[26px] text-gradient-brand tracking-tight">{p.v}</div>
                 <div className="text-[12px] text-faint mt-0.5">{p.l}</div>
               </div>
             ))}
@@ -153,8 +153,8 @@ export default async function InicioPage() {
           <div className="grid md:grid-cols-3 gap-5">
             {RECURSOS.map(({ icon: Icon, titulo, texto }, i) => (
               <div key={titulo} className="reveal bg-bg2 border border-subtle rounded-2xl p-6 hover:border-accent/40 hover:shadow-lg hover:shadow-slate-200/50 transition-all" style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
-                <div className="w-11 h-11 rounded-xl bg-accent/10 flex items-center justify-center mb-4">
-                  <Icon size={20} className="text-accent" />
+                <div className="w-11 h-11 rounded-xl bg-gradient-brand flex items-center justify-center mb-4 shadow-lg shadow-accent/20">
+                  <Icon size={20} className="text-white" />
                 </div>
                 <h3 className="font-heading font-semibold text-[16px] mb-1.5">{titulo}</h3>
                 <p className="text-[13.5px] text-muted leading-relaxed">{texto}</p>
@@ -170,7 +170,7 @@ export default async function InicioPage() {
             <div className="grid md:grid-cols-3 gap-8">
               {PASSOS.map((p, i) => (
                 <div key={p.n} className="reveal" style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
-                  <div className="font-heading font-bold text-[40px] text-accent/30 leading-none mb-3">{p.n}</div>
+                  <div className="font-heading font-bold text-[40px] text-gradient-brand leading-none mb-3">{p.n}</div>
                   <h3 className="font-heading font-semibold text-[17px] mb-1.5">{p.t}</h3>
                   <p className="text-[13.5px] text-muted leading-relaxed">{p.d}</p>
                 </div>
