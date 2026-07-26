@@ -21,7 +21,7 @@ const CORES = ['#00ff9d','#60a5fa','#f59e0b','#f87171','#c084fc','#4ade80','#22d
 interface PorRow { chave: string | null; valor: number; qtd: number }
 interface PorCatRow { categoria: string; valor: number; qtd: number }
 interface PorItemRow { item: string; codigo_catmat: string | null; valor: number; qtd: number }
-interface Top3 { vencedor: string | null; valor: number; item: string | null; convenios?: number }
+interface Top3 { vencedor: string | null; chave?: string | null; valor: number; item: string | null; convenios?: number }
 interface ItemDist { item: string; valor: number; qtd: number; pct: number }
 interface Entidade { entidade: string | null; valor: number; convenios: number }
 interface CatCount { categoria: string; n: number; valor: number }
@@ -63,10 +63,11 @@ export default function ConcorrentesEstadoPage() {
   const [drillData, setDrillData] = useState<{ porEstado: PorRow[]; porCategoria: PorCatRow[]; porItem: PorItemRow[] } | null>(null)
   const [drillLoading, setDrillLoading] = useState(false)
 
-  const abrirDrill = useCallback((nome: string | null) => {
+  const abrirDrill = useCallback((nome: string | null, chave?: string | null) => {
     if (!nome) return
     setDrill(nome); setDrillData(null); setDrillLoading(true)
-    const p = new URLSearchParams({ fornecedor: nome })
+    // Dedup por chave (CNPJ/nome normalizado); fallback ao nome p/ registros sem chave.
+    const p = new URLSearchParams(chave ? { chave } : { fornecedor: nome })
     if (ano !== 'todos') p.set('ano', ano)
     fetch(`/api/resultados/fornecedores?${p}`)
       .then((r) => r.json())
@@ -184,7 +185,7 @@ export default function ConcorrentesEstadoPage() {
                 ) : top3.map((t, i) => (
                   <button
                     key={i}
-                    onClick={() => abrirDrill(t.vencedor)}
+                    onClick={() => abrirDrill(t.vencedor, t.chave)}
                     className="bg-bg2 border border-subtle rounded-xl px-4 py-3 text-left hover:border-accent/40 hover:bg-bg3 transition-colors group"
                   >
                     <div className="flex items-center gap-1.5 mb-1">
@@ -217,7 +218,7 @@ export default function ConcorrentesEstadoPage() {
                       {restantes.map((c, i) => {
                         const pct = maxValor > 0 ? (c.valor / maxValor) * 100 : 0
                         return (
-                          <button key={`${c.vencedor}-${i}`} onClick={() => abrirDrill(c.vencedor)}
+                          <button key={`${c.chave ?? c.vencedor}-${i}`} onClick={() => abrirDrill(c.vencedor, c.chave)}
                             className="w-full text-left px-4 py-2 relative hover:bg-bg3 transition-colors group">
                             <span className="absolute left-0 top-0 bottom-0 bg-accent/5" style={{ width: `${pct}%` }} />
                             <div className="relative flex items-center gap-3">

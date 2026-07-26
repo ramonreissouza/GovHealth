@@ -19,7 +19,7 @@ import type { ExportColumn } from '@/lib/export'
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
 
-interface Ranking { fornecedor: string | null; cnpj: string | null; valor: number; itens: number; convenios: number; ufs: number }
+interface Ranking { fornecedor: string | null; chave: string | null; cnpj: string | null; valor: number; itens: number; convenios: number; ufs: number }
 interface CatCount { categoria: string; n: number; valor: number }
 interface RankResponse {
   kpis: { valorTotal: number; fornecedores: number; itens: number; convenios: number }
@@ -82,7 +82,7 @@ export default function ConcorrentesPage() {
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor
 
-  const [selecionado, setSelecionado] = useState<string | null>(null)
+  const [selecionado, setSelecionado] = useState<Ranking | null>(null)
   const [contratos, setContratos] = useState<ContratosResponse | null>(null)
   const [contratosLoading, setContratosLoading] = useState(false)
   const [convAberto, setConvAberto] = useState<string | null>(null)
@@ -119,7 +119,8 @@ export default function ConcorrentesPage() {
     let vivo = true
     setContratosLoading(true); setConvAberto(null)
     const params = filtrosParams()
-    params.set('fornecedor', selecionado)
+    if (selecionado.chave) params.set('chave', selecionado.chave)
+    else if (selecionado.fornecedor) params.set('fornecedor', selecionado.fornecedor)
     fetch(`/api/resultados/fornecedor-contratos?${params}`)
       .then(async (r) => { const j: ContratosResponse = await r.json(); if (vivo) setContratos(r.ok ? j : null) })
       .catch(() => { if (vivo) setContratos(null) })
@@ -250,11 +251,11 @@ export default function ConcorrentesPage() {
                 ) : (
                   <div className="divide-y divide-subtle max-h-[70vh] overflow-y-auto">
                     {ranking.map((r, i) => {
-                      const ativo = selecionado === r.fornecedor
+                      const ativo = selecionado?.chave === r.chave && !!r.chave
                       const pct = maxValor > 0 ? (r.valor / maxValor) * 100 : 0
                       return (
-                        <button key={`${r.fornecedor}-${i}`}
-                          onClick={() => setSelecionado(ativo ? null : r.fornecedor)}
+                        <button key={`${r.chave ?? r.fornecedor}-${i}`}
+                          onClick={() => setSelecionado(ativo ? null : r)}
                           className={clsx('w-full text-left px-4 py-2.5 transition-colors relative', ativo ? 'bg-bg3' : 'hover:bg-bg3')}>
                           <span className="absolute left-0 top-0 bottom-0 bg-accent/5" style={{ width: `${pct}%` }} />
                           <div className="relative flex items-center gap-3">
@@ -285,7 +286,7 @@ export default function ConcorrentesPage() {
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="min-w-0">
                       <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider">Concorrente</div>
-                      <div className="text-[15px] font-semibold text-strong leading-tight">{selecionado}</div>
+                      <div className="text-[15px] font-semibold text-strong leading-tight">{selecionado.fornecedor ?? '—'}</div>
                       {contratos?.resumo && (
                         <div className="text-[10px] font-mono-custom text-faint mt-1">
                           <span className="text-accent">{formatBRL(contratos.resumo.valorTotal)}</span>
@@ -298,8 +299,8 @@ export default function ConcorrentesPage() {
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {contratos && contratos.contratos.length > 0 && (
                         <ExportButton data={contratos.contratos} columns={COLS_CONTRATOS}
-                          filename={`govhealth-licitacoes-${(selecionado ?? '').slice(0, 30).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}
-                          title={`Licitações vencidas — ${selecionado}`} />
+                          filename={`govhealth-licitacoes-${(selecionado.fornecedor ?? '').slice(0, 30).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}
+                          title={`Licitações vencidas — ${selecionado.fornecedor ?? ''}`} />
                       )}
                       <button onClick={() => setSelecionado(null)} className="text-faint hover:text-strong"><X size={16} /></button>
                     </div>

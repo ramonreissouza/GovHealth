@@ -9,13 +9,17 @@ import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
 import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
+import { fornecedorKeySql, fornecedorNomeSql } from '@/lib/fornecedor-dedup'
 
 export const runtime = 'nodejs'
 
 const CAT_SQL = categoriaCaseSql('r.nome_catmat')
+const FKEY = fornecedorKeySql()      // chave de dedup (CNPJ ou nome normalizado)
+const FNOME = fornecedorNomeSql()    // nome canônico (grafia mais frequente)
 
 interface RankingRow {
   fornecedor: string | null
+  chave: string | null
   cnpj: string | null
   valor: number
   itens: number
@@ -38,12 +42,13 @@ export async function GET(req: NextRequest) {
   const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
   const tipoParam = searchParams.get('tipo')?.trim().toLowerCase() || undefined
   const tipo = tipoParam && tipoParam !== 'todos' && isTipoFornecimento(tipoParam) ? tipoParam : undefined
-  const fornecedor = searchParams.get('fornecedor')?.trim() || undefined
+  const fornecedor = searchParams.get('fornecedor')?.trim() || undefined // legado: nome
+  const chave = searchParams.get('chave')?.trim() || undefined           // preferido: chave de dedup
   const q = searchParams.get('q')?.trim() || undefined // busca por nome (ILIKE) no ranking
   const limit = Math.min(Number(searchParams.get('limit') ?? 50), 500)
 
   // Cache por assinatura de parâmetros (repetir o mesmo filtro fica instantâneo).
-  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categoria ?? ''}:${tipo ?? ''}:${fornecedor ?? ''}:${q ?? ''}:${limit}`
+  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categoria ?? ''}:${tipo ?? ''}:${fornecedor ?? ''}:${chave ?? ''}:${q ?? ''}:${limit}`
   const cachedResp = getCached<object>(cacheKey)
   if (cachedResp) return NextResponse.json(cachedResp)
 
@@ -71,21 +76,22 @@ export async function GET(req: NextRequest) {
   try {
     const [ranking, kpiRows, catCounts, ufsComDados] = await Promise.all([
       query<RankingRow>(
-        `SELECT r.nome_fornecedor AS fornecedor,
+        `SELECT ${FNOME} AS fornecedor,
+                ${FKEY} AS chave,
                 MAX(r.ni_fornecedor) AS cnpj,
                 SUM(r.valor_total_homologado)::float8 AS valor,
                 COUNT(DISTINCT COALESCE(NULLIF(r.codigo_catmat, ''), r.nome_catmat))::int AS itens,
                 COUNT(DISTINCT r.numero_controle_pncp)::int AS convenios,
                 COUNT(DISTINCT r.uf)::int AS ufs
          FROM resultados r ${rankWhereSql}
-         GROUP BY r.nome_fornecedor
+         GROUP BY ${FKEY}
          ORDER BY valor DESC NULLS LAST
          LIMIT $${rankParams.length + 1}`,
         [...rankParams, limit],
       ),
       query<KpiRow>(
         `SELECT COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor_total,
-                COUNT(DISTINCT r.nome_fornecedor)::int AS n_fornecedores,
+                COUNT(DISTINCT ${FKEY})::int AS n_fornecedores,
                 COUNT(DISTINCT COALESCE(NULLIF(r.codigo_catmat, ''), r.nome_catmat))::int AS n_itens,
                 COUNT(DISTINCT r.numero_controle_pncp)::int AS n_convenios
          FROM resultados r ${whereSql}`,
@@ -103,9 +109,11 @@ export async function GET(req: NextRequest) {
     // Drill-down de um fornecedor: respeita uf/ano, ignora o filtro de categoria
     // (mostra a composição completa do que a empresa vendeu).
     let detalhe = null
-    if (fornecedor) {
-      const dParams = [...baseParams, fornecedor]
-      const dWhere = `${whereBaseSql} AND r.nome_fornecedor = $${dParams.length}`
+    if (chave || fornecedor) {
+      const dParams = [...baseParams]
+      let dWhere: string
+      if (chave) { dParams.push(chave); dWhere = `${whereBaseSql} AND ${FKEY} = $${dParams.length}` }
+      else { dParams.push(fornecedor); dWhere = `${whereBaseSql} AND TRIM(r.nome_fornecedor) = $${dParams.length}` }
       const [porEstado, porCategoria, porItem] = await Promise.all([
         query<PorRow>(
           `SELECT r.uf AS chave, SUM(r.valor_total_homologado)::float8 AS valor, COUNT(*)::int AS qtd
@@ -118,7 +126,7 @@ export async function GET(req: NextRequest) {
                   SUM(r.valor_total_homologado)::float8 AS valor, COUNT(*)::int AS qtd
            FROM resultados r ${dWhere} GROUP BY 1, 2 ORDER BY valor DESC NULLS LAST LIMIT 20`, dParams),
       ])
-      detalhe = { fornecedor, porEstado, porCategoria, porItem }
+      detalhe = { fornecedor: fornecedor ?? chave, porEstado, porCategoria, porItem }
     }
 
     const kpi = kpiRows[0]

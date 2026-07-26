@@ -6,10 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
+import { fornecedorKeySql } from '@/lib/fornecedor-dedup'
 
 export const runtime = 'nodejs'
 
 const CAT_SQL = categoriaCaseSql('r.nome_catmat')
+const FKEY = fornecedorKeySql()
 
 interface Row {
   convenio: string
@@ -40,18 +42,21 @@ function pncpUrl(cnpj: string | null, ano: number | null, seq: number | null): s
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const fornecedor = searchParams.get('fornecedor')?.trim()
+  const chave = searchParams.get('chave')?.trim()
   const ufParam = searchParams.get('uf')?.toUpperCase().trim() || undefined
   const ufs = ufParam ? ufParam.split(',').map((s) => s.trim()).filter(Boolean) : undefined
   const ano = searchParams.get('ano') ? Number(searchParams.get('ano')) : undefined
   const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
   const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
 
-  if (!fornecedor) {
-    return NextResponse.json({ error: 'Parâmetro "fornecedor" obrigatório.' }, { status: 400 })
+  if (!fornecedor && !chave) {
+    return NextResponse.json({ error: 'Parâmetro "chave" ou "fornecedor" obrigatório.' }, { status: 400 })
   }
 
-  const where: string[] = ['r.valor_total_homologado IS NOT NULL', 'r.nome_fornecedor = $1']
-  const params: unknown[] = [fornecedor]
+  // Dedup por chave (CNPJ/nome normalizado); fallback ao nome exato (legado).
+  const where: string[] = ['r.valor_total_homologado IS NOT NULL',
+    chave ? `${FKEY} = $1` : 'r.nome_fornecedor = $1']
+  const params: unknown[] = [chave ?? fornecedor]
   if (ufs) { params.push(ufs); where.push(`r.uf = ANY($${params.length})`) }
   if (ano) { params.push(ano); where.push(`r.ano = $${params.length}`) }
   if (categoria) { params.push(categoria); where.push(`(${CAT_SQL}) = $${params.length}`) }
@@ -128,7 +133,7 @@ export async function GET(req: NextRequest) {
     const ufsAtuacao = [...new Set(rows.map((r) => r.uf).filter(Boolean))] as string[]
 
     return NextResponse.json({
-      fornecedor,
+      fornecedor: fornecedor ?? chave,
       resumo: {
         valorTotal,
         convenios: contratos.length,

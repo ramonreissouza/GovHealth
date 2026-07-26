@@ -5,12 +5,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
+import { fornecedorKeySql, fornecedorNomeSql } from '@/lib/fornecedor-dedup'
 
 export const runtime = 'nodejs'
 
 const CAT_SQL = categoriaCaseSql('r.nome_catmat')
+const FKEY = fornecedorKeySql()
+const FNOME = fornecedorNomeSql()
 
-interface ConcorrenteRow { vencedor: string | null; valor: number; item: string | null; convenios: number }
+interface ConcorrenteRow { vencedor: string | null; chave: string | null; valor: number; item: string | null; convenios: number }
 interface ItemRow { item: string; valor: number; qtd: number }
 interface EntidadeRow { entidade: string | null; valor: number; convenios: number }
 interface UfRow { uf: string }
@@ -44,12 +47,13 @@ export async function GET(req: NextRequest) {
     const concParams = [...params, limit]
     const [concorrentes, distribuicaoItens, entidades, ufsComDados, catCounts] = await Promise.all([
       query<ConcorrenteRow>(
-        `SELECT r.nome_fornecedor AS vencedor,
+        `SELECT ${FNOME} AS vencedor,
+                ${FKEY} AS chave,
                 SUM(r.valor_total_homologado)::float8 AS valor,
                 COUNT(DISTINCT r.numero_controle_pncp)::int AS convenios,
                 (array_agg(r.nome_catmat ORDER BY r.valor_total_homologado DESC NULLS LAST))[1] AS item
          FROM resultados r ${whereSql}
-         GROUP BY r.nome_fornecedor
+         GROUP BY ${FKEY}
          ORDER BY valor DESC NULLS LAST
          LIMIT $${concParams.length}`, concParams),
       query<ItemRow>(

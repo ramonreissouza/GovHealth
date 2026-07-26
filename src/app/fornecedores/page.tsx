@@ -13,12 +13,13 @@ import { formatBRL } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import type { ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
 
-interface Ranking { fornecedor: string | null; cnpj: string | null; valor: number; itens: number; convenios: number; ufs: number }
+interface Ranking { fornecedor: string | null; chave: string | null; cnpj: string | null; valor: number; itens: number; convenios: number; ufs: number }
 interface CatCount { categoria: string; n: number; valor: number }
 interface PorRow { chave: string | null; valor: number; qtd: number }
 interface PorCat { categoria: string; valor: number; qtd: number }
@@ -53,22 +54,23 @@ export default function FornecedoresPage() {
   const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
 
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
-  const [ano, setAno] = useState('2025') // default no ano com dados (2025 tem ~246k resultados vs ~7k em 2026)
+  const [ano, setAno] = useState('2026') // ano recente pré-setado (consistente com Vencedores)
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // fornecedores por página (50 padrão)
 
-  const [selecionado, setSelecionado] = useState<string | null>(null)
+  const [selecionado, setSelecionado] = useState<Ranking | null>(null)
   const [det, setDet] = useState<Detalhe | null>(null)
   const [detLoading, setDetLoading] = useState(false)
 
   const filtrosParams = useCallback(() => {
-    const params = new URLSearchParams({ limit: '100' })
+    const params = new URLSearchParams({ limit: String(pageSize) })
     if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
     if (ano !== 'todos') params.set('ano', ano)
     if (catAtiva) params.set('categoria', catAtiva)
     return params
-  }, [ufsAtivos, ano, catAtiva])
+  }, [ufsAtivos, ano, catAtiva, pageSize])
 
   const load = useCallback(async () => {
     setLoading(true); setErro(null)
@@ -94,7 +96,9 @@ export default function FornecedoresPage() {
     let vivo = true
     setDetLoading(true)
     const params = filtrosParams()
-    params.set('fornecedor', selecionado)
+    // Dedup por chave (CNPJ ou nome normalizado); fallback ao nome se faltar chave.
+    if (selecionado.chave) params.set('chave', selecionado.chave)
+    else if (selecionado.fornecedor) params.set('fornecedor', selecionado.fornecedor)
     params.set('limit', '1')
     fetch(`/api/resultados/fornecedores?${params}`)
       .then(async (r) => { const j: ApiResponse = await r.json(); if (vivo) setDet(j.detalhe) })
@@ -199,7 +203,8 @@ export default function FornecedoresPage() {
                 placeholder="Buscar fornecedor por nome…"
                 className="flex-1 bg-transparent text-[12px] text-strong placeholder:text-faint outline-none" />
             </div>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-3">
+              <PageSizeSelector value={pageSize} onChange={setPageSize} />
               <ExportButton data={ranking} columns={COLS_EXPORT} filename="govhealth-fornecedores" title="Ranking de Fornecedores — GovHealth AI" />
             </div>
           </div>
@@ -226,11 +231,11 @@ export default function FornecedoresPage() {
                 ) : (
                   <div className="divide-y divide-subtle">
                     {ranking.map((r, i) => {
-                      const ativo = selecionado === r.fornecedor
+                      const ativo = selecionado?.chave === r.chave && !!r.chave
                       const pct = maxValor > 0 ? (r.valor / maxValor) * 100 : 0
                       return (
-                        <button key={`${r.fornecedor}-${i}`}
-                          onClick={() => setSelecionado(ativo ? null : r.fornecedor)}
+                        <button key={`${r.chave ?? r.fornecedor}-${i}`}
+                          onClick={() => setSelecionado(ativo ? null : r)}
                           className={clsx('w-full text-left px-4 py-2.5 transition-colors relative', ativo ? 'bg-bg3' : 'hover:bg-bg3')}>
                           <span className="absolute left-0 top-0 bottom-0 bg-accent/5" style={{ width: `${pct}%` }} />
                           <div className="relative flex items-center gap-3">
@@ -260,7 +265,8 @@ export default function FornecedoresPage() {
                   <div className="flex items-start justify-between gap-2 mb-3">
                     <div className="min-w-0">
                       <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider">Fornecedor</div>
-                      <div className="text-[14px] font-semibold text-strong leading-tight">{selecionado}</div>
+                      <div className="text-[14px] font-semibold text-strong leading-tight">{selecionado.fornecedor ?? '—'}</div>
+                      {selecionado.cnpj && <div className="text-[10px] font-mono-custom text-faint mt-0.5">{selecionado.cnpj}</div>}
                     </div>
                     <button onClick={() => setSelecionado(null)} className="text-faint hover:text-strong flex-shrink-0"><X size={15} /></button>
                   </div>
@@ -279,11 +285,16 @@ export default function FornecedoresPage() {
                           <Package size={12} className="text-accent" />
                           <span className="text-[10px] font-mono-custom uppercase tracking-wider text-faint">Principais itens vendidos</span>
                         </div>
-                        <div className="space-y-1 max-h-64 overflow-y-auto">
-                          {det.porItem.map((it, idx) => (
-                            <div key={idx} className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-bg3/40">
-                              <div className="text-[11px] text-strong truncate">
-                                {it.codigo_catmat ? <span className="font-mono-custom text-faint">{it.codigo_catmat} · </span> : null}{it.item}
+                        <div className="space-y-1 max-h-80 overflow-y-auto">
+                          {det.porItem.length === 0 ? (
+                            <div className="text-[11px] text-faint px-2 py-1">Sem itens detalhados para este fornecedor.</div>
+                          ) : det.porItem.map((it, idx) => (
+                            <div key={idx} className="flex items-start justify-between gap-2 rounded px-2 py-1.5 bg-bg3/40">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[11px] text-strong leading-snug break-words">
+                                  {it.codigo_catmat ? <span className="font-mono-custom text-faint">{it.codigo_catmat} · </span> : null}{it.item}
+                                </div>
+                                <div className="text-[9px] font-mono-custom text-faint mt-0.5">{it.qtd} venda{it.qtd !== 1 ? 's' : ''}</div>
                               </div>
                               <div className="text-[11px] font-mono-custom font-bold text-strong flex-shrink-0">{formatBRL(it.valor)}</div>
                             </div>
