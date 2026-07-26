@@ -8,13 +8,14 @@ import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import { signOut } from 'next-auth/react'
 import { clsx } from 'clsx'
-import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, ShieldCheck, Copy, CreditCard } from 'lucide-react'
+import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, ShieldCheck, Copy, CreditCard, MessageCircle } from 'lucide-react'
 import { formatarPreco, planoPorId } from '@/lib/planos'
 
 const AdminMapa = dynamic(() => import('@/components/admin/AdminMapa'), { ssr: false, loading: () => <div className="h-[560px] rounded-xl border border-subtle flex items-center justify-center text-faint text-[13px]">Carregando mapa…</div> })
 const AdminAnalytics = dynamic(() => import('@/components/admin/AdminAnalytics'), { ssr: false, loading: () => <div className="py-10 text-center text-faint text-[13px]">Carregando análise…</div> })
+const AdminFeedback = dynamic(() => import('@/components/admin/AdminFeedback'), { ssr: false, loading: () => <div className="py-10 text-center text-faint text-[13px]">Carregando backlog…</div> })
 
-type Tab = 'contas' | 'assinaturas' | 'dashboard' | 'acessos' | 'mapa'
+type Tab = 'contas' | 'assinaturas' | 'dashboard' | 'acessos' | 'mapa' | 'suporte'
 
 interface Usuario {
   id: string; email: string; nome: string | null; role: string; empresa: string | null; telefone: string | null
@@ -38,7 +39,7 @@ export default function AdminPage() {
             <span className="font-mono-custom text-[11px] font-semibold text-accent border border-accent/30 rounded px-1.5 py-0.5">Admin</span>
           </div>
           <nav className="flex items-center gap-1 ml-4">
-            {([['contas', 'Contas', Users], ['assinaturas', 'Assinaturas', CreditCard], ['dashboard', 'Dashboard', LayoutDashboard], ['acessos', 'Acessos', ScrollText], ['mapa', 'Mapa', MapIcon]] as [Tab, string, React.ElementType][]).map(([k, label, Icon]) => (
+            {([['contas', 'Contas', Users], ['assinaturas', 'Assinaturas', CreditCard], ['dashboard', 'Dashboard', LayoutDashboard], ['acessos', 'Acessos', ScrollText], ['suporte', 'Suporte', MessageCircle], ['mapa', 'Mapa', MapIcon]] as [Tab, string, React.ElementType][]).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={clsx('flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg transition-colors',
                   tab === k ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-strong')}>
@@ -57,6 +58,7 @@ export default function AdminPage() {
         {tab === 'assinaturas' && <TabAssinaturas />}
         {tab === 'dashboard' && <TabDashboard />}
         {tab === 'acessos' && <TabAcessos />}
+        {tab === 'suporte' && <AdminFeedback />}
         {tab === 'mapa' && <TabMapa />}
       </main>
     </div>

@@ -5,6 +5,7 @@ import './globals.css'
 import SessionProvider from '@/components/providers/SessionProvider'
 import NotificationsWatcher from '@/components/NotificationsWatcher'
 import PageViewTracker from '@/components/PageViewTracker'
+import FeedbackWidget from '@/components/feedback/FeedbackWidget'
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <NotificationsWatcher />
           <PageViewTracker />
           {children}
+          <FeedbackWidget />
         </SessionProvider>
         </body>
     </html>
