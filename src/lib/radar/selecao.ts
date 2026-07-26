@@ -8,8 +8,15 @@
 import { query, queryOne } from '@/lib/db'
 import { normalizeText } from '@/lib/text'
 
-const CONECTOR = 'comprasgov'
+const CONECTOR_PADRAO = 'comprasgov'
 const PORTAL_PNCP = 'https://pncp.gov.br/app/editais'
+
+// Todos os conectores partem da mesma verdade (PNCP, o agregador nacional). O link
+// específico de cada portal (BLL/PCP/Licitações-e) entra na etapa 2, junto do
+// mapeamento do id-do-portal — por ora todos apontam para o edital no PNCP.
+function linkDoProcesso(_conectorId: string, numero: string): string {
+  return `${PORTAL_PNCP}?q=${encodeURIComponent(numero)}`
+}
 
 interface Perfil {
   ufs?: string[]
@@ -55,8 +62,17 @@ export async function sincronizarSelecao(
   titularId: string,
   userId: string,
 ): Promise<{ novos: number; total: number; puloMotivo?: string }> {
-  const perfil = await lerUserData<Perfil>(userId, 'perfil', {})
-  const produtos = (await lerUserData<ProdutoLike[]>(userId, 'portfolio', [])).filter((p) => p.ativo !== false)
+  // Fonte de verdade: o Setup da Empresa unificado (chave 'empresa'). Fallback para
+  // as chaves legadas ('perfil'/'portfolio') de contas que ainda não regravaram o setup.
+  const empresa = await lerUserData<(Perfil & { produtos?: ProdutoLike[] }) | null>(userId, 'empresa', null)
+  const temEmpresa = !!empresa && (
+    empresa.produtos != null || empresa.ufs != null || empresa.categorias != null || empresa.termosBusca != null
+  )
+  const perfil: Perfil = temEmpresa ? empresa! : await lerUserData<Perfil>(userId, 'perfil', {})
+  const produtosRaw = temEmpresa
+    ? (empresa!.produtos ?? [])
+    : await lerUserData<ProdutoLike[]>(userId, 'portfolio', [])
+  const produtos = produtosRaw.filter((p) => p.ativo !== false)
 
   const ufs = (perfil.ufs ?? []).map((u) => u.toUpperCase())
   const categorias = perfil.categorias ?? []
@@ -95,6 +111,15 @@ export async function sincronizarSelecao(
     params,
   )
 
+  // Portais-alvo da seleção: os que o tenant tem CONECTADOS (credencial ativa). Sem
+  // nenhuma credencial, mantém o comportamento legado (Compras.gov.br) para o Radar
+  // já selecionar processos antes mesmo de o cliente conectar um portal.
+  const credConectores = await query<{ conector_id: string }>(
+    `SELECT DISTINCT conector_id FROM radar_credenciais WHERE titular_id = $1 AND ativo = true`,
+    [titularId],
+  )
+  const conectoresAlvo = credConectores.length ? credConectores.map((r) => r.conector_id) : [CONECTOR_PADRAO]
+
   let novos = 0
   let total = 0
   for (const c of candidatos) {
@@ -113,32 +138,42 @@ export async function sincronizarSelecao(
       categoria: c.categoria_saude,
       uf: c.uf,
     }
-    const id = `${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
-    const link = `${PORTAL_PNCP}?q=${encodeURIComponent(c.numero_controle_pncp)}`
     const titulo = (c.objeto_compra ?? '').slice(0, 240)
 
-    // UPSERT idempotente. RETURNING só devolve linha quando de fato INSERE (xmax=0),
-    // então detectamos os processos INÉDITOS para alertar sem duplicar.
-    const ins = await query<{ novo: boolean }>(
-      `INSERT INTO radar_processos
-         (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, uf, valor, motivo_match, link_portal, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11, now())
-       ON CONFLICT (titular_id, conector_id, cnpj, licitacao_id) DO UPDATE
-         SET titulo = EXCLUDED.titulo, uf = EXCLUDED.uf, valor = EXCLUDED.valor,
-             motivo_match = EXCLUDED.motivo_match, atualizado_em = now()
-       RETURNING (xmax = 0) AS novo`,
-      [id, titularId, userId, CONECTOR, cnpj, c.numero_controle_pncp, titulo, c.uf,
-       c.valor_total_estimado, JSON.stringify(motivo), link],
-    )
-    if (ins[0]?.novo) {
+    // UPSERT de um processo POR PORTAL conectado (cada worker de portal enxerga o
+    // seu). RETURNING (xmax=0) detecta o INÉDITO para alertar sem duplicar.
+    let inseriuNovo = false
+    let processoRef = ''
+    for (const conectorId of conectoresAlvo) {
+      const id = `${conectorId}:${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
+      const link = linkDoProcesso(conectorId, c.numero_controle_pncp)
+      const ins = await query<{ id: string; novo: boolean }>(
+        `INSERT INTO radar_processos
+           (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, uf, valor, motivo_match, link_portal, atualizado_em)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11, now())
+         ON CONFLICT (titular_id, conector_id, cnpj, licitacao_id) DO UPDATE
+           SET titulo = EXCLUDED.titulo, uf = EXCLUDED.uf, valor = EXCLUDED.valor,
+               motivo_match = EXCLUDED.motivo_match, atualizado_em = now()
+         RETURNING id, (xmax = 0) AS novo`,
+        [id, titularId, userId, conectorId, cnpj, c.numero_controle_pncp, titulo, c.uf,
+         c.valor_total_estimado, JSON.stringify(motivo), link],
+      )
+      if (!processoRef) processoRef = ins[0]?.id ?? id
+      if (ins[0]?.novo) inseriuNovo = true
+    }
+
+    // Alerta de "nova licitação" é por LICITAÇÃO (não por portal): id de notificação
+    // no nível da licitação evita duplicar quando há vários portais conectados.
+    if (inseriuNovo) {
       novos++
+      const link = linkDoProcesso(CONECTOR_PADRAO, c.numero_controle_pncp)
       const razao = termosBatem[0] || produtosBatem[0] || c.categoria_saude || c.uf || 'perfil'
       const assunto = `Nova licitação para o seu perfil: ${titulo.slice(0, 90) || c.numero_controle_pncp}`
       await query(
         `INSERT INTO radar_notificacoes (id, titular_id, evento, processo_id, destinatario, canal, assunto, corpo, link)
          VALUES ($1,$2,'nova_licitacao',$3,$4,'email',$5,$6,$7)
          ON CONFLICT (id) DO NOTHING`,
-        [`nl:${id}`, titularId, id, destinatario, assunto,
+        [`nl:${titularId}:${c.numero_controle_pncp}`, titularId, processoRef, destinatario, assunto,
          JSON.stringify({ objeto: titulo, uf: c.uf, municipio: c.municipio, valor: c.valor_total_estimado, motivo: razao, nome: titular?.nome }),
          link],
       )
@@ -147,7 +182,7 @@ export async function sincronizarSelecao(
         `INSERT INTO radar_notificacoes (id, titular_id, evento, processo_id, destinatario, canal, assunto, link, status)
          VALUES ($1,$2,'nova_licitacao',$3,$4,'in_app',$5,$6,'entregue')
          ON CONFLICT (id) DO NOTHING`,
-        [`nl-app:${id}`, titularId, id, destinatario, assunto, link],
+        [`nl-app:${titularId}:${c.numero_controle_pncp}`, titularId, processoRef, destinatario, assunto, link],
       )
     }
   }

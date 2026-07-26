@@ -7,9 +7,7 @@
 
 import type { CategoriaEquipamento, TipoFornecimento, Oportunidade } from './types'
 import { normalizeText } from './text'
-import { readLocal, writeLocal } from './synced'
-
-const STORAGE_KEY = 'govhealth:portfolio'
+import { getEmpresa, saveEmpresa } from './empresa'
 
 /** Vínculo com um item do catálogo CATMAT do Compras.gov. */
 export interface CatmatVinculo {
@@ -43,11 +41,11 @@ export interface PortfolioStats {
 // ── Persistência ──────────────────────────────────────────────────────────────
 
 export function getProdutos(): ProdutoPortfolio[] {
-  return readLocal<ProdutoPortfolio[]>(STORAGE_KEY, [])
+  return getEmpresa().produtos
 }
 
 function saveProdutos(produtos: ProdutoPortfolio[]): void {
-  writeLocal(STORAGE_KEY, produtos)
+  saveEmpresa({ produtos })
 }
 
 function genId(): string {

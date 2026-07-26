@@ -6,11 +6,12 @@
 
 // Mapa: chave localStorage → chave no servidor (user_data.chave).
 const KEY_TO_CHAVE: Record<string, string> = {
-  'govhealth:portfolio': 'portfolio',
+  'govhealth:empresa': 'empresa',        // setup unificado (fonte de verdade)
+  'govhealth:portfolio': 'portfolio',    // legado — mantido p/ migração/hidratação
   'govhealth:crm:deals': 'crm',
   'govhealth:alertas:configs': 'alertas-config',
   'govhealth:alertas:notifs': 'alertas-notif',
-  'govhealth:preferences': 'perfil',
+  'govhealth:preferences': 'perfil',     // legado — mantido p/ migração/hidratação
 }
 const UID_KEY = 'govhealth:__uid'
 export const HYDRATED_EVENT = 'govhealth:hydrated'

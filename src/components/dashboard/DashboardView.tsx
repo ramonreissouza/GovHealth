@@ -261,11 +261,11 @@ export default function DashboardView() {
             Priorizando pelo seu portfólio — <strong>{produtos.filter((p) => p.ativo).length} produto(s)</strong> ativos
             {personalizado && terr.length > 0 && <> · {terr.length} UF(s) do seu território</>}.
           </span>
-          <Link href="/portfolio" className="ml-auto text-accent hover:underline whitespace-nowrap flex-shrink-0">Ajustar setup →</Link>
+          <Link href="/perfil?tab=portfolio" className="ml-auto text-accent hover:underline whitespace-nowrap flex-shrink-0">Ajustar setup →</Link>
         </div>
       ) : (
         <Link
-          href="/portfolio"
+          href="/perfil?tab=portfolio"
           className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-bg3 border border-subtle2 border-dashed text-[11px] hover:border-accent/40 transition-colors group"
         >
           <Boxes size={13} className="text-faint group-hover:text-accent flex-shrink-0" />

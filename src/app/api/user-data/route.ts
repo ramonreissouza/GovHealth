@@ -10,9 +10,10 @@ import { query, queryOne } from '@/lib/db'
 export const runtime = 'nodejs'
 
 // Chaves permitidas (evita virar um KV genérico/abusável).
-// 'perfil' guarda as preferências do usuário (UFs, categorias, termos, faixa de valor).
-// Precisa viver na conta porque o Radar seleciona processos no SERVIDOR a partir dela.
-const CHAVES = new Set(['portfolio', 'crm', 'alertas-config', 'alertas-notif', 'agenda', 'perfil'])
+// 'empresa' = Setup da Empresa unificado (perfil + portfólio), fonte de verdade única;
+// precisa viver na conta porque o Radar seleciona processos no SERVIDOR a partir dele.
+// 'perfil'/'portfolio' são legados mantidos p/ hidratação/migração de dados antigos.
+const CHAVES = new Set(['empresa', 'portfolio', 'crm', 'alertas-config', 'alertas-notif', 'agenda', 'perfil'])
 
 async function userId(req: NextRequest): Promise<string | null> {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })

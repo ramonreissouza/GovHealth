@@ -6,7 +6,7 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
-  LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, UserCircle, Menu, X,
+  LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, Menu, X,
   Boxes, FileSearch, FolderKanban, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords, CreditCard, Radar,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
@@ -55,10 +55,11 @@ const NAV_STATIC = [
   {
     label: 'Conta',
     items: [
-      { href: '/portfolio', label: 'Meu Portfólio', icon: Boxes, badge: null as string | null },
+      { href: '/perfil', label: 'Setup da Empresa', icon: Boxes, badge: null as string | null },
+      // DESATIVADO (a pedido) — Cofre de Documentos. Reativar: descomentar esta linha.
+      // { href: '/documentos', label: 'Cofre de Documentos', icon: ShieldCheck, badge: 'novo' as string | null },
       { href: '/equipe', label: 'Equipe', icon: Users, badge: null as string | null },
       { href: '/conta', label: 'Minha Conta', icon: CreditCard, badge: null as string | null },
-      { href: '/perfil', label: 'Perfil & Preferências', icon: UserCircle, badge: null as string | null },
       { href: '/manual', label: 'Manual do usuário', icon: BookOpen, badge: null as string | null },
     ],
   },

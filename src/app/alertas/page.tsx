@@ -8,7 +8,7 @@ import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
   Bell, Plus, Trash2, Edit2, X, Save, CheckCheck, AlertCircle,
-  Search, MapPin, Tag, DollarSign, ToggleLeft, ToggleRight, Loader2, Mail, Send,
+  Search, MapPin, Tag, DollarSign, ToggleLeft, ToggleRight, Loader2, Mail, Send, Boxes,
 } from 'lucide-react'
 import {
   getAlertaConfigs, createAlertaConfig, updateAlertaConfig, deleteAlertaConfig,
@@ -16,6 +16,7 @@ import {
   gerarNotificacoesDosMatches,
   type AlertaConfig, type AlertaNotificacao, type AlertaCategoria,
 } from '@/lib/alertas'
+import { alertaDoSetup } from '@/lib/empresa'
 import type { Alert } from '@/lib/types'
 import { formatBRL } from '@/lib/format'
 import NotificationToggle from '@/components/ui/NotificationToggle'
@@ -307,6 +308,29 @@ export default function AlertasPage() {
     setNotifs(getNotificacoes())
   }, [])
 
+  // Categorias válidas de alerta (o setup pode ter 'medicamento', fora deste conjunto).
+  const VALID_ALERTA_CATS: AlertaCategoria[] = ['imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'outros']
+
+  // Cria/atualiza um monitor "do meu setup": puxa termos (perfil + palavras-chave do
+  // portfólio), UFs, categorias e faixa de valor direto do Setup da Empresa.
+  const criarAlertaDoSetup = useCallback(() => {
+    const s = alertaDoSetup()
+    const categorias = s.categorias.filter((c): c is AlertaCategoria => (VALID_ALERTA_CATS as string[]).includes(c))
+    if (s.termos.length === 0 && s.ufs.length === 0 && categorias.length === 0) {
+      alert('Seu setup ainda está vazio. Configure categorias/UFs/termos ou cadastre produtos no Setup da Empresa primeiro.')
+      return
+    }
+    const data = {
+      nome: s.nome, termos: s.termos, ufs: s.ufs, categorias,
+      valorMin: s.valorMin, valorMax: s.valorMax, ativo: true, emailHabilitado: true,
+    }
+    const existente = getAlertaConfigs().find((c) => c.nome === s.nome || c.nome === 'Meu setup' || c.nome.startsWith('Setup — '))
+    if (existente) updateAlertaConfig(existente.id, data)
+    else createAlertaConfig(data)
+    setTab('monitores')
+    reload()
+  }, [reload]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchFeed = useCallback(async () => {
     setLoadingFeed(true)
     try {
@@ -411,6 +435,14 @@ export default function AlertasPage() {
             </div>
             <div className="flex items-center gap-2">
               <NotificationToggle />
+              <button
+                onClick={criarAlertaDoSetup}
+                title="Cria um monitor a partir do Setup da Empresa (categorias, UFs, termos e portfólio)"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-bg3 border border-subtle2 text-[13px] font-semibold text-strong hover:border-accent transition-colors"
+              >
+                <Boxes size={14} />
+                Alerta do meu setup
+              </button>
               <button
                 onClick={() => { setEditing(null); setModalOpen(true) }}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors"
