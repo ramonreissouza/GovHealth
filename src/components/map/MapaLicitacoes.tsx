@@ -179,9 +179,9 @@ export default function MapaLicitacoes() {
                 <span className="ml-auto text-[11px] font-mono-custom font-bold text-accent">{formatBRL(selected.valor)}</span>
               </div>
               <div className="text-[11px] text-strong"><strong>{selected.n}</strong> licitação{selected.n !== 1 ? 'ões' : ''} aberta{selected.n !== 1 ? 's' : ''}</div>
-              <a href={`/oportunidades?uf=${selected.uf}&q=${encodeURIComponent(selected.municipio)}`}
-                className="block mt-2 text-[10px] font-mono-custom text-accent hover:underline">
-                Ver licitações deste município →
+              <a href={`/oportunidades?uf=${selected.uf}&municipio=${encodeURIComponent(selected.municipio)}`}
+                className="mt-2 flex items-center justify-center gap-1 bg-accent text-black text-[11px] font-semibold rounded-md px-2 py-1.5 hover:bg-accent/90 transition-colors">
+                Ver as {selected.n} licitações desta cidade →
               </a>
             </div>
           </Popup>

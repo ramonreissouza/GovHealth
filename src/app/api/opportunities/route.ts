@@ -131,6 +131,7 @@ const abertoExpr = (ref: string) =>
 interface FiltroBanco {
   uf?: string
   ufs?: string[]
+  municipio?: string
   tipo?: TipoFornecimento
   status?: 'aberto' | 'encerrado' | 'todos'
   ano?: string
@@ -139,10 +140,14 @@ interface FiltroBanco {
 function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {}): { whereSql: string; args: unknown[] } {
   // Fontes fora do PNCP (ex.: Licitações-e/BB) não expõem valor na listagem pública,
   // então o piso de R$10k não se aplica a elas — senão sumiriam por terem valor nulo.
-  const where: string[] = ["(valor_total_estimado >= 10000 OR fonte <> 'pncp')", "objeto_compra IS NOT NULL"]
+  // Ao filtrar por CIDADE específica (deep-link do mapa) o piso é dispensado: o usuário
+  // quer ver TODAS as licitações daquela cidade e a contagem bate com o mapa.
+  const where: string[] = ["objeto_compra IS NOT NULL"]
+  if (!params.municipio) where.unshift("(valor_total_estimado >= 10000 OR fonte <> 'pncp')")
   const args: unknown[] = []
   if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
   else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
+  if (params.municipio) { args.push(params.municipio); where.push(`UPPER(TRIM(municipio)) = UPPER(TRIM($${args.length}))`) }
   if (opts.incluirTipo !== false && params.tipo) { args.push(params.tipo); where.push(`tipo_fornecimento = $${args.length}`) }
   if (params.categoria) { args.push(params.categoria); where.push(`categoria_saude = $${args.length}`) }
   if (params.ano && /^\d{4}$/.test(params.ano)) { args.push(Number(params.ano)); where.push(`EXTRACT(YEAR FROM data_publicacao) = $${args.length}`) }
@@ -155,7 +160,7 @@ function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {
 // o universo selecionado, não só as N linhas renderizadas.
 export interface TotaisBanco { total: number; valorTotal: number; abertas: number; estados: number }
 async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
-  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
+  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
   const cached = getCached<TotaisBanco>(cacheKey)
   if (cached) return cached
   const { whereSql, args } = construirWhere(params)
@@ -173,7 +178,7 @@ async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
 // Contagem por tipo de fornecimento (para as abas), SEM o filtro de tipo — assim
 // todas as abas mostram seu total dentro do filtro de status/ano/categoria.
 async function porTipoDoBanco(params: FiltroBanco): Promise<Record<string, number>> {
-  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
+  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
   const cached = getCached<Record<string, number>>(cacheKey)
   if (cached) return cached
   const { whereSql, args } = construirWhere(params, { incluirTipo: false })
@@ -191,6 +196,7 @@ async function porTipoDoBanco(params: FiltroBanco): Promise<Record<string, numbe
 async function buscarDoBanco(params: {
   uf?: string
   ufs?: string[]
+  municipio?: string
   tipo?: TipoFornecimento
   porUf?: number // amostra por UF (mapa): top-N por UF, cobertura geográfica
   status?: 'aberto' | 'encerrado' | 'todos'
@@ -199,7 +205,7 @@ async function buscarDoBanco(params: {
   limit?: number
   agora: string
 }): Promise<Oportunidade[] | null> {
-  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.limit ?? ''}`
+  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.limit ?? ''}`
   const cached = getCached<Oportunidade[]>(cacheKey)
   if (cached) return cached
 
@@ -344,6 +350,7 @@ export async function GET(req: NextRequest) {
     const uf = searchParams.get('uf') ?? undefined
     const ufsParam = searchParams.get('ufs') ?? undefined // território multi-UF ("CE,BA,PE")
     const ufs = ufsParam ? ufsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean) : undefined
+    const municipio = searchParams.get('municipio')?.trim() || undefined // filtro por cidade (deep-link do mapa)
     const porUf = searchParams.get('porUf') ? Number(searchParams.get('porUf')) : undefined // amostra por UF (mapa)
     const minScore = Number(searchParams.get('minScore') ?? 0)
     const categoria = searchParams.get('categoria') ?? undefined
@@ -369,9 +376,9 @@ export async function GET(req: NextRequest) {
 
     try {
       const [doBanco, tot, pt] = await Promise.all([
-        buscarDoBanco({ uf, ufs, tipo, porUf, status, ano, categoria, limit, agora }),
-        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, tipo, status, ano, categoria }),
-        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, status, ano, categoria }),
+        buscarDoBanco({ uf, ufs, municipio, tipo, porUf, status, ano, categoria, limit, agora }),
+        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, municipio, tipo, status, ano, categoria }),
+        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, municipio, status, ano, categoria }),
       ])
       totais = tot
       porTipo = pt

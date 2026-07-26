@@ -8,7 +8,7 @@ import Topbar from '@/components/layout/Topbar'
 import { Oportunidade } from '@/lib/types'
 import type { ItemPNCP } from '@/lib/pncp'
 import { clsx } from 'clsx'
-import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target } from 'lucide-react'
+import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target, MapPin, X } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
@@ -153,6 +153,8 @@ function OportunidadesInner() {
   const [tipo, setTipo] = useState(searchParams.get('tipo') ?? 'todos')
   const [query, setQuery] = useState('')
   const [queryProponente, setQueryProponente] = useState('')
+  // Filtro por cidade vindo do deep-link do mapa (?municipio=). Escopado pela UF.
+  const [municipioFiltro, setMunicipioFiltro] = useState(searchParams.get('municipio') ?? '')
   const [queryConvenio, setQueryConvenio] = useState('')
   const [categoria, setCategoria] = useState('todos')
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(
@@ -221,6 +223,13 @@ function OportunidadesInner() {
       if (statusFiltro !== 'todos') params.set('status', statusFiltro)
       if (anoFiltro !== 'todos') params.set('ano', anoFiltro)
       if (tipo !== 'todos') params.set('tipo', tipo)
+      // Filtro por cidade (deep-link do mapa): manda município + a UF para o servidor
+      // (evita misturar cidades homônimas de estados diferentes) — KPIs batem com o mapa.
+      if (municipioFiltro) {
+        params.set('municipio', municipioFiltro)
+        const ufDL = searchParams.get('uf')
+        if (ufDL) params.set('uf', ufDL.split(',')[0])
+      }
       const res = await fetch(`/api/opportunities?${params}`)
       const data = await res.json()
       publishDataStatus(data)
@@ -229,7 +238,7 @@ function OportunidadesInner() {
       setPorTipo(data.porTipo ?? null)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
-  }, [categoria, minScore, statusFiltro, anoFiltro, tipo])
+  }, [categoria, minScore, statusFiltro, anoFiltro, tipo, municipioFiltro, searchParams])
 
   useEffect(() => { load() }, [load])
 
@@ -274,6 +283,7 @@ function OportunidadesInner() {
     if (soPortfolio && !casaComPortfolio(produtos, o)) return false
     const lic = o.licitacaoRelacionada
     if (ufsAtivos.size > 0 && !ufsAtivos.has(o.uf)) return false
+    if (municipioFiltro && (o.municipio ?? '').trim().toLowerCase() !== municipioFiltro.trim().toLowerCase()) return false
     if (anoFiltro !== 'todos' && lic?.dataPublicacaoPncp?.substring(0, 4) !== anoFiltro) return false
     if (statusFiltro === 'aberto' && !estaAberta(o)) return false
     if (statusFiltro === 'encerrado' && estaAberta(o)) return false
@@ -315,6 +325,21 @@ function OportunidadesInner() {
             : `${totalLic} no filtro${itensTotal > 0 && itensProntos < itensTotal ? ' · indexando itens…' : ''}`}
         />
         <main className="flex-1 overflow-y-auto p-6 bg-bg">
+
+          {/* Chip de filtro por cidade (deep-link do mapa) */}
+          {municipioFiltro && (
+            <div className="flex items-center gap-2 mb-4 bg-accent/10 border border-accent/30 rounded-lg px-3 py-2 w-fit">
+              <MapPin size={13} className="text-accent" />
+              <span className="text-[12px] text-strong">
+                Filtrando por cidade: <strong>{municipioFiltro}</strong>
+                {ufsAtivos.size === 1 && <span className="text-faint font-mono-custom"> / {[...ufsAtivos][0]}</span>}
+              </span>
+              <button
+                onClick={() => { setMunicipioFiltro(''); setUfsAtivos(new Set()) }}
+                title="Remover filtro de cidade"
+                className="ml-1 text-faint hover:text-strong transition-colors"><X size={13} /></button>
+            </div>
+          )}
 
           {/* ── Abas por tipo de fornecimento ────────────────────────────── */}
           <div className="flex gap-1 mb-4 border-b border-subtle overflow-x-auto">
