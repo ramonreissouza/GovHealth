@@ -12,7 +12,7 @@
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import pg from 'pg'
-import { sync as syncComprasgov } from './connector-comprasgov.mjs'
+import { conectorSync } from './registry.mjs'
 
 // ── env ────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -122,7 +122,12 @@ try {
             senha: cred.cred_cipher ? decrypt(cred.cred_cipher) : undefined,
             storageState: cred.storage_state ? decrypt(cred.storage_state) : undefined,
           }
-      resultado = await syncComprasgov({ credencial, processos: processos.map((p) => ({ licitacaoId: p.licitacao_id })), simulado: SIMULADO })
+      const sync = conectorSync(cred.conector_id)
+      if (!sync) {
+        resultado = { status: 'falha', detalhe: `conector desconhecido: ${cred.conector_id}`, mensagens: [] }
+      } else {
+        resultado = await sync({ credencial, processos: processos.map((p) => ({ licitacaoId: p.licitacao_id })), simulado: SIMULADO })
+      }
     } catch (e) {
       resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] }
     }

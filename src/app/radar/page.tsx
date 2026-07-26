@@ -10,6 +10,7 @@ import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import { Radar, AlertTriangle, ExternalLink, X, Check, Plus, Loader2, Bell } from 'lucide-react'
 import { comProblema } from '@/lib/radar/saude'
+import { CONECTORES, conectorDisponivel } from '@/lib/radar/conectores'
 import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
 
 const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'cnpj']
@@ -87,7 +88,7 @@ export default function RadarPage() {
               </p>
             </div>
             <button onClick={() => setConectar(true)} className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md bg-accent text-black font-semibold hover:bg-accent2 transition-colors">
-              <Plus size={14} /> Conectar com gov.br
+              <Plus size={14} /> Conectar portal
             </button>
           </div>
 
@@ -243,6 +244,7 @@ function Kpi({ label, valor, destaque }: { label: string; valor: string; destaqu
 type Fase = 'form' | 'live' | 'conectando' | 'ok' | 'erro'
 
 function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [conectorId, setConectorId] = useState('comprasgov')
   const [cnpj, setCnpj] = useState('')
   const [login, setLogin] = useState('')
   const [salvando, setSalvando] = useState(false)
@@ -262,7 +264,7 @@ function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     if (credId.current) return credId.current
     const r = await fetch('/api/radar/credenciais', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conectorId: 'comprasgov', cnpj, login }),
+      body: JSON.stringify({ conectorId, cnpj, login }),
     })
     const j = await r.json()
     if (!r.ok) { setErro(j.instrucoes || j.error || 'Falha ao registrar'); return null }
@@ -345,7 +347,7 @@ function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => { pararPoll(); onClose() }}>
       <div className="absolute inset-0 bg-black/50" />
       <div onClick={(e) => e.stopPropagation()} className={clsx('relative bg-bg2 border border-subtle rounded-2xl w-full p-6', fase === 'live' ? 'max-w-[820px]' : 'max-w-[440px]')}>
-        <div className="flex items-center justify-between mb-1"><h3 className="font-heading font-bold text-[16px] text-strong">Conectar com gov.br</h3><button onClick={() => { pararPoll(); onClose() }} className="text-faint hover:text-strong"><X size={18} /></button></div>
+        <div className="flex items-center justify-between mb-1"><h3 className="font-heading font-bold text-[16px] text-strong">Conectar portal</h3><button onClick={() => { pararPoll(); onClose() }} className="text-faint hover:text-strong"><X size={18} /></button></div>
 
         {fase === 'live' ? (
           <div className="mt-2">
@@ -391,19 +393,51 @@ function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           </div>
         ) : (
           <>
-            <p className="text-[12px] text-muted mb-4">
-              O login é feito na <strong className="text-strong">página oficial do gov.br</strong> — não digitamos nem
-              guardamos a sua senha aqui. Guardamos só a <strong className="text-strong">sessão (cookies) cifrada</strong>,
-              usada para ler o chat dos seus processos. Você pode desconectar quando quiser.
-            </p>
-            <div className="space-y-3">
-              <Campo label="CNPJ do fornecedor" value={cnpj} onChange={setCnpj} placeholder="00.000.000/0000-00" />
-              <Campo label="CPF ou login gov.br (identificação)" value={login} onChange={setLogin} placeholder="para identificar a conexão — a senha fica no gov.br" />
+            {/* Catálogo de portais (fonte: lib/radar/conectores). */}
+            <div className="mb-4 mt-1">
+              <span className="text-[11px] text-faint">Portal</span>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                {CONECTORES.map((c) => {
+                  const ativo = conectorId === c.id
+                  return (
+                    <button key={c.id} type="button" onClick={() => setConectorId(c.id)}
+                      className={clsx('text-left rounded-lg border px-3 py-2 transition-colors',
+                        ativo ? 'border-accent bg-accent/10' : 'border-subtle2 bg-bg3 hover:border-subtle')}>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[12px] font-semibold text-strong">{c.nome}</span>
+                        {!c.disponivel && <span className="text-[8px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1 py-0.5 rounded flex-shrink-0">em breve</span>}
+                      </div>
+                      <div className="text-[10px] text-muted mt-0.5 leading-snug">{c.descricao}</div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
+
+            {conectorDisponivel(conectorId) ? (
+              <>
+                <p className="text-[12px] text-muted mb-4">
+                  O login é feito na <strong className="text-strong">página oficial do gov.br</strong> — não digitamos nem
+                  guardamos a sua senha aqui. Guardamos só a <strong className="text-strong">sessão (cookies) cifrada</strong>,
+                  usada para ler o chat dos seus processos. Você pode desconectar quando quiser.
+                </p>
+                <div className="space-y-3">
+                  <Campo label="CNPJ do fornecedor" value={cnpj} onChange={setCnpj} placeholder="00.000.000/0000-00" />
+                  <Campo label="CPF ou login gov.br (identificação)" value={login} onChange={setLogin} placeholder="para identificar a conexão — a senha fica no gov.br" />
+                </div>
+              </>
+            ) : (
+              <div className="bg-amber/10 border border-amber/30 rounded-lg px-3 py-2.5 text-[12px] text-amber leading-snug">
+                Este portal já está no modelo de dados e na seleção por perfil — a captura de chat entra na{' '}
+                <strong>próxima etapa</strong>, quando calibrarmos o login e os seletores dele. Por ora, conecte o{' '}
+                <strong>Compras.gov.br</strong> para monitorar em tempo real.
+              </div>
+            )}
+
             {erro && <p className="text-[12px] text-red mt-3">{erro}</p>}
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => { pararPoll(); onClose() }} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
-              <button onClick={conectar} disabled={salvando || !cnpj || !login} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
+              <button onClick={conectar} disabled={!conectorDisponivel(conectorId) || salvando || !cnpj || !login} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
                 {salvando && <Loader2 size={13} className="animate-spin" />} Continuar para o gov.br
               </button>
             </div>

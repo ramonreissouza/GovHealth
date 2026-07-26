@@ -175,6 +175,12 @@ CREATE TABLE IF NOT EXISTS radar_auditoria (
 );
 CREATE INDEX IF NOT EXISTS idx_radar_audit_titular ON radar_auditoria (titular_id, criado_em DESC);
 
--- Seed idempotente do primeiro conector.
-INSERT INTO radar_conectores (id, nome) VALUES ('comprasgov', 'Compras.gov.br')
+-- Seed idempotente dos conectores (espelha src/lib/radar/conectores.ts).
+-- Compras.gov.br está disponível; os demais têm o framework pronto e entram
+-- como ETAPA 2 (seletores de login/chat calibrados por portal).
+INSERT INTO radar_conectores (id, nome) VALUES
+  ('comprasgov',   'Compras.gov.br'),
+  ('licitacoes-e', 'Licitações-e (Banco do Brasil)'),
+  ('bll',          'BLL — Bolsa de Licitações e Leilões'),
+  ('pcp',          'Portal de Compras Públicas')
 ON CONFLICT (id) DO NOTHING;

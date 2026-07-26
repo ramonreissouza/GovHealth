@@ -7,6 +7,7 @@
 import { clsx } from 'clsx'
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Loader2 } from 'lucide-react'
 import { rotuloSaude, tempoDesde, confiavelAgora } from '@/lib/radar/saude'
+import { nomeConector } from '@/lib/radar/conectores'
 import type { StatusSaude } from '@/lib/radar/types'
 
 export interface SaudeItem {
@@ -30,7 +31,7 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
   if (saude.length === 0) {
     return (
       <div className="bg-bg2 border border-subtle rounded-xl p-4 text-[12px] text-muted">
-        Nenhum conector configurado. Conecte suas credenciais do Compras.gov.br para o Radar começar a monitorar os chats.
+        Nenhum conector configurado. Conecte um portal (Compras.gov.br disponível; BLL, Portal de Compras Públicas e Licitações-e em breve) para o Radar começar a monitorar os chats.
       </div>
     )
   }
@@ -44,7 +45,7 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
           <div key={s.credencialId} className={clsx('rounded-xl border p-3.5', COR_CLS[r.cor])}>
             <div className="flex items-center gap-2">
               <Icon size={15} />
-              <span className="text-[12px] font-semibold">{s.conectorId === 'comprasgov' ? 'Compras.gov.br' : s.conectorId}</span>
+              <span className="text-[12px] font-semibold">{nomeConector(s.conectorId)}</span>
             </div>
             <div className="text-[10.5px] font-mono-custom opacity-80 mt-0.5">CNPJ {s.cnpj || '—'}</div>
             <div className="text-[12px] mt-2 leading-snug">{r.titulo}</div>
