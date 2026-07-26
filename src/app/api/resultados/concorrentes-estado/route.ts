@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
 
 const CAT_SQL = categoriaCaseSql('r.nome_catmat')
 
-interface Top3Row { vencedor: string | null; valor: number; item: string | null }
+interface ConcorrenteRow { vencedor: string | null; valor: number; item: string | null; convenios: number }
 interface ItemRow { item: string; valor: number; qtd: number }
 interface EntidadeRow { entidade: string | null; valor: number; convenios: number }
 interface UfRow { uf: string }
@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
   const ano = searchParams.get('ano') ? Number(searchParams.get('ano')) : undefined
   const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
   const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
+  // Quantos concorrentes ranquear (3 cards de destaque + o resto na lista expansível).
+  const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 100, 3), 500)
 
   // WHERE base (uf/ano/item) — usado nas contagens por categoria.
   const whereBase: string[] = ['r.valor_total_homologado IS NOT NULL']
@@ -39,15 +41,17 @@ export async function GET(req: NextRequest) {
   const whereSql = `WHERE ${where.join(' AND ')}`
 
   try {
-    const [top3, distribuicaoItens, entidades, ufsComDados, catCounts] = await Promise.all([
-      query<Top3Row>(
+    const concParams = [...params, limit]
+    const [concorrentes, distribuicaoItens, entidades, ufsComDados, catCounts] = await Promise.all([
+      query<ConcorrenteRow>(
         `SELECT r.nome_fornecedor AS vencedor,
                 SUM(r.valor_total_homologado)::float8 AS valor,
+                COUNT(DISTINCT r.numero_controle_pncp)::int AS convenios,
                 (array_agg(r.nome_catmat ORDER BY r.valor_total_homologado DESC NULLS LAST))[1] AS item
          FROM resultados r ${whereSql}
          GROUP BY r.nome_fornecedor
          ORDER BY valor DESC NULLS LAST
-         LIMIT 3`, params),
+         LIMIT $${concParams.length}`, concParams),
       query<ItemRow>(
         `SELECT COALESCE(NULLIF(r.nome_catmat, ''), '(sem descrição)') AS item,
                 SUM(r.valor_total_homologado)::float8 AS valor,
@@ -82,7 +86,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       uf: uf ?? null,
       categoria: categoria ?? null,
-      top3,
+      // top3: mantido p/ compatibilidade; concorrentes: ranking completo (até `limit`).
+      top3: concorrentes.slice(0, 3),
+      concorrentes,
       distribuicaoItens: distribuicao,
       entidades,
       ufsComDados: ufsComDados.map((u) => u.uf),

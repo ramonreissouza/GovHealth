@@ -6,7 +6,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Trophy, Building2, Database, Filter, X, Loader2, MapPin, Package } from 'lucide-react'
+import { Trophy, Building2, Database, Filter, X, Loader2, MapPin, Package, ChevronDown } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { formatBRL } from '@/lib/format'
 import { CATEGORIAS } from '@/lib/categoria-mercado'
@@ -21,7 +21,7 @@ const CORES = ['#00ff9d','#60a5fa','#f59e0b','#f87171','#c084fc','#4ade80','#22d
 interface PorRow { chave: string | null; valor: number; qtd: number }
 interface PorCatRow { categoria: string; valor: number; qtd: number }
 interface PorItemRow { item: string; codigo_catmat: string | null; valor: number; qtd: number }
-interface Top3 { vencedor: string | null; valor: number; item: string | null }
+interface Top3 { vencedor: string | null; valor: number; item: string | null; convenios?: number }
 interface ItemDist { item: string; valor: number; qtd: number; pct: number }
 interface Entidade { entidade: string | null; valor: number; convenios: number }
 interface CatCount { categoria: string; n: number; valor: number }
@@ -29,6 +29,7 @@ interface ApiResponse {
   uf: string | null
   categoria: string | null
   top3: Top3[]
+  concorrentes: Top3[]
   distribuicaoItens: ItemDist[]
   entidades: Entidade[]
   ufsComDados: string[]
@@ -55,6 +56,7 @@ export default function ConcorrentesEstadoPage() {
   const [ano, setAno] = useState('todos')
   const [itemFiltro, setItemFiltro] = useState<string | null>(null)
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
+  const [mostrarTodos, setMostrarTodos] = useState(false)
 
   // Drill-down de um concorrente (T18): histórico por estado/categoria/item.
   const [drill, setDrill] = useState<string | null>(null)
@@ -92,7 +94,10 @@ export default function ConcorrentesEstadoPage() {
 
   const ufsComDados = new Set(data?.ufsComDados ?? [])
   const dist = data?.distribuicaoItens ?? []
-  const top3 = data?.top3 ?? []
+  const concorrentes = data?.concorrentes ?? data?.top3 ?? []
+  const top3 = concorrentes.slice(0, 3)
+  const restantes = concorrentes.slice(3)
+  const maxValor = concorrentes.length ? Math.max(...concorrentes.map((c) => c.valor || 0)) : 0
   const entidades = data?.entidades ?? []
   const catMap = new Map((data?.categorias ?? []).map((c) => [c.categoria, c.n]))
 
@@ -193,6 +198,45 @@ export default function ConcorrentesEstadoPage() {
                   </button>
                 ))}
               </div>
+
+              {/* Ranking completo de concorrentes (do 4º em diante) — expansível */}
+              {restantes.length > 0 && (
+                <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden mb-4">
+                  <button
+                    onClick={() => setMostrarTodos((v) => !v)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-bg3 transition-colors">
+                    <span className="text-[11px] font-mono-custom text-strong flex items-center gap-1.5">
+                      <Trophy size={12} className="text-faint" />
+                      {mostrarTodos ? 'Ocultar' : 'Ver'} todos os {concorrentes.length} concorrentes
+                      {itemFiltro && <span className="text-faint">· {itemFiltro}</span>}
+                    </span>
+                    <ChevronDown size={14} className={clsx('text-faint transition-transform', mostrarTodos && 'rotate-180')} />
+                  </button>
+                  {mostrarTodos && (
+                    <div className="divide-y divide-subtle border-t border-subtle max-h-[60vh] overflow-y-auto">
+                      {restantes.map((c, i) => {
+                        const pct = maxValor > 0 ? (c.valor / maxValor) * 100 : 0
+                        return (
+                          <button key={`${c.vencedor}-${i}`} onClick={() => abrirDrill(c.vencedor)}
+                            className="w-full text-left px-4 py-2 relative hover:bg-bg3 transition-colors group">
+                            <span className="absolute left-0 top-0 bottom-0 bg-accent/5" style={{ width: `${pct}%` }} />
+                            <div className="relative flex items-center gap-3">
+                              <span className="w-6 text-center text-[11px] font-mono-custom font-bold text-faint flex-shrink-0">{i + 4}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[12px] text-strong truncate group-hover:text-accent transition-colors">{c.vencedor ?? '—'}</div>
+                                <div className="text-[9px] font-mono-custom text-faint mt-0.5 truncate">
+                                  {c.convenios != null && <>{c.convenios} licitaç{c.convenios !== 1 ? 'ões' : 'ão'} · </>}{c.item ?? '—'}
+                                </div>
+                              </div>
+                              <div className="text-[12px] font-mono-custom font-bold text-accent flex-shrink-0">{formatBRL(c.valor)}</div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="grid grid-cols-[260px_1fr_300px] gap-3">
                 {/* Esquerda: filtro por item */}
