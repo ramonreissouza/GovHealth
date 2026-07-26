@@ -29,6 +29,7 @@
     "capag:ingest": "node scripts/ingest-capag.mjs",
     "feedback:migrate": "node scripts/migrate-feedback.mjs",
     "feedback:agent": "node scripts/feedback/agent.mjs",
+    "jira:issues": "node scripts/jira/list-issues.mjs",
     "geo:municipios": "node scripts/geo/gen-municipios.mjs",
     "estados:migrate": "node scripts/migrate-estados.mjs",
     "ba:emendas": "node scripts/ingest-ba-emendas.mjs",
