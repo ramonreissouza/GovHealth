@@ -429,10 +429,13 @@ export async function GET(req: NextRequest) {
       console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
     }
 
-    // Dedup por município+categoria+valor
+    // Dedup pelo ID REAL da licitação (nº de controle PNCP). Antes deduplicava por
+    // município+categoria+valor, o que FUNDIA licitações distintas da mesma cidade com
+    // mesma categoria e valor (compras repetidas) — sumindo com processos reais e não
+    // batendo com a contagem/o mapa. Por controle, só remove duplicata verdadeira.
     const seen = new Set<string>()
     let resultado = oportunidades.filter((o) => {
-      const k = `${o.municipio}-${o.uf}-${o.categoria}-${o.valorEstimado}`
+      const k = o.licitacaoRelacionada?.numeroControlePNCP ?? o.id
       if (seen.has(k)) return false
       seen.add(k)
       return true
