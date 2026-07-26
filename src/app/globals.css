@@ -20,6 +20,8 @@
   --text3: #94a3b8;     /* texto fraco (faint) */
   --accent: #2f80ed;    /* azul-saúde */
   --accent2: #1f6fd6;   /* hover do acento */
+  --teal: #17b8a6;      /* teal da logo — 2ª cor da marca */
+  --teal2: #0e9c8c;     /* teal escuro (hover/contraste) */
   --amber: #d97706;
   --red: #dc2626;
   --blue: #2563eb;
@@ -63,6 +65,28 @@ body {
   .bg-bg2 { background: var(--bg2); }
   .bg-bg3 { background: var(--bg3); }
   .bg-bg4 { background: var(--bg4); }
+
+  .text-teal { color: var(--teal); }
+
+  /* Marca — gradiente azul→teal (as duas cores da logo GovHealth). */
+  .text-gradient-brand {
+    background: linear-gradient(100deg, var(--accent2) 0%, var(--teal) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .bg-gradient-brand { background: linear-gradient(100deg, var(--accent2) 0%, var(--teal) 100%); }
+  .bg-gradient-brand-soft { background: linear-gradient(100deg, rgba(31,111,214,.10) 0%, rgba(23,184,166,.10) 100%); }
+
+  /* Glassmorphism — cartão de vidro fosco (para elementos flutuando sobre o mapa).
+     Contraste preservado: fundo claro semiopaco + sombra em camadas (não neumórfica). */
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(14px) saturate(150%);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.65);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 16px 40px -12px rgba(15, 23, 42, 0.18);
+  }
 
   .border-subtle { border-color: var(--border); }
   .border-subtle2 { border-color: var(--border2); }

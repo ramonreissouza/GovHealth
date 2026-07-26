@@ -113,8 +113,13 @@ function Checkout() {
   const inp = 'w-full text-[13px] bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-strong placeholder:text-faint focus:border-accent outline-none'
 
   return (
-    <div className="min-h-screen bg-bg text-strong">
-      <header className="border-b border-subtle bg-bg2/80 backdrop-blur">
+    <div className="relative min-h-screen bg-bg text-strong overflow-hidden">
+      {/* Brilhos suaves da marca (azul→teal) para dar profundidade ao fundo */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -top-40 -left-32 w-[420px] h-[420px] rounded-full bg-accent/[0.06] blur-3xl" />
+        <div className="absolute top-1/3 -right-40 w-[440px] h-[440px] rounded-full bg-[#17b8a6]/[0.06] blur-3xl" />
+      </div>
+      <header className="border-b border-subtle bg-bg2/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-[900px] mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/inicio" className="flex items-center gap-1.5 text-[13px] text-muted hover:text-strong"><ArrowLeft size={15} /> Voltar</Link>
           <div className="flex items-center gap-4">
@@ -141,7 +146,7 @@ function Checkout() {
             {metodo === 'pix' ? (
               <>
                 <p className="text-[14px] text-muted mb-5">Recebemos sua solicitação do plano <strong className="text-strong">{plano.nome}</strong>. Assim que confirmarmos o Pix, ativamos o acesso de <strong className="text-strong">{f.email}</strong> — em até <strong className="text-strong">24h úteis</strong>. Envie o comprovante para agilizar:</p>
-                <a href={comprovanteHref} className="inline-flex items-center gap-2 text-[14px] font-semibold bg-accent text-black px-5 py-2.5 rounded-lg hover:bg-accent2">
+                <a href={comprovanteHref} className="inline-flex items-center gap-2 text-[14px] font-semibold bg-gradient-brand text-white px-5 py-2.5 rounded-lg hover:brightness-105 transition-all shadow-lg shadow-accent/20">
                   <Mail size={15} /> Enviar comprovante por e-mail
                 </a>
                 <p className="text-[11.5px] text-faint mt-3">Ou envie para <strong className="text-muted">{CONTATO_EMAIL}</strong>.</p>
@@ -166,7 +171,7 @@ function Checkout() {
                   Este recurso está disponível no plano <strong>Pro</strong>. Faça upgrade para desbloquear Concorrentes, Breakdown, Mapa, CRM, Agenda, Dossiês e Portfólio.
                 </div>
               )}
-              <h1 className="font-heading font-bold text-[22px] mb-1">Assinar {plano.nome}</h1>
+              <h1 className="font-heading font-bold text-[22px] mb-1">Assinar <span className="text-gradient-brand">{plano.nome}</span></h1>
               <p className="text-[13px] text-muted mb-5">Preencha os dados de cobrança. Sem fidelidade — cancele quando quiser.</p>
 
               <div className="space-y-3">
@@ -218,7 +223,7 @@ function Checkout() {
                           <div className="flex items-stretch gap-1.5">
                             <code className="flex-1 min-w-0 truncate bg-bg3 border border-subtle rounded-lg px-2.5 py-2 text-[11px] text-muted font-mono-custom">{PIX.copiaECola}</code>
                             <button type="button" onClick={copiarPix}
-                              className={clsx('flex items-center gap-1 px-2.5 rounded-lg text-[11.5px] font-semibold transition-colors', copiado ? 'bg-emerald-500 text-white' : 'bg-accent text-black hover:bg-accent2')}>
+                              className={clsx('flex items-center gap-1 px-2.5 rounded-lg text-[11.5px] font-semibold transition-all', copiado ? 'bg-emerald-500 text-white' : 'bg-gradient-brand text-white hover:brightness-105')}>
                               {copiado ? <Check size={13} /> : <Copy size={13} />} {copiado ? 'Copiado' : 'Copiar'}
                             </button>
                           </div>
@@ -242,7 +247,7 @@ function Checkout() {
               ) : (
                 <>
                   <button onClick={assinar} disabled={enviando}
-                    className="mt-5 w-full flex items-center justify-center gap-2 text-[15px] font-semibold bg-accent text-black py-3 rounded-lg hover:bg-accent2 disabled:opacity-60">
+                    className="mt-5 w-full flex items-center justify-center gap-2 text-[15px] font-semibold bg-gradient-brand text-white py-3 rounded-lg hover:brightness-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60">
                     {enviando && <Loader2 size={16} className="animate-spin" />}
                     {metodo === 'pix' ? 'Já fiz o Pix — enviar comprovante' : metodo === 'cartao' ? 'Pagar com cartão' : 'Enviar solicitação'} · {formatarPreco(plano.preco)}/{plano.ciclo}
                   </button>

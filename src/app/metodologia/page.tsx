@@ -69,22 +69,27 @@ const LIMITACOES = [
 
 export default function MetodologiaPage() {
   return (
-    <div className="min-h-screen bg-bg text-strong">
+    <div className="relative min-h-screen bg-bg text-strong overflow-hidden">
+      {/* Brilhos suaves da marca (azul→teal) para dar profundidade ao fundo branco */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -top-40 -left-32 w-[440px] h-[440px] rounded-full bg-accent/[0.07] blur-3xl" />
+        <div className="absolute top-1/2 -right-40 w-[460px] h-[460px] rounded-full bg-[#17b8a6]/[0.07] blur-3xl" />
+      </div>
       {/* Topo */}
-      <header className="border-b border-subtle bg-bg2">
+      <header className="border-b border-subtle bg-bg2/85 backdrop-blur sticky top-0 z-20">
         <div className="max-w-[880px] mx-auto px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Image src="/logo-govhealth.png" alt="GovHealth" width={150} height={68} priority className="h-8 w-auto" />
             <span className="font-mono-custom text-[10px] text-faint tracking-wide hidden sm:inline">Sales Intelligence</span>
           </div>
-          <Link href="/login" className="text-[12px] font-semibold text-black bg-accent hover:bg-accent2 px-3 py-1.5 rounded-md transition-colors">
+          <Link href="/login" className="text-[12px] font-semibold text-white bg-gradient-brand hover:brightness-105 px-3 py-1.5 rounded-md transition-all">
             Entrar na plataforma
           </Link>
         </div>
       </header>
 
       <main className="max-w-[880px] mx-auto px-6 py-10">
-        <h1 className="font-heading font-bold text-[26px] leading-tight mb-2">Fontes e metodologia</h1>
+        <h1 className="font-heading font-bold text-[26px] leading-tight mb-2">Fontes e <span className="text-gradient-brand">metodologia</span></h1>
         <p className="text-[14px] text-muted leading-relaxed mb-8 max-w-[640px]">
           A GovHealth AI é uma plataforma de inteligência comercial para o mercado de saúde pública.
           Nossas análises embasam propostas de alto valor — por isso a origem de cada dado é pública e
@@ -97,7 +102,7 @@ export default function MetodologiaPage() {
           <h2 className="font-heading font-semibold text-[18px] mb-4">De onde vêm os dados</h2>
           <div className="space-y-3">
             {FONTES.map((f) => (
-              <div key={f.nome} className="bg-bg2 border border-subtle rounded-xl p-4">
+              <div key={f.nome} className="bg-bg2 border border-subtle rounded-xl p-4 hover:border-accent/40 hover:shadow-lg hover:shadow-slate-200/50 transition-all">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <div className="text-[14px] font-semibold text-strong">{f.nome}</div>

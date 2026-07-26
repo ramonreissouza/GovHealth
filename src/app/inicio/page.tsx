@@ -79,7 +79,7 @@ export default async function InicioPage() {
             <a href="#planos" className="text-[13px] text-muted hover:text-strong transition-colors hidden sm:block">Planos</a>
             <Link href="/metodologia" className="text-[13px] text-muted hover:text-strong transition-colors hidden sm:block">Metodologia</Link>
             <Link href="/login" className="text-[13px] text-muted hover:text-strong transition-colors">Entrar</Link>
-            <Link href="/login?criar=1" className="text-[13px] font-semibold text-white bg-accent hover:bg-accent-2 px-3.5 py-1.5 rounded-lg transition-colors">
+            <Link href="/login?criar=1" className="text-[13px] font-semibold text-white bg-gradient-brand hover:brightness-105 px-3.5 py-1.5 rounded-lg transition-all">
               Criar conta
             </Link>
           </div>
@@ -89,38 +89,49 @@ export default async function InicioPage() {
       <main>
         {/* ── Bloco 1 — Hero ─────────────────────────────────────────────── */}
         <section className="relative overflow-hidden border-b border-subtle">
-          {/* Fundo autêntico: o mapa real da plataforma, suave, com wash de gradiente */}
+          {/* Fundo autêntico: o mapa real da plataforma, com wash + brilhos da marca (azul→teal) */}
           <div aria-hidden className="absolute inset-0 -z-10">
             <Image src="/shots/mapa.png" alt="" fill priority sizes="100vw" className="object-cover object-right opacity-[0.10]" />
             <div className="absolute inset-0 bg-gradient-to-r from-bg via-bg/95 to-bg/70" />
             <div className="absolute -top-40 -left-40 w-[520px] h-[520px] rounded-full bg-accent/10 blur-3xl" />
+            <div className="absolute top-1/3 -right-32 w-[460px] h-[460px] rounded-full bg-[#17b8a6]/10 blur-3xl" />
           </div>
 
-          <div className="max-w-[1080px] mx-auto px-6 pt-16 pb-14 grid lg:grid-cols-[1fr_1.05fr] gap-12 items-center">
+          <div className="max-w-[1080px] mx-auto px-6 pt-16 pb-16 grid lg:grid-cols-[1fr_1.05fr] gap-12 items-center">
             <div>
-              <div className="reveal inline-flex items-center gap-1.5 text-[11px] font-mono-custom text-accent bg-accent/10 border border-accent/20 rounded-full px-3 py-1 mb-6" style={{ '--d': '0s' } as React.CSSProperties}>
-                <ShieldCheck size={12} /> Fontes 100% oficiais · metodologia pública
+              <div className="reveal inline-flex items-center gap-1.5 text-[11px] font-mono-custom text-strong glass rounded-full px-3 py-1.5 mb-6" style={{ '--d': '0s' } as React.CSSProperties}>
+                <ShieldCheck size={12} className="text-teal" /> Fontes 100% oficiais · metodologia pública
               </div>
               <h1 className="reveal font-heading font-bold text-[40px] sm:text-[52px] leading-[1.03] tracking-tight" style={{ '--d': '0.05s' } as React.CSSProperties}>
-                Antecipe as licitações de <span className="text-accent">saúde pública</span> do Brasil
+                Antecipe as licitações de <span className="text-gradient-brand">saúde pública</span> do Brasil
               </h1>
               <p className="reveal text-[17px] text-muted leading-relaxed max-w-[520px] mt-5" style={{ '--d': '0.1s' } as React.CSSProperties}>
                 Da emenda parlamentar ao edital: oportunidades, vencedores e concorrentes — com dados oficiais e metodologia transparente.
               </p>
               <div className="reveal flex items-center gap-4 mt-8" style={{ '--d': '0.15s' } as React.CSSProperties}>
-                <Link href="/login?criar=1" className="inline-flex items-center gap-2 text-[15px] font-semibold text-white bg-accent hover:bg-accent-2 px-6 py-3 rounded-xl transition-colors shadow-sm shadow-accent/20">
+                <Link href="/login?criar=1" className="inline-flex items-center gap-2 text-[15px] font-semibold text-white bg-gradient-brand hover:brightness-105 px-6 py-3 rounded-xl transition-all shadow-lg shadow-accent/20">
                   Criar conta · 3 dias grátis <ArrowRight size={16} />
                 </Link>
                 <Link href="/login" className="text-[14px] text-muted hover:text-strong transition-colors">Já tenho conta</Link>
               </div>
             </div>
 
-            {/* Screenshot real do dashboard, emoldurado */}
-            <div className="reveal" style={{ '--d': '0.2s' } as React.CSSProperties}>
+            {/* Screenshot real do dashboard, emoldurado + chip de vidro flutuante (ar de monitoramento) */}
+            <div className="reveal relative" style={{ '--d': '0.2s' } as React.CSSProperties}>
               <Frame>
                 <Image src="/shots/dashboard.png" alt="Dashboard da GovHealth AI com oportunidades reais de saúde"
                   width={1440} height={900} priority className="w-full h-auto" />
               </Frame>
+              <div aria-hidden className="glass rounded-2xl px-4 py-3 absolute -bottom-5 -left-5 hidden sm:flex items-center gap-3">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-pulse-dot absolute inline-flex h-full w-full rounded-full bg-[#17b8a6]" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-teal" />
+                </span>
+                <div className="leading-tight">
+                  <div className="font-mono-custom font-semibold text-[15px] text-strong tracking-tight">{bilhoes(s.valor)}</div>
+                  <div className="text-[10.5px] text-faint">monitorados agora</div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -188,10 +199,10 @@ export default async function InicioPage() {
             <p className="text-center text-[13.5px] text-muted mb-10 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
             <div className="grid sm:grid-cols-2 gap-5 max-w-[760px] mx-auto">
               {PLANOS.map((p, i) => (
-                <div key={p.id} className={clsx('reveal rounded-2xl p-7 border flex flex-col bg-bg2', p.destaque ? 'border-accent shadow-xl shadow-slate-200/60' : 'border-subtle')} style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
+                <div key={p.id} className={clsx('reveal rounded-2xl p-7 border flex flex-col', p.destaque ? 'border-accent shadow-xl shadow-accent/10 bg-gradient-brand-soft' : 'border-subtle bg-bg2')} style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="font-heading font-bold text-[19px]">{p.nome}</h3>
-                    {p.destaque && <span className="text-[10px] font-mono-custom text-white bg-accent px-2 py-0.5 rounded-full font-bold">Mais completo</span>}
+                    {p.destaque && <span className="text-[10px] font-mono-custom text-white bg-gradient-brand px-2 py-0.5 rounded-full font-bold">Mais completo</span>}
                   </div>
                   <p className="text-[12.5px] text-muted mb-4">{p.resumo}</p>
                   <div className="flex items-baseline gap-1 mb-5">
@@ -206,8 +217,8 @@ export default async function InicioPage() {
                     ))}
                   </ul>
                   <Link href={`/login?criar=1&plano=${p.id}`}
-                    className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-colors',
-                      p.destaque ? 'bg-accent text-white hover:bg-accent-2' : 'bg-bg3 border border-subtle2 text-strong hover:border-accent/50')}>
+                    className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-all',
+                      p.destaque ? 'bg-gradient-brand text-white hover:brightness-105 shadow-lg shadow-accent/20' : 'bg-bg2 border border-subtle2 text-strong hover:border-accent/50')}>
                     Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
                   </Link>
                   <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2.5">ou assinar direto</Link>
@@ -220,7 +231,7 @@ export default async function InicioPage() {
 
         {/* ── Bloco 6 — CTA final ────────────────────────────────────────── */}
         <section className="max-w-[1080px] mx-auto px-6 py-20">
-          <div className="reveal relative overflow-hidden rounded-3xl bg-accent px-8 py-14 text-center">
+          <div className="reveal relative overflow-hidden rounded-3xl bg-gradient-brand px-8 py-14 text-center">
             <div aria-hidden className="absolute -top-24 -right-24 w-[360px] h-[360px] rounded-full bg-white/10 blur-3xl" />
             <h2 className="font-heading font-bold text-[26px] sm:text-[30px] text-white relative">Comece antes do próximo edital</h2>
             <p className="text-[14.5px] text-white/85 mt-2 mb-7 relative max-w-[460px] mx-auto">Teste grátis por 3 dias. Sem cartão, sem fidelidade.</p>

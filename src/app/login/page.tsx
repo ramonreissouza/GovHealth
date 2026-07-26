@@ -32,7 +32,12 @@ function Auth() {
   }, [router])
 
   return (
-    <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-10">
+    <div className="relative min-h-screen bg-bg flex items-center justify-center px-4 py-10 overflow-hidden">
+      {/* Brilhos suaves da marca (azul→teal) para elevar o card sobre o fundo branco */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -top-32 -left-24 w-[420px] h-[420px] rounded-full bg-accent/[0.08] blur-3xl" />
+        <div className="absolute -bottom-32 -right-24 w-[440px] h-[440px] rounded-full bg-[#17b8a6]/[0.08] blur-3xl" />
+      </div>
       <div className={clsx('w-full', modo === 'criar' ? 'max-w-[860px]' : 'max-w-[380px]')}>
         {/* Logo */}
         <div className="flex flex-col items-center gap-2 mb-8">
@@ -44,8 +49,8 @@ function Auth() {
         <div className="max-w-[380px] mx-auto grid grid-cols-2 gap-1 bg-bg2 border border-subtle rounded-lg p-1 mb-5">
           {(['entrar', 'criar'] as Modo[]).map((m) => (
             <button key={m} onClick={() => setModo(m)}
-              className={clsx('text-[12.5px] font-semibold py-2 rounded-md transition-colors',
-                modo === m ? 'bg-accent text-black' : 'text-muted hover:text-strong')}>
+              className={clsx('text-[12.5px] font-semibold py-2 rounded-md transition-all',
+                modo === m ? 'bg-gradient-brand text-white shadow-sm shadow-accent/20' : 'text-muted hover:text-strong')}>
               {m === 'entrar' ? 'Entrar' : 'Criar conta'}
             </button>
           ))}
@@ -158,7 +163,7 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
           </div>
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-accent text-black font-semibold text-[13px] py-2.5 rounded-lg hover:bg-accent/90 transition-colors mt-1 disabled:opacity-60">
+            className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60">
             {loading && <Loader2 size={14} className="animate-spin" />} Entrar
           </button>
         </form>
@@ -172,7 +177,7 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
           </div>
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading || otp.length < 6}
-            className="w-full flex items-center justify-center gap-2 bg-accent text-black font-semibold text-[13px] py-2.5 rounded-lg hover:bg-accent/90 transition-colors mt-1 disabled:opacity-60">
+            className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60">
             {loading && <Loader2 size={14} className="animate-spin" />} Confirmar código
           </button>
           <button type="button" onClick={() => { setEtapa('senha'); setError(''); setOtp('') }}
@@ -223,7 +228,7 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
     <div className="bg-bg2 border border-subtle rounded-xl p-7 grid md:grid-cols-[1fr_320px] gap-7">
       {/* Formulário */}
       <div>
-        <h1 className="text-[17px] font-heading font-semibold text-strong mb-1">Criar conta · <span className="text-accent">3 dias grátis</span></h1>
+        <h1 className="text-[17px] font-heading font-semibold text-strong mb-1">Criar conta · <span className="text-gradient-brand">3 dias grátis</span></h1>
         <p className="text-[13px] text-muted mb-5">Sem cartão agora. Você testa por 3 dias e decide se assina depois.</p>
 
         <form onSubmit={handleCriar} className="flex flex-col gap-3">
@@ -269,7 +274,7 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
 
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-accent text-black font-semibold text-[13px] py-2.5 rounded-lg hover:bg-accent/90 transition-colors mt-1 disabled:opacity-60">
+            className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60">
             {loading && <Loader2 size={14} className="animate-spin" />} Começar teste de 3 dias
           </button>
           <p className="text-[10.5px] text-faint text-center">Ao criar a conta você concorda com nossos termos. Cancele quando quiser.</p>
