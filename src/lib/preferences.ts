@@ -1,13 +1,13 @@
 // src/lib/preferences.ts
-// Preferências do usuário (UFs, categorias, termos, faixa de valor). Além de
-// personalizarem as telas, alimentam a SELEÇÃO AUTOMÁTICA do Radar — por isso
-// sincronizam com a conta (user_data 'perfil') via lib/synced.
-import { readLocal, writeLocal } from './synced'
-
-const STORAGE_KEY = 'govhealth:preferences'
+// Preferências do usuário (UFs, categorias, termos, faixa de valor). Desde a
+// unificação do "Setup da Empresa", estes campos vivem em lib/empresa.ts (fonte de
+// verdade única). Este módulo é uma VIEW fina sobre o setup, mantida para os
+// consumidores existentes (dashboard, seleção automática do Radar, oportunidades).
+import { getEmpresa, saveEmpresa, DEFAULT_EMPRESA } from './empresa'
 
 export interface UserPreferences {
   nomeEmpresa: string
+  cnpj?: string
   segmento: string
   categorias: string[]
   ufs: string[]
@@ -16,23 +16,28 @@ export interface UserPreferences {
   termosBusca: string[]
 }
 
-const DEFAULT_PREFERENCES: UserPreferences = {
-  nomeEmpresa: '',
-  segmento: 'Equipamentos Médicos',
-  categorias: [],
-  ufs: [],
-  termosBusca: [],
-}
-
+/** Recorta os campos de perfil do setup unificado. */
 export function getPreferences(): UserPreferences {
-  return { ...DEFAULT_PREFERENCES, ...readLocal<Partial<UserPreferences>>(STORAGE_KEY, {}) }
+  const e = getEmpresa()
+  return {
+    nomeEmpresa: e.nomeEmpresa,
+    cnpj: e.cnpj,
+    segmento: e.segmento,
+    categorias: e.categorias,
+    ufs: e.ufs,
+    valorMin: e.valorMin,
+    valorMax: e.valorMax,
+    termosBusca: e.termosBusca,
+  }
 }
 
+/** Grava os campos de perfil no setup unificado (preserva o portfólio). */
 export function savePreferences(prefs: UserPreferences): void {
-  // writeLocal grava no cache local e espelha no servidor (user_data 'perfil').
-  writeLocal(STORAGE_KEY, prefs)
+  saveEmpresa(prefs)
 }
 
+/** Restaura os campos de perfil ao padrão (não mexe no portfólio). */
 export function resetPreferences(): void {
-  if (typeof window !== 'undefined') localStorage.removeItem(STORAGE_KEY)
+  const { produtos: _omit, ...perfilDefault } = DEFAULT_EMPRESA
+  saveEmpresa(perfilDefault)
 }

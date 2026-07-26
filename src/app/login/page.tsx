@@ -189,7 +189,7 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
 
 /* ───────────────────────── Cadastro + plano + trial ───────────────────────── */
 function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>; planoInicial?: 'essencial' | 'pro' }) {
-  const [f, setF] = useState({ nome: '', email: '', senha: '', empresa: '', telefone: '' })
+  const [f, setF] = useState({ nome: '', email: '', senha: '', empresa: '', cnpj: '', telefone: '' })
   const [plano, setPlano] = useState<'essencial' | 'pro'>(planoInicial ?? 'pro')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -244,7 +244,10 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
             </Campo>
             <Campo label="Telefone"><input className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Campo>
           </div>
-          <Campo label="Empresa / instituição"><input className={inp} value={f.empresa} onChange={set('empresa')} placeholder="Distribuidora, hospital…" /></Campo>
+          <div className="grid grid-cols-2 gap-3">
+            <Campo label="Empresa / instituição"><input className={inp} value={f.empresa} onChange={set('empresa')} placeholder="Distribuidora, hospital…" /></Campo>
+            <Campo label="CNPJ"><input className={inp} value={f.cnpj} onChange={set('cnpj')} placeholder="00.000.000/0000-00" /></Campo>
+          </div>
 
           {/* Seleção de plano */}
           <div className="mt-1">

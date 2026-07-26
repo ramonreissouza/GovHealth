@@ -19,6 +19,7 @@ const Schema = z.object({
   senha: z.string().min(6, 'A senha precisa de ao menos 6 caracteres').max(72),
   plano: z.enum(['essencial', 'pro']),
   empresa: z.string().max(160).optional(),
+  cnpj: z.string().max(20).optional(),
   telefone: z.string().max(40).optional(),
 })
 
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
       senha: d.senha,
       role: 'user',
       empresa: d.empresa,
+      cnpj: d.cnpj,
       telefone: d.telefone,
       plano: plano.id,
       status_assinatura: 'trial',
