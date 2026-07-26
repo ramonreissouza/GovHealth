@@ -14,6 +14,8 @@ import { Resend } from 'resend'
 import { query } from '@/lib/db'
 import { matchItem, type AlertaConfig, type AlertaNotificacao, type ItemParaMatch } from '@/lib/alertas'
 import { buildAlertaDigestHtml } from '@/lib/alerta-email'
+// DESATIVADO (a pedido) — Cofre de Documentos. Reativar: descomentar o import e o bloco (0) abaixo.
+// import { enviarAvisosDocumentos } from '@/lib/documentos-alertas'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -38,6 +40,13 @@ export async function GET(req: NextRequest) {
 
   const inicio = Date.now()
   try {
+    // 0) [DESATIVADO] Avisos de vencimento do Cofre de Documentos. Mantido zerado nos
+    //    retornos; reativar = descomentar o import e a chamada abaixo.
+    const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
+    const docsAviso = { titulares: 0, emails: 0 }
+    // try { docsAviso = await enviarAvisosDocumentos(apiKey, from) }
+    // catch (e) { console.error('[cron:alertas-email] documentos', e) }
+
     // 1) Usuários com monitores + o que já foi enviado (dedup).
     const rows = await query<{ email: string; nome: string | null; monitores: unknown; enviados: unknown }>(
       `SELECT u.email, u.nome, cfg.valor AS monitores, sent.valor AS enviados
@@ -56,7 +65,7 @@ export async function GET(req: NextRequest) {
       // só quem tem ao menos um monitor ATIVO com e-mail habilitado
       .filter((u) => u.email && u.monitores.some((m) => m.ativo && m.emailHabilitado))
     if (usuarios.length === 0) {
-      return NextResponse.json({ ok: true, usuarios: 0, enviados: 0, motivo: 'nenhum monitor com e-mail' })
+      return NextResponse.json({ ok: true, usuarios: 0, enviados: 0, documentos: docsAviso, motivo: 'nenhum monitor com e-mail' })
     }
 
     // 2) Itens recentes (compartilhados entre usuários) — editais abertos + emendas.
@@ -101,7 +110,6 @@ export async function GET(req: NextRequest) {
 
     // 3) Por usuário: casa, deduplica, e-maila os novos.
     const resend = new Resend(apiKey)
-    const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
     let enviados = 0
 
     for (const u of usuarios) {
@@ -153,9 +161,9 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    const msg = `[cron:alertas-email] usuarios=${usuarios.length} e-mails=${enviados} editais=${editais.length} emendas=${emendas.length} em ${Date.now() - inicio}ms`
+    const msg = `[cron:alertas-email] usuarios=${usuarios.length} e-mails=${enviados} editais=${editais.length} emendas=${emendas.length} docs=${docsAviso.emails} em ${Date.now() - inicio}ms`
     console.log(msg)
-    return NextResponse.json({ ok: true, usuarios: usuarios.length, enviados, editais: editais.length, emendas: emendas.length })
+    return NextResponse.json({ ok: true, usuarios: usuarios.length, enviados, editais: editais.length, emendas: emendas.length, documentos: docsAviso })
   } catch (error) {
     console.error('[cron:alertas-email]', error)
     return NextResponse.json({ ok: false, error: String(error) }, { status: 500 })
