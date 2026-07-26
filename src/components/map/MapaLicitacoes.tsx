@@ -7,11 +7,11 @@
 //  • zoom alto   → círculos por município (raio = nº de licitações), clicáveis
 // "Meu território" destaca/filtra as UFs do vendedor. Dynamic import only (sem SSR).
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import Map, { Source, Layer, Popup, NavigationControl, type MapLayerMouseEvent, type LayerProps } from 'react-map-gl/maplibre'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import Map, { Source, Layer, Popup, type MapLayerMouseEvent, type LayerProps, type MapRef } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { clsx } from 'clsx'
-import { MapPin, Filter, X, ChevronDown } from 'lucide-react'
+import { MapPin, Filter, X, ChevronDown, Plus, Minus, ZoomIn } from 'lucide-react'
 import { CATEGORIA_CHART_COLOR as CAT_COLOR, CATEGORIA_LABEL as CAT_LABEL } from '@/lib/categorias'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
@@ -76,6 +76,7 @@ export default function MapaLicitacoes() {
   const [selected, setSelected] = useState<SelInfo | null>(null)
   const [catFilter, setCatFilter] = useState<string | null>(null)
   const [zoom, setZoom] = useState(3.8)
+  const mapRef = useRef<MapRef>(null)
 
   // Território
   const [territorio, setTerr] = useState<string[]>([])
@@ -149,6 +150,7 @@ export default function MapaLicitacoes() {
   return (
     <div className="flex-1 relative">
       <Map
+        ref={mapRef}
         initialViewState={{ longitude: -52, latitude: -14, zoom: 3.8 }}
         style={{ width: '100%', height: '100%' }}
         mapStyle={MAP_STYLE}
@@ -157,7 +159,6 @@ export default function MapaLicitacoes() {
         onZoom={(e) => setZoom(e.viewState.zoom)}
         cursor={zoom >= ZOOM_CORTE ? 'pointer' : 'grab'}
       >
-        <NavigationControl position="top-right" />
         <Source id="municipios" type="geojson" data={geojson}>
           <Layer {...heatmapLayer} />
           <Layer {...circleLayer} />
@@ -187,10 +188,23 @@ export default function MapaLicitacoes() {
         )}
       </Map>
 
-      {/* Dica de zoom (só no modo heatmap) */}
+      {/* Controle de zoom +/- (alternativa ao scroll do mouse) */}
+      <div className="absolute top-4 right-4 flex flex-col rounded-lg overflow-hidden border border-subtle shadow-lg">
+        <button onClick={() => mapRef.current?.zoomIn()} title="Aproximar"
+          className="w-9 h-9 bg-bg2/95 backdrop-blur text-strong hover:bg-bg3 flex items-center justify-center border-b border-subtle transition-colors">
+          <Plus size={16} />
+        </button>
+        <button onClick={() => mapRef.current?.zoomOut()} title="Afastar"
+          className="w-9 h-9 bg-bg2/95 backdrop-blur text-strong hover:bg-bg3 flex items-center justify-center transition-colors">
+          <Minus size={16} />
+        </button>
+      </div>
+
+      {/* Dica de zoom (só no modo heatmap, quando ainda está afastado) */}
       {zoom < ZOOM_CORTE && !loading && (
-        <div className="absolute top-4 right-16 bg-bg2/90 backdrop-blur border border-subtle rounded-lg px-2.5 py-1.5 text-[10px] text-muted font-mono-custom shadow">
-          Dê zoom para ver os municípios →
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-bg2/90 backdrop-blur border border-subtle rounded-full px-3 py-1.5 text-[11px] text-muted shadow">
+          <ZoomIn size={13} className="text-accent" />
+          Dê zoom para ver melhor cada região
         </div>
       )}
 
