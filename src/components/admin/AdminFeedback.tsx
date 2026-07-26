@@ -6,9 +6,9 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { clsx } from 'clsx'
-import { Loader2, Bug, Lightbulb, HelpCircle, Sparkles, RefreshCw, MapPin, Clock, User, CheckCircle2, XCircle, GitBranch, FileCode } from 'lucide-react'
+import { Loader2, Bug, Lightbulb, HelpCircle, Sparkles, RefreshCw, MapPin, Clock, User, CheckCircle2, XCircle, GitBranch, FileCode, Paperclip, FileText } from 'lucide-react'
 import {
-  STATUS_LABEL, TIPO_LABEL, SEVERIDADE_LABEL, STATUSES,
+  STATUS_LABEL, TIPO_LABEL, SEVERIDADE_LABEL, STATUSES, formatBytes,
   type FeedbackIssue, type FeedbackTipo, type FeedbackStatus,
 } from '@/lib/feedback'
 
@@ -67,8 +67,9 @@ export default function AdminFeedback() {
       })
       const data = await res.json()
       if (res.ok && data.issue) {
-        setIssues((prev) => prev.map((i) => (i.id === id ? data.issue : i)))
-        setSel((s) => (s && s.id === id ? data.issue : s))
+        // PATCH não devolve anexos — preserva os que já carregamos (evita sumir da tela).
+        setIssues((prev) => prev.map((i) => (i.id === id ? { ...data.issue, anexos: i.anexos } : i)))
+        setSel((s) => (s && s.id === id ? { ...data.issue, anexos: s.anexos } : s))
         load()
       }
     } finally { setSalvando(false) }
@@ -125,6 +126,7 @@ export default function AdminFeedback() {
                     <span>{TIPO_LABEL[i.tipo]}</span>
                     <span className={SEV_COR[i.severidade]}>· {SEVERIDADE_LABEL[i.severidade]}</span>
                     {i.contexto?.rota && <span className="flex items-center gap-0.5"><MapPin size={9} />{i.contexto.rota}</span>}
+                    {(i.anexos ?? []).length > 0 && <span className="flex items-center gap-0.5" title="anexos"><Paperclip size={9} />{(i.anexos ?? []).length}</span>}
                     <span className="ml-auto flex items-center gap-0.5"><Clock size={9} />{fmt(i.criadoEm)}</span>
                   </div>
                 </button>
@@ -149,6 +151,35 @@ export default function AdminFeedback() {
 
                 {sel.descricao && (
                   <p className="text-[12px] text-muted whitespace-pre-wrap leading-snug border-t border-subtle pt-3">{sel.descricao}</p>
+                )}
+
+                {/* Anexos do relato (imagens = miniatura; txt/pdf = chip para abrir) */}
+                {(sel.anexos ?? []).length > 0 && (
+                  <div className="border-t border-subtle pt-3">
+                    <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wide mb-2 flex items-center gap-1">
+                      <Paperclip size={11} /> Anexos ({(sel.anexos ?? []).length})
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(sel.anexos ?? []).map((a) => {
+                        const href = `/api/feedback/anexo/${a.id}`
+                        return a.mime.startsWith('image/') ? (
+                          <a key={a.id} href={href} target="_blank" rel="noopener noreferrer"
+                            title={`${a.nome} · ${formatBytes(a.tamanho)}`}
+                            className="block w-20 h-20 rounded-lg overflow-hidden border border-subtle hover:border-accent/50 transition-colors">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={href} alt={a.nome} className="w-full h-full object-cover" />
+                          </a>
+                        ) : (
+                          <a key={a.id} href={href} target="_blank" rel="noopener noreferrer" title={a.nome}
+                            className="flex items-center gap-1.5 bg-bg3 border border-subtle rounded-lg px-2.5 py-2 text-[11px] text-muted hover:text-strong hover:border-accent/50 transition-colors">
+                            <FileText size={13} className="text-accent flex-shrink-0" />
+                            <span className="truncate max-w-[120px]">{a.nome}</span>
+                            <span className="text-faint">{formatBytes(a.tamanho)}</span>
+                          </a>
+                        )
+                      })}
+                    </div>
+                  </div>
                 )}
 
                 {/* Quem reportou + contexto */}

@@ -46,6 +46,14 @@ export interface FeedbackSolucao {
   erro?: string                         // se a geração falhou
 }
 
+/** Metadados de um anexo (sem os bytes — o conteúdo é servido por /api/feedback/anexo/[id]). */
+export interface FeedbackAnexo {
+  id: string
+  nome: string
+  mime: string
+  tamanho: number
+}
+
 export interface FeedbackIssue {
   id: string
   criadoEm: string
@@ -65,6 +73,33 @@ export interface FeedbackIssue {
   solucao?: FeedbackSolucao | null
   jiraKey?: string | null
   resolvidoEm?: string | null
+  anexos?: FeedbackAnexo[]
+}
+
+// ── Anexos: limites e tipos aceitos (compartilhados entre widget, API e admin) ──
+// Cap total conservador p/ caber no limite de corpo de request da Vercel (~4,5 MB).
+export const ANEXO_MAX_ARQUIVOS = 3
+export const ANEXO_MAX_BYTES = 4 * 1024 * 1024        // por arquivo
+export const ANEXO_MAX_TOTAL_BYTES = 4 * 1024 * 1024  // somatório do envio
+export const ANEXO_MIMES: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'text/plain': 'txt',
+  'application/pdf': 'pdf',
+}
+export const ANEXO_ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.txt,.pdf'
+
+export function isAnexoMimePermitido(mime: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ANEXO_MIMES, mime)
+}
+
+/** KB/MB legível para rótulos de UI. */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export const TIPO_LABEL: Record<FeedbackTipo, string> = {

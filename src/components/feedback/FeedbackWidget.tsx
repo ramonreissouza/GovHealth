@@ -8,8 +8,13 @@ import React, { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { clsx } from 'clsx'
-import { MessageCircle, X, Send, CheckCircle2, Bug, Lightbulb, HelpCircle, Sparkles, Loader2 } from 'lucide-react'
-import { TIPOS, SEVERIDADES, TIPO_LABEL, SEVERIDADE_LABEL, type FeedbackTipo, type FeedbackSeveridade } from '@/lib/feedback'
+import { MessageCircle, X, Send, CheckCircle2, Bug, Lightbulb, HelpCircle, Sparkles, Loader2, Paperclip, Image as ImageIcon, FileText } from 'lucide-react'
+import {
+  TIPOS, SEVERIDADES, TIPO_LABEL, SEVERIDADE_LABEL,
+  ANEXO_ACCEPT, ANEXO_MAX_ARQUIVOS, ANEXO_MAX_BYTES, ANEXO_MAX_TOTAL_BYTES,
+  isAnexoMimePermitido, formatBytes,
+  type FeedbackTipo, type FeedbackSeveridade,
+} from '@/lib/feedback'
 
 const TIPO_ICON: Record<FeedbackTipo, React.ElementType> = {
   bug: Bug, sugestao: Lightbulb, duvida: HelpCircle, melhoria: Sparkles,
@@ -27,6 +32,7 @@ export default function FeedbackWidget() {
   const [severidade, setSeveridade] = useState<FeedbackSeveridade>('media')
   const [titulo, setTitulo] = useState('')
   const [descricao, setDescricao] = useState('')
+  const [anexos, setAnexos] = useState<File[]>([])
   const [enviando, setEnviando] = useState(false)
   const [enviado, setEnviado] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -35,7 +41,29 @@ export default function FeedbackWidget() {
   if (oculto) return null
 
   function reset() {
-    setTipo('bug'); setSeveridade('media'); setTitulo(''); setDescricao(''); setErro(null); setEnviado(false)
+    setTipo('bug'); setSeveridade('media'); setTitulo(''); setDescricao(''); setAnexos([]); setErro(null); setEnviado(false)
+  }
+
+  function onSelectFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    setErro(null)
+    const novos = Array.from(e.target.files ?? [])
+    e.target.value = '' // permite re-selecionar o mesmo arquivo depois de remover
+    const atuais = [...anexos]
+    for (const f of novos) {
+      if (atuais.length >= ANEXO_MAX_ARQUIVOS) { setErro(`Máximo de ${ANEXO_MAX_ARQUIVOS} anexos.`); break }
+      if (!isAnexoMimePermitido(f.type)) { setErro(`Tipo não suportado: ${f.name}. Use imagem, TXT ou PDF.`); continue }
+      if (f.size > ANEXO_MAX_BYTES) { setErro(`"${f.name}" excede ${ANEXO_MAX_BYTES / 1024 / 1024} MB.`); continue }
+      if (atuais.some((a) => a.name === f.name && a.size === f.size)) continue // evita duplicar
+      atuais.push(f)
+    }
+    if (atuais.reduce((s, f) => s + f.size, 0) > ANEXO_MAX_TOTAL_BYTES) {
+      setErro(`Anexos somam mais que ${ANEXO_MAX_TOTAL_BYTES / 1024 / 1024} MB no total.`); return
+    }
+    setAnexos(atuais)
+  }
+
+  function removerAnexo(idx: number) {
+    setErro(null); setAnexos((prev) => prev.filter((_, i) => i !== idx))
   }
 
   async function enviar() {
@@ -48,11 +76,22 @@ export default function FeedbackWidget() {
         userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
         viewport: typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : undefined,
       }
-      const res = await fetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo, severidade, titulo: titulo.trim(), descricao: descricao.trim(), contexto }),
-      })
+      let res: Response
+      if (anexos.length > 0) {
+        // Com anexos → multipart (evita inflar base64 e respeita o limite de corpo da Vercel).
+        const fd = new FormData()
+        fd.set('tipo', tipo); fd.set('severidade', severidade)
+        fd.set('titulo', titulo.trim()); fd.set('descricao', descricao.trim())
+        fd.set('contexto', JSON.stringify(contexto))
+        for (const f of anexos) fd.append('anexos', f)
+        res = await fetch('/api/feedback', { method: 'POST', body: fd })
+      } else {
+        res = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tipo, severidade, titulo: titulo.trim(), descricao: descricao.trim(), contexto }),
+        })
+      }
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? 'Falha ao enviar.')
       setEnviado(true)
@@ -70,7 +109,7 @@ export default function FeedbackWidget() {
         <button
           onClick={() => setAberto(true)}
           title="Reporte um problema ou peça ajuda"
-          className="fixed bottom-5 right-5 z-[200] flex items-center gap-2 pl-3 pr-4 py-3 rounded-full bg-accent text-black shadow-lg shadow-black/20 hover:bg-accent/90 transition-all"
+          className="fixed bottom-5 right-5 z-[200] flex items-center gap-2 pl-3 pr-4 py-3 rounded-full bg-gradient-brand text-white shadow-lg shadow-accent/25 hover:brightness-105 transition-all"
         >
           <MessageCircle size={18} />
           <span className="text-[13px] font-semibold">Ajuda</span>
@@ -105,7 +144,7 @@ export default function FeedbackWidget() {
                   Reportar outro
                 </button>
                 <button onClick={() => { setAberto(false); reset() }}
-                  className="px-3 py-1.5 rounded-lg bg-accent text-black text-[12px] font-semibold hover:bg-accent/90 transition-colors">
+                  className="px-3 py-1.5 rounded-lg bg-gradient-brand text-white text-[12px] font-semibold hover:brightness-105 transition-all">
                   Fechar
                 </button>
               </div>
@@ -153,6 +192,33 @@ export default function FeedbackWidget() {
                 />
               </div>
 
+              {/* Anexos (opcional) */}
+              <div>
+                <label className="text-[10px] font-mono-custom text-faint uppercase tracking-wide block mb-1.5">Anexos (opcional)</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {anexos.map((f, idx) => (
+                    <div key={`${f.name}-${idx}`} className="flex items-center gap-1.5 bg-bg3 border border-subtle rounded-lg pl-2 pr-1 py-1 text-[11px] text-muted">
+                      {f.type.startsWith('image/')
+                        ? <ImageIcon size={12} className="text-accent flex-shrink-0" />
+                        : <FileText size={12} className="text-accent flex-shrink-0" />}
+                      <span className="truncate max-w-[110px]" title={f.name}>{f.name}</span>
+                      <span className="text-faint">{formatBytes(f.size)}</span>
+                      <button onClick={() => removerAnexo(idx)} aria-label={`Remover ${f.name}`}
+                        className="p-0.5 rounded hover:bg-bg4 text-faint hover:text-red transition-colors">
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  {anexos.length < ANEXO_MAX_ARQUIVOS && (
+                    <label className="flex items-center gap-1 cursor-pointer bg-bg3 border border-dashed border-subtle2 rounded-lg px-2.5 py-1.5 text-[11px] text-muted hover:text-strong hover:border-accent/50 transition-colors">
+                      <Paperclip size={12} /> Anexar
+                      <input type="file" accept={ANEXO_ACCEPT} multiple className="hidden" onChange={onSelectFiles} />
+                    </label>
+                  )}
+                </div>
+                <p className="text-[10px] text-faint mt-1">Imagem, TXT ou PDF · até {ANEXO_MAX_ARQUIVOS} arquivos, {ANEXO_MAX_TOTAL_BYTES / 1024 / 1024} MB no total.</p>
+              </div>
+
               {/* Severidade */}
               <div>
                 <label className="text-[10px] font-mono-custom text-faint uppercase tracking-wide block mb-1.5">Severidade</label>
@@ -170,7 +236,7 @@ export default function FeedbackWidget() {
               {erro && <p className="text-[12px] text-red">{erro}</p>}
 
               <button onClick={enviar} disabled={enviando}
-                className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-accent text-black text-[13px] font-semibold hover:bg-accent/90 transition-colors disabled:opacity-60">
+                className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-gradient-brand text-white text-[13px] font-semibold hover:brightness-105 transition-all shadow-sm shadow-accent/20 disabled:opacity-60">
                 {enviando ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 {enviando ? 'Enviando…' : 'Enviar'}
               </button>

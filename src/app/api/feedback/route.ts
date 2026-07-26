@@ -10,8 +10,9 @@ import { randomUUID } from 'node:crypto'
 import { query } from '@/lib/db'
 import { exigirMaster } from '@/lib/admin-guard'
 import {
-  isFeedbackTipo, isFeedbackSeveridade, isFeedbackStatus,
-  type FeedbackIssue, type FeedbackContexto, type FeedbackAnalise, type FeedbackSolucao,
+  isFeedbackTipo, isFeedbackSeveridade, isFeedbackStatus, isAnexoMimePermitido,
+  ANEXO_MAX_ARQUIVOS, ANEXO_MAX_BYTES, ANEXO_MAX_TOTAL_BYTES,
+  type FeedbackIssue, type FeedbackContexto, type FeedbackAnalise, type FeedbackSolucao, type FeedbackAnexo,
 } from '@/lib/feedback'
 import { criarCardJira, comentarStatus } from '@/lib/jira'
 
@@ -42,24 +43,60 @@ function toIssue(r: Row): FeedbackIssue {
   }
 }
 
+// Arquivo pronto para persistir (nome, mime e bytes já validados).
+interface AnexoIn { nome: string; mime: string; buf: Buffer }
+
 // ── POST: criar issue (usuário logado) ────────────────────────────────────────
+// Aceita JSON (sem anexos) OU multipart/form-data (com anexos: png/jpeg/webp/gif/txt/pdf).
 export async function POST(req: NextRequest) {
   const token = (await getToken({ req, secret: process.env.NEXTAUTH_SECRET })) as TokenUser | null
   if (!token) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
 
-  let body: {
-    tipo?: unknown; severidade?: unknown; titulo?: unknown; descricao?: unknown; contexto?: unknown
-  }
-  try { body = await req.json() } catch { return NextResponse.json({ error: 'body inválido' }, { status: 400 }) }
+  let titulo = '', descricao = ''
+  let tipoRaw: unknown = 'bug', sevRaw: unknown = 'media', contextoRaw: unknown = {}
+  const arquivos: AnexoIn[] = []
 
-  const titulo = String(body.titulo ?? '').trim()
+  const contentType = req.headers.get('content-type') ?? ''
+  if (contentType.includes('multipart/form-data')) {
+    let form: FormData
+    try { form = await req.formData() } catch { return NextResponse.json({ error: 'body inválido' }, { status: 400 }) }
+    titulo = String(form.get('titulo') ?? '').trim()
+    descricao = String(form.get('descricao') ?? '').trim().slice(0, 5000)
+    tipoRaw = form.get('tipo'); sevRaw = form.get('severidade')
+    try { contextoRaw = JSON.parse(String(form.get('contexto') ?? '{}')) } catch { contextoRaw = {} }
+
+    const files = form.getAll('anexos').filter((f): f is File => f instanceof File && f.size > 0)
+    if (files.length > ANEXO_MAX_ARQUIVOS) {
+      return NextResponse.json({ error: `Máximo de ${ANEXO_MAX_ARQUIVOS} anexos.` }, { status: 400 })
+    }
+    let total = 0
+    for (const f of files) {
+      if (!isAnexoMimePermitido(f.type)) {
+        return NextResponse.json({ error: `Tipo de arquivo não suportado: ${f.name}.` }, { status: 400 })
+      }
+      if (f.size > ANEXO_MAX_BYTES) {
+        return NextResponse.json({ error: `"${f.name}" excede o limite de ${ANEXO_MAX_BYTES / 1024 / 1024} MB.` }, { status: 400 })
+      }
+      total += f.size
+      if (total > ANEXO_MAX_TOTAL_BYTES) {
+        return NextResponse.json({ error: `Anexos somam mais que ${ANEXO_MAX_TOTAL_BYTES / 1024 / 1024} MB.` }, { status: 400 })
+      }
+      arquivos.push({ nome: f.name.slice(0, 200), mime: f.type, buf: Buffer.from(await f.arrayBuffer()) })
+    }
+  } else {
+    let body: { tipo?: unknown; severidade?: unknown; titulo?: unknown; descricao?: unknown; contexto?: unknown }
+    try { body = await req.json() } catch { return NextResponse.json({ error: 'body inválido' }, { status: 400 }) }
+    titulo = String(body.titulo ?? '').trim()
+    descricao = String(body.descricao ?? '').trim().slice(0, 5000)
+    tipoRaw = body.tipo; sevRaw = body.severidade; contextoRaw = body.contexto
+  }
+
   if (!titulo) return NextResponse.json({ error: 'Informe um título para o problema.' }, { status: 400 })
 
-  const tipo = isFeedbackTipo(body.tipo) ? body.tipo : 'bug'
-  const severidade = isFeedbackSeveridade(body.severidade) ? body.severidade : 'media'
-  const descricao = String(body.descricao ?? '').trim().slice(0, 5000)
-  const contexto: FeedbackContexto = (body.contexto && typeof body.contexto === 'object')
-    ? (body.contexto as FeedbackContexto) : {}
+  const tipo = isFeedbackTipo(tipoRaw) ? tipoRaw : 'bug'
+  const severidade = isFeedbackSeveridade(sevRaw) ? sevRaw : 'media'
+  const contexto: FeedbackContexto = (contextoRaw && typeof contextoRaw === 'object')
+    ? (contextoRaw as FeedbackContexto) : {}
 
   const id = randomUUID()
   const uid = (token.id ?? token.sub ?? null) as string | null
@@ -70,6 +107,17 @@ export async function POST(req: NextRequest) {
     [id, uid, token.email ?? null, token.name ?? null, token.empresa ?? null, token.plano ?? null,
       tipo, severidade, titulo, descricao, JSON.stringify(contexto)],
   )
+
+  // Anexos (se houver) — best-effort: falha aqui não perde o relato já gravado.
+  for (const a of arquivos) {
+    try {
+      await query(
+        `INSERT INTO feedback_anexos (id, issue_id, nome, mime, tamanho, dados)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [randomUUID(), id, a.nome, a.mime, a.buf.length, a.buf],
+      )
+    } catch (e) { console.warn('[feedback] anexo falhou:', e) }
+  }
 
   // Espelha no Jira (Fase 4) — best-effort e INERTE sem credenciais; nunca falha o submit.
   try {
@@ -100,8 +148,26 @@ export async function GET(req: NextRequest) {
   const counts = await query<{ status: string; n: number }>(
     `SELECT status, COUNT(*)::int AS n FROM feedback_issues GROUP BY status`,
   )
+
+  const issues = rows.map(toIssue)
+  // Metadados dos anexos (sem os bytes) para as issues listadas.
+  if (issues.length) {
+    const ids = issues.map((i) => i.id)
+    const anexos = await query<{ id: string; issue_id: string; nome: string; mime: string; tamanho: number }>(
+      `SELECT id, issue_id, nome, mime, tamanho FROM feedback_anexos
+        WHERE issue_id = ANY($1) ORDER BY criado_em ASC`, [ids],
+    )
+    const porIssue = new Map<string, FeedbackAnexo[]>()
+    for (const a of anexos) {
+      const arr = porIssue.get(a.issue_id) ?? []
+      arr.push({ id: a.id, nome: a.nome, mime: a.mime, tamanho: a.tamanho })
+      porIssue.set(a.issue_id, arr)
+    }
+    for (const i of issues) i.anexos = porIssue.get(i.id) ?? []
+  }
+
   return NextResponse.json({
-    issues: rows.map(toIssue),
+    issues,
     contagem: Object.fromEntries(counts.map((c) => [c.status, c.n])),
   })
 }
