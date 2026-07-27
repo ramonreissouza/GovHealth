@@ -14,6 +14,7 @@ import { createDeal, dealExists } from '@/lib/crm'
 import { parseValorBR, type EmendaDetalhe } from '@/lib/emendas'
 import type { EmendaRadar, Temperatura } from '@/lib/radar-verba'
 import { getTerritorio } from '@/lib/territorio'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import TerritorioToggle from '@/components/ui/TerritorioToggle'
 import CapagBadge from '@/components/ui/CapagBadge'
 
@@ -42,6 +43,11 @@ function RadarVerbaConteudo() {
   const searchParams = useSearchParams()
   const focoEmenda = searchParams.get('emenda')
   const [uf, setUf] = useState(searchParams.get('uf') ?? '')
+  // UF única: foca no estado do Setup só quando o vendedor atua em um estado (item 4);
+  // multi-estado usa o Território. Deep-link (?uf=) dos Alertas tem prioridade.
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUf(ufs[0]), {
+    apenasSeUnica: true, pular: !!searchParams.get('uf'),
+  })
   const [ano, setAno] = useState(searchParams.get('ano') ?? '')
   const [subfuncao, setSubfuncao] = useState('')
   const [soQuentes, setSoQuentes] = useState(false)
@@ -147,7 +153,7 @@ function RadarVerbaConteudo() {
           <div className="flex items-center gap-2 mb-4 flex-wrap">
             <div className="flex items-center gap-1.5">
               <MapPin size={13} className="text-faint" />
-              <select value={uf} onChange={(e) => setUf(e.target.value)} disabled={usandoTerritorio} title={usandoTerritorio ? 'Território ativo comanda as UFs' : undefined} className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none disabled:opacity-50">
+              <select value={uf} onChange={(e) => { marcarUFTocado(); setUf(e.target.value) }} disabled={usandoTerritorio} title={usandoTerritorio ? 'Território ativo comanda as UFs' : undefined} className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none disabled:opacity-50">
                 <option value="">Todas UFs</option>
                 {UFS.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>

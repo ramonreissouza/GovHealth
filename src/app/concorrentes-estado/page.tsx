@@ -13,6 +13,7 @@ import { CATEGORIAS } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
 import type { ExportColumn } from '@/lib/export'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -53,6 +54,8 @@ export default function ConcorrentesEstadoPage() {
   const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
 
   const [uf, setUf] = useState<string>('CE')
+  // Tela de UF única: pré-seleciona o 1º estado do Setup da Empresa (item 4).
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUf(ufs[0]))
   const [ano, setAno] = useState('todos')
   const [itemFiltro, setItemFiltro] = useState<string | null>(null)
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
@@ -118,7 +121,7 @@ export default function ConcorrentesEstadoPage() {
               {UFS.map((u) => {
                 const temDados = ufsComDados.has(u)
                 return (
-                  <button key={u} onClick={() => { setUf(u); setItemFiltro(null) }}
+                  <button key={u} onClick={() => { marcarUFTocado(); setUf(u); setItemFiltro(null) }}
                     title={temDados ? '' : 'Sem resultados no banco (rode o ETL para esta UF)'}
                     className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                       uf === u ? 'bg-accent text-black font-bold'

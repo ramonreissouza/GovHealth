@@ -1,7 +1,7 @@
 'use client'
 // src/app/oportunidades/page.tsx — Análise Vencedores (referencia1)
 
-import React, { useState, useEffect, useCallback, Suspense } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
@@ -12,13 +12,17 @@ import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutLis
 import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
-import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
+// Preço de referência Compras.gov REMOVIDO do breakdown por item (dava valores
+// distoantes p/ itens sem CATMAT — a ref cai em texto e desalinha). Ver PrecoRefItem.
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
-import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
+// Dossiê de edital DESATIVADO nas Licitações (a pedido). Reativar: descomentar.
+// import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/portfolio'
 import { getTerritorio } from '@/lib/territorio'
+import { getPreferences } from '@/lib/preferences'
+import { HYDRATED_EVENT } from '@/lib/synced'
 import { publishDataStatus } from '@/lib/data-status'
 import { matchesTermo } from '@/lib/text'
 
@@ -126,10 +130,8 @@ function ItemsRow({ opp, preloaded }: { opp: Oportunidade; preloaded?: ItemPNCP[
               </span>
               <span className="block text-[8px] font-mono-custom text-faint uppercase tracking-wide">total</span>
             </span>
-            {/* Preço de referência à direita — a tela tem espaço aqui. */}
-            <div className="flex-shrink-0 w-[260px]">
-              <PrecoRefItem descricao={item.descricao} valorUnitario={item.valorUnitarioEstimado} uf={opp.uf} unidadeEdital={item.unidadeMedida} />
-            </div>
+            {/* Preço de referência Compras.gov removido daqui (a pedido): dava valores
+                estranhos p/ itens sem CATMAT. Reativar: reintroduzir <PrecoRefItem />. */}
           </div>
         ))}
       </div>
@@ -160,14 +162,48 @@ function OportunidadesInner() {
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(
     () => { const u = searchParams.get('uf'); return u ? new Set(u.toUpperCase().split(',').map((s) => s.trim()).filter(Boolean)) : new Set() },
   )
+  const ufsKey = useMemo(() => [...ufsAtivos].sort().join(','), [ufsAtivos])
+  // Quando o usuário mexe manualmente no filtro de UF, paramos de aplicar o default
+  // do Setup da Empresa (senão sobrescreveríamos a escolha dele a cada hidratação).
+  const ufTocadoRef = useRef(false)
+  const marcarUFTocado = () => { ufTocadoRef.current = true }
   const [terrUFs, setTerrUFs] = useState<string[]>([])
   useEffect(() => { setTerrUFs(getTerritorio()) }, [])
+
+  // Item 4 — pré-filtra pelos ESTADOS DO SETUP DA EMPRESA. Ao entrar em Licitações
+  // sem deep-link de UF e sem o usuário ter mexido no filtro, aplica as UFs de
+  // atuação salvas no Setup. Re-tenta quando a conta termina de hidratar do servidor
+  // (as prefs chegam de forma assíncrona logo após o login).
+  useEffect(() => {
+    const aplicarSetup = () => {
+      if (ufTocadoRef.current) return
+      if (searchParams.get('uf')) return            // deep-link (mapa/dashboard) tem prioridade
+      const doSetup = getPreferences().ufs
+      if (doSetup.length === 0) return
+      setUfsAtivos(new Set(doSetup))
+      setTerrUFs(getTerritorio())
+    }
+    aplicarSetup()
+    window.addEventListener(HYDRATED_EVENT, aplicarSetup)
+    return () => window.removeEventListener(HYDRATED_EVENT, aplicarSetup)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // Território ativo = ufsAtivos exatamente igual ao conjunto do território.
   const territorioAtivo = terrUFs.length > 0 && terrUFs.length === ufsAtivos.size && terrUFs.every((u) => ufsAtivos.has(u))
-  const [anoFiltro, setAnoFiltro] = useState('todos')
+  const [anoFiltro, setAnoFiltro] = useState(() => {
+    // Deep-link do dashboard (?opp=): abre em "todos os anos" p/ não filtrar fora o lead.
+    if (searchParams.get('opp')) return 'todos'
+    const a = searchParams.get('ano'); return a && /^\d{4}$/.test(a) ? a : 'todos'
+  })
   // Default: abertas (as que ainda dá para disputar). Encerradas (já homologadas)
   // são muito mais — ao escolher "Encerrado" pré-selecionamos um ano p/ não pesar.
-  const [statusFiltro, setStatusFiltro] = useState('aberto')
+  // Deep-link do dashboard (?opp=): status "todos" para NÃO esconder a licitação clicada
+  // (o filtro cliente de aberto/encerrado usa a data de encerramento e às vezes diverge
+  // do status do servidor — sem isto o lead vinha carregado mas não aparecia).
+  const [statusFiltro, setStatusFiltro] = useState(() => {
+    if (searchParams.get('opp')) return 'todos'
+    const s = searchParams.get('status'); return s === 'aberto' || s === 'encerrado' || s === 'todos' ? s : 'aberto'
+  })
   const [minScore, setMinScore] = useState(Number(searchParams.get('minScore') ?? 0) || 0)
   const [viewMode, setViewMode] = useState<'tabela' | 'cards'>('tabela')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -191,26 +227,19 @@ function OportunidadesInner() {
   useEffect(() => { setProdutos(getProdutos()) }, [])
   const temPortfolio = produtos.some((p) => p.ativo)
 
-  // Deep-link vindo do dashboard (?opp=<id>): expande, rola e destaca a oportunidade.
+  // Deep-link vindo do dashboard (?opp=<id>): a licitação clicada é expandida, paginada
+  // para o lote visível, rolada até o centro e destacada. (O efeito que faz isso fica
+  // mais abaixo, depois de `filtered`/`visibleCount`, para paginar corretamente.)
   const focusId = searchParams.get('opp')
   const [highlightId, setHighlightId] = useState<string | null>(null)
-  useEffect(() => {
-    if (!focusId || loading || opps.length === 0) return
-    if (!opps.some((o) => o.id === focusId)) return
-    setExpanded((p) => new Set(p).add(focusId))
-    setHighlightId(focusId)
-    const t = setTimeout(() => {
-      document.getElementById(`opp-${focusId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }, 150)
-    const t2 = setTimeout(() => setHighlightId(null), 2600)
-    return () => { clearTimeout(t); clearTimeout(t2) }
-  }, [focusId, loading, opps])
 
   const toggle = (id: string) =>
     setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s })
 
-  const toggleUF = (uf: string) =>
+  const toggleUF = (uf: string) => {
+    marcarUFTocado()
     setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -229,6 +258,10 @@ function OportunidadesInner() {
         params.set('municipio', municipioFiltro)
         const ufDL = searchParams.get('uf')
         if (ufDL) params.set('uf', ufDL.split(',')[0])
+      } else if (ufsKey) {
+        // UF filtrada no SERVIDOR (não só no cliente): os KPIs/contagens batem com o
+        // filtro e a licitação clicada no dashboard entra no conjunto carregado.
+        params.set('ufs', ufsKey)
       }
       const res = await fetch(`/api/opportunities?${params}`)
       const data = await res.json()
@@ -238,7 +271,7 @@ function OportunidadesInner() {
       setPorTipo(data.porTipo ?? null)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
-  }, [categoria, minScore, statusFiltro, anoFiltro, tipo, municipioFiltro, searchParams])
+  }, [categoria, minScore, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams])
 
   useEffect(() => { load() }, [load])
 
@@ -300,10 +333,10 @@ function OportunidadesInner() {
   })
 
   // KPIs — usam os totais REAIS do filtro (servidor) quando não há refinamento só
-  // do cliente (busca livre / UF / portfólio). Com esses refinamentos ativos, somam
-  // o conjunto visível carregado.
+  // do cliente (busca livre / portfólio). A UF agora vai ao servidor (ufs), então os
+  // totais já refletem o filtro de estado — não conta como refinamento de cliente.
   const refinamentoCliente =
-    !!query.trim() || !!queryProponente.trim() || !!queryConvenio.trim() || ufsAtivos.size > 0 || soPortfolio
+    !!query.trim() || !!queryProponente.trim() || !!queryConvenio.trim() || soPortfolio
   const usarTotais = !refinamentoCliente && !!totais
   const totalLic = usarTotais ? totais!.total : filtered.length
   const valorTotal = usarTotais ? totais!.valorTotal : filtered.reduce((s, o) => s + o.valorEstimado, 0)
@@ -313,6 +346,23 @@ function OportunidadesInner() {
 
   // Lote visível (reinicia ao mudar filtros/dados).
   const visible = filtered.slice(0, visibleCount)
+
+  // Deep-link (?opp=): posição do lead focado na lista filtrada. Declarado APÓS o efeito
+  // que reinicia o lote (para o bump de visibleCount não ser sobrescrito) — garante que
+  // a linha exista no DOM antes de rolar até ela.
+  const focusIndex = focusId ? filtered.findIndex((o) => o.id === focusId) : -1
+  useEffect(() => {
+    if (!focusId || loading || focusIndex < 0) return
+    setVisibleCount((n) => (focusIndex >= n ? focusIndex + 1 : n)) // renderiza a linha do lead
+    setExpanded((p) => new Set(p).add(focusId))
+    setHighlightId(focusId)
+    const t = setTimeout(() => {
+      document.getElementById(`opp-${focusId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 220)
+    const t2 = setTimeout(() => setHighlightId(null), 2800)
+    return () => { clearTimeout(t); clearTimeout(t2) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, loading, focusIndex])
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -335,7 +385,7 @@ function OportunidadesInner() {
                 {ufsAtivos.size === 1 && <span className="text-faint font-mono-custom"> / {[...ufsAtivos][0]}</span>}
               </span>
               <button
-                onClick={() => { setMunicipioFiltro(''); setUfsAtivos(new Set()) }}
+                onClick={() => { marcarUFTocado(); setMunicipioFiltro(''); setUfsAtivos(new Set()) }}
                 title="Remover filtro de cidade"
                 className="ml-1 text-faint hover:text-strong transition-colors"><X size={13} /></button>
             </div>
@@ -470,14 +520,14 @@ function OportunidadesInner() {
           {/* ── UF bar (multi-select) ─────────────────────────────────────── */}
           <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
             <div className="flex gap-1 flex-wrap">
-              <button onClick={() => setUfsAtivos(new Set())}
+              <button onClick={() => { marcarUFTocado(); setUfsAtivos(new Set()) }}
                 className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                   ufsAtivos.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                 Todos
               </button>
               {terrUFs.length > 0 && (
                 <button
-                  onClick={() => setUfsAtivos(territorioAtivo ? new Set() : new Set(terrUFs))}
+                  onClick={() => { marcarUFTocado(); setUfsAtivos(territorioAtivo ? new Set() : new Set(terrUFs)) }}
                   title={`Aplicar as ${terrUFs.length} UF(s) do seu território`}
                   className={clsx('flex items-center gap-1 text-[10px] font-mono-custom px-2.5 py-1 rounded-md border transition-all',
                     territorioAtivo ? 'bg-accent/15 text-accent border-accent/40 font-semibold' : 'border-accent/30 text-accent hover:bg-accent/10')}>
@@ -627,7 +677,8 @@ function OportunidadesInner() {
                                   )}
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <AddToCRMButton oportunidade={opp} />
-                                    <AbrirDossieButton oportunidade={opp} />
+                                    {/* Dossiê de edital desativado nas Licitações (a pedido).
+                                        Reativar: descomentar. <AbrirDossieButton oportunidade={opp} /> */}
                                   </div>
                                 </div>
                                 <div className="space-y-3">
@@ -787,7 +838,8 @@ function OportunidadesInner() {
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
                               <AddToCRMButton oportunidade={opp} />
-                              <AbrirDossieButton oportunidade={opp} />
+                              {/* Dossiê de edital desativado nas Licitações (a pedido).
+                                  Reativar: descomentar. <AbrirDossieButton oportunidade={opp} /> */}
                             </div>
                           </div>
                           <div className="space-y-3">

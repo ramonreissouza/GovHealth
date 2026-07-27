@@ -111,11 +111,20 @@ export default function OpportunityList({ data, loading, error, limit = 6, produ
         const situacaoId = lic?.situacaoCompraId ?? 4
         const dias = lic?.dataEncerramentoProposta ? diasRestantes(lic.dataEncerramentoProposta) : null
         const anoRef = lic?.dataPublicacaoPncp ? lic.dataPublicacaoPncp.substring(0, 4) : null
+        // Deep-link p/ Licitações: leva o id + a UF do lead. A UF restringe a busca no
+        // servidor (o lead entra no conjunto carregado) e a página de Licitações abre em
+        // status/ano "todos" quando há ?opp= — assim a licitação clicada nunca é filtrada
+        // para fora e é expandida/rolada automaticamente.
+        const irParaLicitacao = () => {
+          const qs = new URLSearchParams({ opp: opp.id })
+          if (opp.uf && opp.uf !== 'N/D') qs.set('uf', opp.uf)
+          router.push(`/oportunidades?${qs}`)
+        }
 
         return (
           <div
             key={opp.id}
-            onClick={() => router.push(`/oportunidades?opp=${encodeURIComponent(opp.id)}`)}
+            onClick={irParaLicitacao}
             className="flex items-start gap-3 py-3 border-b border-subtle last:border-0 cursor-pointer hover:bg-bg3 hover:-mx-2 hover:px-2 hover:rounded-md transition-all"
           >
             {/* Score */}

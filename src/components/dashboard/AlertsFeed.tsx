@@ -29,14 +29,19 @@ const FALLBACK_ALERTS: Alert[] = [
   },
 ]
 
-export default function AlertsFeed({ uf, tipo }: { uf?: string; tipo?: string }) {
+// `ufs` = UFs de atuação do vendedor (setup/território). Multi-UF → filtra por todas;
+// UF única → filtra por ela; vazio → Brasil. Sem isso, o feed caía p/ dado NACIONAL
+// quando o território estava ativo, "vazando" alertas de estados fora do setup.
+export default function AlertsFeed({ ufs = [], tipo }: { ufs?: string[]; tipo?: string }) {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
+  const ufsKey = ufs.join(',')
 
   useEffect(() => {
     setLoading(true)
     const params = new URLSearchParams()
-    if (uf) params.set('uf', uf)
+    if (ufs.length > 1) params.set('ufs', ufsKey)
+    else if (ufs.length === 1) params.set('uf', ufs[0])
     if (tipo) params.set('tipo', tipo)
     const qs = params.toString()
     fetch(`/api/alerts${qs ? `?${qs}` : ''}`)
@@ -47,7 +52,8 @@ export default function AlertsFeed({ uf, tipo }: { uf?: string; tipo?: string })
       })
       .catch(() => setAlerts(FALLBACK_ALERTS))
       .finally(() => setLoading(false))
-  }, [uf, tipo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ufsKey, tipo])
 
   if (loading) {
     return (

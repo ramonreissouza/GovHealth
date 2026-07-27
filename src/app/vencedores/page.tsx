@@ -13,6 +13,7 @@ import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import type { ExportColumn } from '@/lib/export'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
@@ -71,6 +72,8 @@ export default function VencedoresPage() {
   const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
 
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
+  // Pré-filtra pelos estados do Setup da Empresa (item 4).
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [empresa, setEmpresa] = useState('')
   const [empresaQuery, setEmpresaQuery] = useState('')
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
@@ -154,13 +157,13 @@ export default function VencedoresPage() {
           {/* Filtros */}
           <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
             <div className="flex gap-1 flex-wrap items-center">
-              <button onClick={() => setUfsAtivos(new Set())}
+              <button onClick={() => { marcarUFTocado(); setUfsAtivos(new Set()) }}
                 className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                   ufsAtivos.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                 Todas UFs
               </button>
               {UFS.map((uf) => (
-                <button key={uf} onClick={() => setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })}
+                <button key={uf} onClick={() => { marcarUFTocado(); setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s }) }}
                   className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                     ufsAtivos.has(uf) ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                   {uf}

@@ -10,6 +10,7 @@ import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import { MapPin, ChevronDown, ChevronUp, Trophy, AlertTriangle, ExternalLink, Building2, FileText } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
@@ -40,6 +41,9 @@ export default function MinhasDisputasPage() {
   const [data, setData] = useState<Resp | null>(null)
   const [loading, setLoading] = useState(true)
   const [uf, setUf] = useState<string | null>(null)
+  // UF única: se o vendedor atua em UM estado só, foca nele (item 4). Multi-estado
+  // mantém "Todos" (esta tela mostra uma UF por vez e não deve esconder disputas).
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUf(ufs[0]), { apenasSeUnica: true })
   const [aberta, setAberta] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -112,7 +116,7 @@ export default function MinhasDisputasPage() {
               <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5">
                 <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Estado</div>
                 <div className="flex gap-1 flex-wrap items-center">
-                  <button onClick={() => setUf(null)}
+                  <button onClick={() => { marcarUFTocado(); setUf(null) }}
                     className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                       uf === null ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                     Todos
@@ -120,7 +124,7 @@ export default function MinhasDisputasPage() {
                   {UFS.map((u) => {
                     const tem = ufsComDados.includes(u)
                     return (
-                      <button key={u} onClick={() => tem && setUf(u)} disabled={!tem}
+                      <button key={u} onClick={() => { marcarUFTocado(); tem && setUf(u) }} disabled={!tem}
                         className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                           uf === u ? 'bg-accent text-black font-bold' : tem ? 'text-muted hover:text-strong hover:bg-bg3' : 'text-faint/30 cursor-not-allowed')}>
                         {u}

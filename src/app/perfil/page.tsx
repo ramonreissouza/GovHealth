@@ -16,6 +16,7 @@ import { useSession } from 'next-auth/react'
 import { temAcessoPro } from '@/lib/plano-gating'
 import { getPreferences, savePreferences, resetPreferences, type UserPreferences } from '@/lib/preferences'
 import { HYDRATED_EVENT } from '@/lib/synced'
+import { markOnboarded } from '@/lib/onboarding'
 import { getProdutos } from '@/lib/portfolio'
 import PortfolioManager from '@/components/setup/PortfolioManager'
 
@@ -70,6 +71,8 @@ function SetupInner() {
   // Portfólio era um recurso Pro; preservamos o gate mesmo dentro do setup unificado.
   const acessoPro = temAcessoPro({ plano: su?.plano, role: su?.role, status: su?.status })
   const abaUrl = (searchParams.get('tab') === 'portfolio' ? 'portfolio' : 'empresa') as Aba
+  // 1º acesso: chegou aqui pelo gate de onboarding. Ao salvar, cai no Dashboard.
+  const onboarding = searchParams.get('onboarding') === '1'
 
   const [mounted, setMounted] = useState(false)
   const [aba, setAba] = useState<Aba>(abaUrl)
@@ -177,7 +180,10 @@ function SetupInner() {
 
   function handleSave() {
     savePreferences(prefs)
+    markOnboarded() // conclui o 1º acesso (qualquer save conta como setup feito)
     setSaved(true)
+    // No fluxo de 1º acesso, após salvar o cliente cai no Dashboard já filtrado.
+    if (onboarding) { setTimeout(() => router.push('/'), 700); return }
     setTimeout(() => setSaved(false), 2500)
   }
 
@@ -208,6 +214,18 @@ function SetupInner() {
         <Topbar title="Setup da Empresa" />
         <div className="flex-1 overflow-y-auto p-6">
 
+          {/* Boas-vindas do 1º acesso — deixa claro por que essa é a primeira tela */}
+          {onboarding && (
+            <div className="mb-4 flex items-start gap-3 px-4 py-3 rounded-xl bg-accent/10 border border-accent/25">
+              <CheckCircle2 size={16} className="text-accent flex-shrink-0 mt-0.5" />
+              <div className="text-[13px] text-strong">
+                <strong>Bem-vindo!</strong> Antes de começar, configure onde sua empresa atua e o que
+                vende. O Dashboard e os alertas vão abrir já filtrados por isto.
+                <span className="text-muted"> Selecione seus estados e clique em Salvar.</span>
+              </div>
+            </div>
+          )}
+
           {/* Header */}
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -233,7 +251,7 @@ function SetupInner() {
                   )}
                 >
                   {saved ? <CheckCircle2 size={13} /> : <Save size={13} />}
-                  {saved ? 'Salvo!' : 'Salvar'}
+                  {saved ? 'Salvo!' : onboarding ? 'Salvar e continuar' : 'Salvar'}
                 </button>
               </div>
             )}

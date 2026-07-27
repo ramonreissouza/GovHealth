@@ -13,7 +13,7 @@ export const runtime = 'nodejs'
 // 'empresa' = Setup da Empresa unificado (perfil + portfólio), fonte de verdade única;
 // precisa viver na conta porque o Radar seleciona processos no SERVIDOR a partir dele.
 // 'perfil'/'portfolio' são legados mantidos p/ hidratação/migração de dados antigos.
-const CHAVES = new Set(['empresa', 'portfolio', 'crm', 'alertas-config', 'alertas-notif', 'agenda', 'perfil'])
+const CHAVES = new Set(['empresa', 'portfolio', 'crm', 'alertas-config', 'alertas-notif', 'agenda', 'perfil', 'onboarded'])
 
 async function userId(req: NextRequest): Promise<string | null> {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })

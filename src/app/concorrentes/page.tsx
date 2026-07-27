@@ -15,6 +15,7 @@ import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
 import type { ExportColumn } from '@/lib/export'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -77,6 +78,8 @@ export default function ConcorrentesPage() {
   const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
 
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
+  // Pré-filtra pelos estados do Setup da Empresa (item 4).
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [ano, setAno] = useState('2026') // default leve: evita varrer a base inteira no 1º load
   const [catAtiva, setCatAtiva] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
@@ -134,7 +137,7 @@ export default function ConcorrentesPage() {
   const maxValor = ranking.length ? Math.max(...ranking.map((r) => r.valor || 0)) : 0
   const escopoLabel = ufsAtivos.size === 0 ? 'Brasil (todos os estados)' : [...ufsAtivos].sort().join(', ')
 
-  const toggleUf = (uf: string) => setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })
+  const toggleUf = (uf: string) => { marcarUFTocado(); setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s }) }
 
   const KPI_CARDS = [
     { label: 'Valor total homologado', value: kpis ? formatBRL(kpis.valorTotal) : '—' },
@@ -169,7 +172,7 @@ export default function ConcorrentesPage() {
               Estados {ufsAtivos.size > 0 && <span className="text-accent">· {ufsAtivos.size} selecionado{ufsAtivos.size !== 1 ? 's' : ''}</span>}
             </div>
             <div className="flex gap-1 flex-wrap items-center">
-              <button onClick={() => setUfsAtivos(new Set())}
+              <button onClick={() => { marcarUFTocado(); setUfsAtivos(new Set()) }}
                 className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
                   ufsAtivos.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                 País todo

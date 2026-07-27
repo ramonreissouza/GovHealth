@@ -12,6 +12,7 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const TIPOS: { key: string; label: string }[] = [{ key: 'todos', label: 'Todos' }, ...Object.entries(TIPO_LABEL).map(([key, label]) => ({ key, label }))]
@@ -211,6 +212,8 @@ export default function TimelinePage() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null)
   const [uf, setUf] = useState('')
+  // UF única: foca no estado do Setup só quando o vendedor atua em um estado (item 4).
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUf(ufs[0]), { apenasSeUnica: true })
   const [tipo, setTipo] = useState('todos')
 
   const load = useCallback(async () => {
@@ -280,7 +283,7 @@ export default function TimelinePage() {
           <div className="flex items-center gap-2 mb-3 flex-wrap">
             <div className="flex items-center gap-1.5">
               <MapPin size={13} className="text-faint" />
-              <select value={uf} onChange={(e) => setUf(e.target.value)}
+              <select value={uf} onChange={(e) => { marcarUFTocado(); setUf(e.target.value) }}
                 className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none">
                 <option value="">Todas UFs</option>
                 {UFS.map((u) => <option key={u} value={u}>{u}</option>)}

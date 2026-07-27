@@ -219,7 +219,9 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
     const login = await signIn('credentials', { email: f.email.trim().toLowerCase(), password: f.senha, redirect: false })
     setLoading(false)
     if (login?.error) { setError('Conta criada, mas o login falhou. Tente entrar manualmente.'); return }
-    router.replace('/?bemvindo=1')
+    // 1º acesso: primeira tela é o Setup da Empresa (estados, produtos…). Após salvar,
+    // o cliente cai no Dashboard já filtrado. (Ver src/lib/onboarding.ts)
+    router.replace('/perfil?onboarding=1')
   }
 
   const p = PLANOS.find((x) => x.id === plano)!

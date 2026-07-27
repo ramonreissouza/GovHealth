@@ -12,9 +12,17 @@ const KEY_TO_CHAVE: Record<string, string> = {
   'govhealth:alertas:configs': 'alertas-config',
   'govhealth:alertas:notifs': 'alertas-notif',
   'govhealth:preferences': 'perfil',     // legado — mantido p/ migração/hidratação
+  'govhealth:onboarded': 'onboarded',    // 1º acesso concluído (setup inicial)
 }
 const UID_KEY = 'govhealth:__uid'
+const HYDRATED_KEY = 'govhealth:__hydrated' // conta cujo cache já foi hidratado do servidor
 export const HYDRATED_EVENT = 'govhealth:hydrated'
+
+/** true quando o cache local desta conta já foi hidratado do servidor nesta sessão. */
+export function foiHidratado(email: string | null | undefined): boolean {
+  if (typeof window === 'undefined' || !email) return false
+  return localStorage.getItem(HYDRATED_KEY) === email
+}
 
 /** Leitura síncrona do cache local (com fallback). */
 export function readLocal<T>(key: string, fallback: T): T {
@@ -58,6 +66,7 @@ export async function hydrateFromServer(email: string | null | undefined): Promi
   if (atual !== email) {
     for (const key of Object.keys(KEY_TO_CHAVE)) localStorage.removeItem(key)
     localStorage.setItem(UID_KEY, email)
+    localStorage.removeItem(HYDRATED_KEY) // troca de conta → cache ainda não hidratado
   }
   await Promise.all(
     Object.entries(KEY_TO_CHAVE).map(async ([key, chave]) => {
@@ -68,6 +77,7 @@ export async function hydrateFromServer(email: string | null | undefined): Promi
       } catch { /* mantém o cache local */ }
     }),
   )
+  localStorage.setItem(HYDRATED_KEY, email) // marca a conta como hidratada nesta sessão
   window.dispatchEvent(new Event(HYDRATED_EVENT))
 }
 
@@ -76,4 +86,5 @@ export function clearLocalData(): void {
   if (typeof window === 'undefined') return
   for (const key of Object.keys(KEY_TO_CHAVE)) localStorage.removeItem(key)
   localStorage.removeItem(UID_KEY)
+  localStorage.removeItem(HYDRATED_KEY)
 }

@@ -13,6 +13,7 @@ import { ExportButton } from '@/components/ui/ExportButton'
 import { formatBRL, formatDate } from '@/lib/format'
 import type { PrecoPainelItem, EstatisticaPrecos, CatmatMaterial } from '@/lib/types'
 import { getProdutos, type ProdutoPortfolio } from '@/lib/portfolio'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { Boxes } from 'lucide-react'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -140,6 +141,8 @@ function CatmatPanel({ term }: { term: string }) {
 export default function PrecosPage() {
   const [query, setQuery]         = useState('')
   const [uf, setUf]               = useState('')
+  // UF única: foca no estado do Setup só quando o vendedor atua em um estado (item 4).
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUf(ufs[0]), { apenasSeUnica: true })
   const [esfera, setEsfera]       = useState('todos')
   const [loading, setLoading]     = useState(false)
   const [precos, setPrecos]       = useState<PrecoPainelItem[]>([])
@@ -238,7 +241,7 @@ export default function PrecosPage() {
             {/* UF filter */}
             <select
               value={uf}
-              onChange={(e) => setUf(e.target.value)}
+              onChange={(e) => { marcarUFTocado(); setUf(e.target.value) }}
               className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2 text-[12px] font-mono-custom text-strong outline-none cursor-pointer"
             >
               <option value="">Todos os estados</option>

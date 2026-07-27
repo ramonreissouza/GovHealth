@@ -33,10 +33,13 @@ interface EditalRow {
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const uf = searchParams.get('uf') ?? undefined
+  // Território multi-UF ("CE,BA,PE"): filtra por todas as UFs de atuação do vendedor.
+  const ufsParam = searchParams.get('ufs') ?? undefined
+  const ufs = ufsParam ? ufsParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean) : undefined
   const tipoParam = searchParams.get('tipo') ?? undefined
   const tipo = tipoParam && tipoParam !== 'todos' && isTipoFornecimento(tipoParam) ? tipoParam : undefined
 
-  const cacheKey = `alerts:${uf ?? ''}:${tipo ?? ''}`
+  const cacheKey = `alerts:${ufs?.join(',') ?? uf ?? ''}:${tipo ?? ''}`
   const cachedAlerts = getCached<object>(cacheKey)
   if (cachedAlerts) return NextResponse.json(cachedAlerts)
 
@@ -47,7 +50,8 @@ export async function GET(req: NextRequest) {
   try {
     const where: string[] = ["(valor_total_estimado >= 10000 OR fonte <> 'pncp')", 'objeto_compra IS NOT NULL']
     const args: unknown[] = []
-    if (uf) { args.push(uf.toUpperCase()); where.push(`uf = $${args.length}`) }
+    if (ufs?.length) { args.push(ufs); where.push(`uf = ANY($${args.length})`) }
+    else if (uf) { args.push(uf.toUpperCase()); where.push(`uf = $${args.length}`) }
     if (tipo) { args.push(tipo); where.push(`tipo_fornecimento = $${args.length}`) }
     const editais = await query<EditalRow>(
       `SELECT numero_controle_pncp, razao_social_orgao, municipio, uf, objeto_compra,

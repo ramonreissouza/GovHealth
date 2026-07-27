@@ -1,41 +1,37 @@
 'use client'
 // src/components/dashboard/DashboardView.tsx
-// Casca client do dashboard: mantém o estado dos filtros (UF + Tipo de fornecimento)
-// e o propaga para TODOS os widgets — KPIs, oportunidades, gráfico, concorrentes e
-// alertas reagem juntos ao filtro aplicado.
+// Casca client do dashboard: mantém o estado dos filtros (ESTADOS multi-seleção +
+// Tipo de fornecimento) e o propaga para TODOS os widgets — KPIs, oportunidades,
+// gráfico e alertas reagem juntos ao filtro aplicado.
+//
+// Os ESTADOS já vêm PRÉ-SELECIONADOS pelo Setup da Empresa (getPreferences().ufs) —
+// via useSetupUFDefault — e comandam a busca no SERVIDOR (ufs=...), então o dashboard
+// não mistura licitações de outras UFs. O usuário pode ajustar a seleção à vontade.
 //
 // Performance: `/api/opportunities` é buscado UMA vez aqui e o resultado
 // (oportunidades + KPIs + série mensal + categorias) é passado por props para
-// KPICards, OpportunityList e DashboardCharts — antes cada um fazia a mesma
-// chamada (3× a mesma query pesada por filtro). Concorrentes e alertas têm
-// endpoints próprios e seguem buscando sozinhos (em paralelo).
+// KPICards, OpportunityList e DashboardCharts. Alertas têm endpoint próprio.
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { clsx } from 'clsx'
 import Link from 'next/link'
-import { MapPin, X, Loader2, Star, Trash2, Target, Boxes } from 'lucide-react'
+import { X, Loader2, Star, Trash2, Target, Boxes } from 'lucide-react'
 import KPICards from './KPICards'
 import OpportunityList from './OpportunityList'
 import AlertsFeed from './AlertsFeed'
 import DashboardCharts from './DashboardCharts'
-import ConcorrentesWidget from './ConcorrentesWidget'
 import { TIPO_LABEL } from '@/lib/categorias'
 import type { Oportunidade } from '@/lib/types'
 import {
   getSavedViews, createSavedView, deleteSavedView, savedViewExists,
-  getLastFilter, setLastFilter, type SavedView, type DashboardFilter,
+  type SavedView, type DashboardFilter,
 } from '@/lib/saved-views'
-import { getTerritorio, setTerritorio } from '@/lib/territorio'
 import { getProdutos, type ProdutoPortfolio } from '@/lib/portfolio'
-import { getPreferences } from '@/lib/preferences'
-import { HYDRATED_EVENT } from '@/lib/synced'
-import TerritorioToggle from '@/components/ui/TerritorioToggle'
-
-// Um filtro só "conta" como escolha explícita do usuário se tiver UF ou tipo — um
-// last-filter vazio ({}) é gravado na 1ª busca e não deve bloquear a personalização.
-function filtroExplicito(f: DashboardFilter | null): boolean {
-  return !!f && (!!f.uf || !!f.tipo)
-}
+import { HYDRATED_EVENT, foiHidratado } from '@/lib/synced'
+import { isOnboarded } from '@/lib/onboarding'
+import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 export interface OpportunitiesData {
   oportunidades: Oportunidade[]
@@ -58,96 +54,91 @@ const TIPOS: { key: string; label: string }[] = [
 ]
 
 export default function DashboardView() {
-  const [uf, setUf] = useState<string>('') // '' = Brasil
+  const router = useRouter()
+  const { data: session, status } = useSession()
+  const email = session?.user?.email ?? null
+  const role = (session?.user as { role?: string | null } | undefined)?.role ?? null
+
+  // Filtro de ESTADOS (multi) — comanda todos os widgets. Pré-selecionado pelo Setup.
+  const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
+  const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [tipo, setTipo] = useState<string>('todos')
   const [views, setViews] = useState<SavedView[]>([])
-  const [terrAtivo, setTerrAtivo] = useState(false)
-  const [terr, setTerr] = useState<string[]>([])
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([]) // portfólio → prioriza leads
-  const [personalizado, setPersonalizado] = useState(false)        // dashboard semeado pelo setup
 
   const [oppData, setOppData] = useState<OpportunitiesData | null>(null)
   const [oppLoading, setOppLoading] = useState(true)
   const [oppError, setOppError] = useState(false)
 
-  // Território ativo comanda o multi-UF; senão vale o seletor de UF única.
-  const usandoTerritorio = terrAtivo && terr.length > 0
-  const filtros = { uf: usandoTerritorio ? undefined : (uf || undefined), tipo: tipo === 'todos' ? undefined : tipo }
-  const ativo = !!uf || tipo !== 'todos' || usandoTerritorio
-  const ufsKey = usandoTerritorio ? terr.join(',') : ''
+  const ufsArr = [...ufsAtivos].sort()
+  const ufsKey = ufsArr.join(',')
+  const tipoParam = tipo === 'todos' ? undefined : tipo
+  const ativo = ufsAtivos.size > 0 || tipo !== 'todos'
+  const filtroAtual: DashboardFilter = { uf: ufsKey || undefined, tipo: tipoParam }
 
-  // Personaliza o dashboard pelo SETUP DO CLIENTE (preferências da conta): na 1ª
-  // visita, sem filtro escolhido nem território salvo, semeia as UFs de atuação —
-  // assim a home já abre focada no que é do vendedor, não em "Brasil / Todos".
-  function personalizarPeloSetup() {
-    if (filtroExplicito(getLastFilter())) return   // usuário já escolheu um filtro
-    if (getTerritorio().length) return             // já tem território definido
-    const prefs = getPreferences()
-    if (!prefs.ufs.length) return
-    const seed = setTerritorio(prefs.ufs)
-    if (!seed.length) return
-    setTerr(seed)
-    if (seed.length > 1) setTerrAtivo(true)         // multi-UF → território
-    else setUf(seed[0])                             // uma UF → seletor simples
-    setPersonalizado(true)
+  const toggleUF = (u: string) => {
+    marcarUFTocado()
+    setUfsAtivos((p) => { const s = new Set(p); s.has(u) ? s.delete(u) : s.add(u); return s })
   }
 
-  // Ao montar: carrega filtros salvos, portfólio, território e restaura o último
-  // filtro aplicado; se for a 1ª visita, personaliza pelo setup do cliente.
+  // Ao montar: carrega filtros salvos e portfólio. Re-carrega o portfólio (p/ os selos)
+  // quando a conta termina de hidratar do servidor. Os ESTADOS são semeados pelo Setup
+  // via useSetupUFDefault (que também re-tenta no HYDRATED_EVENT).
   useEffect(() => {
     setViews(getSavedViews())
     setProdutos(getProdutos())
-    setTerr(getTerritorio())
-    const last = getLastFilter()
-    if (filtroExplicito(last)) {
-      if (last!.uf) setUf(last!.uf)
-      if (last!.tipo) setTipo(last!.tipo)
-    } else {
-      personalizarPeloSetup()
-    }
-
-    // Após o login, os dados da conta são hidratados de forma assíncrona: recarrega
-    // o portfólio (p/ os selos) e re-tenta a personalização com as preferências já sincronizadas.
-    const onHidratado = () => {
-      setProdutos(getProdutos())
-      personalizarPeloSetup()
-    }
+    const onHidratado = () => { setProdutos(getProdutos()) }
     window.addEventListener(HYDRATED_EVENT, onHidratado)
     return () => window.removeEventListener(HYDRATED_EVENT, onHidratado)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Gate de PRIMEIRO ACESSO: no 1º login (setup ainda não concluído) a primeira tela
+  // é o Setup da Empresa. Só decide DEPOIS que o cache da conta foi hidratado do
+  // servidor — senão um usuário recorrente em máquina nova (cache local ainda vazio)
+  // seria mandado ao setup por engano. Do 2º login em diante o Dashboard abre normal.
+  useEffect(() => {
+    if (status !== 'authenticated') return
+    if (role === 'master') return // admin não passa pelo onboarding
+    const decidir = () => {
+      if (!foiHidratado(email)) return
+      if (!isOnboarded()) router.replace('/perfil?onboarding=1')
+    }
+    decidir()
+    window.addEventListener(HYDRATED_EVENT, decidir)
+    return () => window.removeEventListener(HYDRATED_EVENT, decidir)
+  }, [status, email, role, router])
+
   // Uma única busca de oportunidades por filtro — compartilhada por KPIs, lista e gráfico.
+  // A UF vai ao SERVIDOR (ufs=), então os dados já vêm restritos aos estados do filtro.
   useEffect(() => {
     let cancelado = false
     setOppLoading(true)
     setOppError(false)
-    if (!usandoTerritorio) setLastFilter(filtros) // memoriza o filtro p/ restaurar (exceto território)
     const params = new URLSearchParams({ limit: '300', minScore: '0' })
-    if (usandoTerritorio) params.set('ufs', ufsKey)
-    else if (filtros.uf) params.set('uf', filtros.uf)
-    if (filtros.tipo) params.set('tipo', filtros.tipo)
+    if (ufsKey) params.set('ufs', ufsKey)
+    if (tipoParam) params.set('tipo', tipoParam)
     fetch(`/api/opportunities?${params}`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then((d) => { if (!cancelado) setOppData(d) })
       .catch(() => { if (!cancelado) setOppError(true) })
       .finally(() => { if (!cancelado) setOppLoading(false) })
     return () => { cancelado = true }
-  }, [filtros.uf, filtros.tipo, usandoTerritorio, ufsKey])
+  }, [ufsKey, tipoParam])
 
   const tipoLabelDe = (k: string) => TIPOS.find((t) => t.key === k)?.label ?? k
 
   function aplicar(v: SavedView) {
-    setUf(v.uf ?? '')
+    marcarUFTocado()
+    setUfsAtivos(new Set(v.uf ? v.uf.split(',').filter(Boolean) : []))
     setTipo(v.tipo ?? 'todos')
   }
 
   function salvarAtual() {
-    if (savedViewExists(filtros)) return
-    const rotulo = `${uf || 'Brasil'} · ${tipo === 'todos' ? 'Todos' : tipoLabelDe(tipo)}`
+    if (savedViewExists(filtroAtual)) return
+    const rotulo = `${ufsKey || 'Brasil'} · ${tipo === 'todos' ? 'Todos' : tipoLabelDe(tipo)}`
     const nome = window.prompt('Nome do filtro salvo:', rotulo)
     if (nome === null) return // cancelou
-    createSavedView(nome, filtros)
+    createSavedView(nome, filtroAtual)
     setViews(getSavedViews())
   }
 
@@ -156,30 +147,36 @@ export default function DashboardView() {
     setViews(getSavedViews())
   }
 
-  const jaSalvo = savedViewExists(filtros)
+  const jaSalvo = savedViewExists(filtroAtual)
 
   return (
     <>
-      {/* Barra de filtros — comanda todos os widgets abaixo */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <MapPin size={13} className="text-faint" />
-          <select
-            value={uf}
-            onChange={(e) => setUf(e.target.value)}
-            disabled={usandoTerritorio}
-            title={usandoTerritorio ? 'Território ativo comanda as UFs' : undefined}
-            className="text-[12px] bg-bg2 border border-subtle rounded-md px-2 py-1.5 text-strong focus:border-accent outline-none disabled:opacity-50"
-          >
-            <option value="">Brasil (todas UFs)</option>
-            {UFS.map((u) => (
-              <option key={u} value={u}>{u}</option>
-            ))}
-          </select>
+      {/* Barra de ESTADOS (multi) — pré-selecionada pelo Setup; comanda todos os widgets */}
+      <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-mono-custom text-faint uppercase tracking-wider">
+            Estados {ufsAtivos.size > 0 && <span className="text-accent">· {ufsAtivos.size} selecionado{ufsAtivos.size !== 1 ? 's' : ''}</span>}
+          </span>
+          <Link href="/perfil" className="text-[10px] text-faint hover:text-accent transition-colors">Ajustar no Setup →</Link>
         </div>
+        <div className="flex gap-1 flex-wrap">
+          <button onClick={() => { marcarUFTocado(); setUfsAtivos(new Set()) }}
+            className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+              ufsAtivos.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+            Brasil (todos)
+          </button>
+          {UFS.map((u) => (
+            <button key={u} onClick={() => toggleUF(u)}
+              className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
+                ufsAtivos.has(u) ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+              {u}
+            </button>
+          ))}
+        </div>
+      </div>
 
-        <TerritorioToggle ativo={terrAtivo} onToggle={setTerrAtivo} />
-
+      {/* Tipo de fornecimento + ações */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="flex gap-1 overflow-x-auto flex-1 min-w-0 pb-1">
           {TIPOS.map((t) => (
             <button
@@ -217,7 +214,7 @@ export default function DashboardView() {
 
         {ativo && !oppLoading && (
           <button
-            onClick={() => { setUf(''); setTipo('todos') }}
+            onClick={() => { marcarUFTocado(); setUfsAtivos(new Set()); setTipo('todos') }}
             className="flex items-center gap-1 text-[11px] text-faint hover:text-strong transition-colors flex-shrink-0"
           >
             <X size={12} /> Limpar
@@ -230,7 +227,7 @@ export default function DashboardView() {
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <span className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">Meus filtros</span>
           {views.map((v) => {
-            const selecionado = (v.uf ?? '') === (filtros.uf ?? '') && (v.tipo ?? '') === (filtros.tipo ?? '')
+            const selecionado = (v.uf ?? '') === ufsKey && (v.tipo ?? '') === (tipoParam ?? '')
             return (
               <span
                 key={v.id}
@@ -259,7 +256,7 @@ export default function DashboardView() {
           <Target size={13} className="text-accent flex-shrink-0" />
           <span className="text-strong">
             Priorizando pelo seu portfólio — <strong>{produtos.filter((p) => p.ativo).length} produto(s)</strong> ativos
-            {personalizado && terr.length > 0 && <> · {terr.length} UF(s) do seu território</>}.
+            {ufsAtivos.size > 0 && <> · {ufsAtivos.size} UF(s) do seu setup</>}.
           </span>
           <Link href="/perfil?tab=portfolio" className="ml-auto text-accent hover:underline whitespace-nowrap flex-shrink-0">Ajustar setup →</Link>
         </div>
@@ -277,9 +274,9 @@ export default function DashboardView() {
       )}
 
       {/* KPIs */}
-      <KPICards data={oppData} loading={oppLoading} tipo={filtros.tipo} />
+      <KPICards data={oppData} loading={oppLoading} tipo={tipoParam} />
 
-      {/* Oportunidades + Alertas/Concorrentes */}
+      {/* Oportunidades + Alertas */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div className="bg-bg2 border border-subtle rounded-xl p-4">
           <div className="flex items-center gap-2 mb-3">
@@ -299,14 +296,7 @@ export default function DashboardView() {
                 Alertas inteligentes
               </span>
             </div>
-            <AlertsFeed uf={filtros.uf} tipo={filtros.tipo} />
-          </div>
-
-          <div className="bg-bg2 border border-subtle rounded-xl p-4">
-            <div className="font-heading font-semibold text-[13px] text-strong mb-3">
-              Top concorrentes nacionais
-            </div>
-            <ConcorrentesWidget uf={filtros.uf} tipo={filtros.tipo} />
+            <AlertsFeed ufs={ufsArr} tipo={tipoParam} />
           </div>
         </div>
       </div>
