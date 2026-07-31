@@ -49,6 +49,7 @@ interface ProcessoItemRow {
   item: string | null
   codigo_catmat: string | null
   vencedor: string | null
+  qtd: number | null
   valor: number | null
 }
 
@@ -117,6 +118,7 @@ export async function GET(req: NextRequest) {
                 COALESCE(NULLIF(r.nome_catmat, ''), '(sem descrição)') AS item,
                 r.codigo_catmat,
                 r.nome_fornecedor AS vencedor,
+                r.quantidade_homologada::float8 AS qtd,
                 r.valor_total_homologado::float8 AS valor
          FROM resultados r
          WHERE r.numero_controle_pncp = $1

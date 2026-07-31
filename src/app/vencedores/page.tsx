@@ -2,7 +2,7 @@
 // src/app/vencedores/page.tsx — TELA 1: Análise de Vencedores (resultados homologados do PNCP)
 // Lê do banco via /api/resultados/vencedores (populado pelo ETL).
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -14,6 +14,8 @@ import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
+import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
@@ -76,7 +78,9 @@ export default function VencedoresPage() {
   const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [empresa, setEmpresa] = useState('')
   const [empresaQuery, setEmpresaQuery] = useState('')
-  const [catAtiva, setCatAtiva] = useState<string | null>(null)
+  // Categorias (múltiplas) — pré-marcadas pelas categorias de interesse do Setup (item 9).
+  const [catsAtivas, setCatsAtivas] = useState<Set<string>>(new Set())
+  const { marcarTocado: marcarCatTocado } = useSetupCategoriasDefault((cats) => setCatsAtivas(new Set(cats)))
   // Ano padrão 2026 (recente) — carrega rápido; 'todos' varre todos os anos (muito mais lento).
   const [ano, setAno] = useState('2026')
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
@@ -85,21 +89,26 @@ export default function VencedoresPage() {
   // debounce do campo empresa
   useEffect(() => { const t = setTimeout(() => setEmpresaQuery(empresa), 400); return () => clearTimeout(t) }, [empresa])
 
+  // Sequenciador de requisições: descarta respostas fora de ordem (evita que a busca
+  // inicial sem filtro sobrescreva a filtrada — o filtro do Setup "se perdia" sem F5).
+  const reqIdRef = useRef(0)
   const load = useCallback(async () => {
+    const myId = ++reqIdRef.current
     setLoading(true); setErro(null)
     try {
       const params = new URLSearchParams({ limit: String(pageSize) })
       if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
       if (empresaQuery) params.set('empresa', empresaQuery)
-      if (catAtiva) params.set('categoria', catAtiva)
+      if (catsAtivas.size > 0) params.set('categoria', [...catsAtivas].join(','))
       if (ano !== 'todos') params.set('ano', ano)
       const res = await fetch(`/api/resultados/vencedores?${params}`)
       const json: ApiResponse = await res.json()
+      if (myId !== reqIdRef.current) return // resposta obsoleta — ignora
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
       else { setData(json); publishDataStatus(json) }
-    } catch (e) { setErro({ msg: String(e) }); setData(null) }
-    finally { setLoading(false) }
-  }, [ufsAtivos, empresaQuery, catAtiva, ano, pageSize])
+    } catch (e) { if (myId === reqIdRef.current) { setErro({ msg: String(e) }); setData(null) } }
+    finally { if (myId === reqIdRef.current) setLoading(false) }
+  }, [ufsAtivos, empresaQuery, catsAtivas, ano, pageSize])
 
   useEffect(() => { load() }, [load])
 
@@ -172,27 +181,30 @@ export default function VencedoresPage() {
             </div>
           </div>
 
-          {/* Filtros de categoria de mercado */}
+          {/* Filtros de categoria de mercado (múltipla — já vem marcada pelo Setup) */}
           <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
             <div className="flex gap-1 flex-wrap items-center">
-              <button onClick={() => setCatAtiva(null)}
+              <button onClick={() => { marcarCatTocado(); setCatsAtivas(new Set()) }}
                 className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
-                  catAtiva === null ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                  catsAtivas.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                 Todas categorias
               </button>
               {CATEGORIAS.map(({ key, label }) => {
                 const n = catMap.get(key)
+                const on = catsAtivas.has(key)
                 return (
-                  <button key={key} onClick={() => setCatAtiva((p) => (p === key ? null : key))}
+                  <button key={key} onClick={() => { marcarCatTocado(); setCatsAtivas((p) => { const s = new Set(p); s.has(key) ? s.delete(key) : s.add(key); return s }) }}
                     className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all flex items-center gap-1',
-                      catAtiva === key ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                      on ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                     {label}
-                    {n != null && <span className={clsx('text-[9px]', catAtiva === key ? 'text-black/60' : 'text-faint')}>{n}</span>}
+                    {n != null && <span className={clsx('text-[9px]', on ? 'text-black/60' : 'text-faint')}>{n}</span>}
                   </button>
                 )
               })}
             </div>
           </div>
+
+          <SetupFilterHint estados categorias className="mb-3" />
 
           <div className="flex items-center gap-2 mb-4">
             <div className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2 max-w-md flex-1">
@@ -329,6 +341,7 @@ interface Detalhe {
     item: string | null
     codigo_catmat: string | null
     vencedor: string | null
+    qtd: number | null
     valor: number | null
   }[]
   error?: string
@@ -419,6 +432,12 @@ function DetalheResultado({ convenio, numeroItem }: { convenio: string; numeroIt
                     <div className="text-[10px] font-mono-custom font-bold text-strong flex-shrink-0">{formatBRL(it.valor)}</div>
                   </div>
                   <div className="text-[9px] text-faint truncate">Vencedor: {it.vencedor ?? '—'}</div>
+                  {it.qtd != null && it.qtd > 0 && (
+                    <div className="text-[9px] font-mono-custom text-muted">
+                      {it.qtd.toLocaleString('pt-BR')} un.
+                      {it.valor ? ` · ${formatBRL(it.valor / it.qtd)}/un` : ''}
+                    </div>
+                  )}
                 </div>
               )
             })}

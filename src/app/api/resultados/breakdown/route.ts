@@ -4,11 +4,15 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
 
 export const runtime = 'nodejs'
 
+const CAT_SQL = categoriaCaseSql('r.nome_catmat')
+
 interface RankRow { chave: string | null; valor: number; qtd: number }
 interface DetalheRow {
+  processo: string | null    // nº de controle PNCP do processo
   orgao: string | null
   uf: string | null
   fornecedor: string | null
@@ -19,13 +23,14 @@ interface DetalheRow {
   data: string | null
 }
 
-function buildWhere(opts: { ano?: number; item?: string; empresa?: string; uf?: string }) {
+function buildWhere(opts: { ano?: number; item?: string; empresa?: string; ufs?: string[]; categorias?: string[] }) {
   const where: string[] = ['r.valor_total_homologado IS NOT NULL']
   const params: unknown[] = []
   if (opts.ano) { params.push(opts.ano); where.push(`r.ano = $${params.length}`) }
   if (opts.item) { params.push(opts.item); where.push(`r.nome_catmat = $${params.length}`) }
   if (opts.empresa) { params.push(opts.empresa); where.push(`r.nome_fornecedor = $${params.length}`) }
-  if (opts.uf) { params.push(opts.uf); where.push(`r.uf = $${params.length}`) }
+  if (opts.ufs && opts.ufs.length) { params.push(opts.ufs); where.push(`r.uf = ANY($${params.length})`) }
+  if (opts.categorias && opts.categorias.length) { params.push(opts.categorias); where.push(`(${CAT_SQL}) = ANY($${params.length})`) }
   return { sql: `WHERE ${where.join(' AND ')}`, params }
 }
 
@@ -34,22 +39,30 @@ export async function GET(req: NextRequest) {
   const ano = searchParams.get('ano') ? Number(searchParams.get('ano')) : undefined
   const item = searchParams.get('item')?.trim() || undefined
   const empresa = searchParams.get('empresa')?.trim() || undefined
-  const uf = searchParams.get('uf')?.toUpperCase().trim() || undefined
+  const ufParam = searchParams.get('uf')?.toUpperCase().trim() || undefined // "SP" ou "SP,MG"
+  const ufs = ufParam ? [...new Set(ufParam.split(',').map((s) => s.trim()).filter(Boolean))] : undefined
+  // categoria (múltipla) — pré-filtro pelas categorias de interesse do Setup (item 12).
+  const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
+  const categorias = categoriaParam
+    ? [...new Set(categoriaParam.split(',').map((s) => s.trim()).filter((c) => CATEGORIA_KEYS.includes(c as never)))]
+    : []
 
   try {
-    // Coluna ITEM: ranking geral (só ano filtra), independente do item selecionado.
-    const wItem = buildWhere({ ano, uf })
+    // Coluna ITEM: ranking geral (ano/uf/categoria), independente do item selecionado.
+    const wItem = buildWhere({ ano, ufs, categorias })
     // Coluna VENCEDOR: recontextualiza pelo item selecionado.
-    const wVenc = buildWhere({ ano, item, uf })
+    const wVenc = buildWhere({ ano, item, ufs, categorias })
     // Coluna ESTADO + KPI + proponentes: item + empresa selecionados.
-    const wCtx = buildWhere({ ano, item, empresa, uf })
+    const wCtx = buildWhere({ ano, item, empresa, ufs, categorias })
 
     // DETALHE DE COMPRA (drill mais fundo): itens homologados individuais com a
-    // descrição do item (marca/modelo/especificação) e o preço unitário pago.
-    // Só quando há item selecionado (senão seria amplo/pesado demais).
-    const detalhePromise = item
+    // descrição do item (marca/modelo/especificação), o nº do processo (PNCP) e o
+    // preço unitário pago. Aparece ao selecionar um item OU uma empresa (senão seria
+    // amplo/pesado demais).
+    const detalhePromise = (item || empresa)
       ? query<DetalheRow>(
-          `SELECT c.razao_social_orgao AS orgao, r.uf, r.nome_fornecedor AS fornecedor,
+          `SELECT r.numero_controle_pncp AS processo,
+                  c.razao_social_orgao AS orgao, r.uf, r.nome_fornecedor AS fornecedor,
                   COALESCE(NULLIF(i.descricao, ''), r.nome_catmat) AS descricao,
                   r.quantidade_homologada::float8     AS qtd,
                   r.valor_unitario_homologado::float8 AS valor_unitario,

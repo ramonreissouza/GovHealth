@@ -6,8 +6,8 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
-  LayoutDashboard, Map, Bot, Users, GitBranch, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, Menu, X,
-  Boxes, FileSearch, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, Swords, CreditCard, Radar,
+  LayoutDashboard, Map, Bot, Users, Zap, BookOpen, BarChart3, TrendingDown, Kanban, Globe2, LogOut, Bell, Menu, X,
+  Boxes, FileSearch, FileSignature, Trophy, PieChart, Layers, Store, CalendarClock, Flame, Lock, CreditCard, Radar,
 } from 'lucide-react'
 import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
@@ -35,12 +35,14 @@ const NAV_STATIC = [
     label: 'Inteligência',
     items: [
       { href: '/vencedores', label: 'Vencedores', icon: Trophy, badge: 'novo' as string | null },
-      { href: '/minhas-disputas', label: 'Minhas Disputas', icon: Swords, badge: 'novo' as string | null },
+      // DESATIVADO (a pedido) — Minhas Disputas. Reativar: descomentar a linha abaixo.
+      // { href: '/minhas-disputas', label: 'Minhas Disputas', icon: Swords, badge: 'novo' as string | null },
       { href: '/fornecedores', label: 'Fornecedores', icon: Store, badge: 'novo' as string | null },
       { href: '/concorrentes-estado', label: 'Concorrentes/UF', icon: PieChart, badge: 'novo' as string | null },
       { href: '/breakdown', label: 'Breakdown', icon: Layers, badge: 'novo' as string | null },
-      { href: '/concorrentes', label: 'Concorrentes', icon: Users, badge: null as string | null },
-      { href: '/timeline', label: 'Timeline', icon: GitBranch, badge: '3' as string | null },
+      // DESATIVADOS (a pedido) — Concorrentes e Timeline. Reativar: descomentar as linhas.
+      // { href: '/concorrentes', label: 'Concorrentes', icon: Users, badge: null as string | null },
+      // { href: '/timeline', label: 'Timeline', icon: GitBranch, badge: '3' as string | null },
       { href: '/precos', label: 'Preços Ref.', icon: TrendingDown, badge: null as string | null },
       { href: '/crm', label: 'Pipeline CRM', icon: Kanban, badge: null as string | null },
       { href: '/agenda', label: 'Agenda de Prazos', icon: CalendarClock, badge: null as string | null },

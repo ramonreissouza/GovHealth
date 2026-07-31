@@ -18,6 +18,30 @@ export type CategoriaKey = (typeof CATEGORIAS)[number]['key']
 export const CATEGORIA_KEYS = CATEGORIAS.map((c) => c.key)
 export const CATEGORIA_LABEL: Record<string, string> = Object.fromEntries(CATEGORIAS.map((c) => [c.key, c.label]))
 
+// Ponte entre a taxonomia CLÍNICA do Setup da Empresa (imagem/uti/laboratorio/
+// cirurgia/oncologia/medicamento/outros) e a taxonomia de MERCADO desta classificação.
+// Usada para pré-filtrar Fornecedores/Concorrentes pelas categorias de interesse da
+// empresa (ex.: Siemens = laboratório + equipamentos → não mostra OPME, medicamentos, etc.).
+const CLINICA_PARA_MERCADO: Record<string, CategoriaKey> = {
+  imagem: 'equip_medico',
+  uti: 'equip_medico',
+  cirurgia: 'equip_medico',
+  oncologia: 'equip_medico',
+  outros: 'equip_medico',
+  laboratorio: 'laboratorio',
+  medicamento: 'medicamento',
+}
+
+/** Converte as categorias clínicas do Setup nas categorias de mercado desta tela. */
+export function categoriasMercadoDoSetup(clinicas: string[]): CategoriaKey[] {
+  const set = new Set<CategoriaKey>()
+  for (const c of clinicas) {
+    const m = CLINICA_PARA_MERCADO[c]
+    if (m) set.add(m)
+  }
+  return [...set]
+}
+
 // Expressão SQL (Postgres) que classifica a coluna `col` numa CategoriaKey.
 // Ordem importa (primeiro match vence). `~*` é regex case-insensitive.
 export function categoriaCaseSql(col: string): string {

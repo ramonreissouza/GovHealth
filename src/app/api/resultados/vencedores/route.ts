@@ -45,8 +45,11 @@ export async function GET(req: NextRequest) {
   const ano = anoParam && /^\d{4}$/.test(anoParam) ? Number(anoParam) : undefined
   const dataIni = searchParams.get('dataIni') || undefined                     // YYYY-MM-DD
   const dataFim = searchParams.get('dataFim') || undefined
+  // categoria aceita múltiplas (vírgula) — pré-filtro pelas categorias do Setup (item 9).
   const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
-  const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
+  const categorias = categoriaParam
+    ? [...new Set(categoriaParam.split(',').map((s) => s.trim()).filter((c) => CATEGORIA_KEYS.includes(c as never)))]
+    : []
   const limit = Math.min(Number(searchParams.get('limit') ?? 500), 2000)
 
   // WHERE base (UF/empresa/datas) — usado nas contagens por categoria.
@@ -59,10 +62,10 @@ export async function GET(req: NextRequest) {
   if (dataFim) { baseParams.push(dataFim); whereBase.push(`r.data_resultado <= $${baseParams.length}`) }
   const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
 
-  // WHERE com o filtro de categoria aplicado (KPIs + listagem).
+  // WHERE com o filtro de categoria aplicado (KPIs + listagem). Uma ou mais categorias.
   const where = [...whereBase]
   const params = [...baseParams]
-  if (categoria) { params.push(categoria); where.push(`(${CAT_SQL}) = $${params.length}`) }
+  if (categorias.length) { params.push(categorias); where.push(`(${CAT_SQL}) = ANY($${params.length})`) }
   const whereSql = `WHERE ${where.join(' AND ')}`
 
   try {

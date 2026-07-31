@@ -32,23 +32,38 @@ interface UfRow { uf: string }
 interface PorRow { chave: string | null; valor: number; qtd: number }
 interface PorCatRow { categoria: string; valor: number; qtd: number }
 interface PorItemRow { item: string; codigo_catmat: string | null; valor: number; qtd: number }
+interface BreakdownItemRow {
+  fornecedor: string | null
+  cnpj: string | null
+  item: string
+  codigo_catmat: string | null
+  quantidade: number | null
+  valor_unitario: number | null
+  valor_total: number | null
+  convenios: number
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const ufParam = searchParams.get('uf')?.toUpperCase().trim() || undefined // "CE" ou "CE,BA"
   const ufs = ufParam ? ufParam.split(',').map((s) => s.trim()).filter(Boolean) : undefined
   const ano = searchParams.get('ano') ? Number(searchParams.get('ano')) : undefined
+  // categoria aceita múltiplas (separadas por vírgula) — pré-filtro pelas categorias
+  // de interesse do Setup da Empresa (item 9). Mantém retrocompat com valor único.
   const categoriaParam = searchParams.get('categoria')?.trim().toLowerCase() || undefined
-  const categoria = categoriaParam && CATEGORIA_KEYS.includes(categoriaParam as never) ? categoriaParam : undefined
+  const categorias = categoriaParam
+    ? [...new Set(categoriaParam.split(',').map((s) => s.trim()).filter((c) => CATEGORIA_KEYS.includes(c as never)))]
+    : []
   const tipoParam = searchParams.get('tipo')?.trim().toLowerCase() || undefined
   const tipo = tipoParam && tipoParam !== 'todos' && isTipoFornecimento(tipoParam) ? tipoParam : undefined
   const fornecedor = searchParams.get('fornecedor')?.trim() || undefined // legado: nome
   const chave = searchParams.get('chave')?.trim() || undefined           // preferido: chave de dedup
   const q = searchParams.get('q')?.trim() || undefined // busca por nome (ILIKE) no ranking
+  const formato = searchParams.get('formato')?.trim().toLowerCase() || undefined // 'itens' = breakdown p/ export
   const limit = Math.min(Number(searchParams.get('limit') ?? 50), 500)
 
   // Cache por assinatura de parâmetros (repetir o mesmo filtro fica instantâneo).
-  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categoria ?? ''}:${tipo ?? ''}:${fornecedor ?? ''}:${chave ?? ''}:${q ?? ''}:${limit}`
+  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categorias.join('+')}:${tipo ?? ''}:${fornecedor ?? ''}:${chave ?? ''}:${q ?? ''}:${formato ?? ''}:${limit}`
   const cachedResp = getCached<object>(cacheKey)
   if (cachedResp) return NextResponse.json(cachedResp)
 
@@ -60,10 +75,10 @@ export async function GET(req: NextRequest) {
   if (tipo) { baseParams.push(tipo); whereBase.push(`r.tipo_fornecimento = $${baseParams.length}`) }
   const whereBaseSql = `WHERE ${whereBase.join(' AND ')}`
 
-  // WHERE com categoria (KPIs).
+  // WHERE com categoria (KPIs). Uma ou mais categorias de mercado.
   const where = [...whereBase]
   const params = [...baseParams]
-  if (categoria) { params.push(categoria); where.push(`(${CAT_SQL}) = $${params.length}`) }
+  if (categorias.length) { params.push(categorias); where.push(`(${CAT_SQL}) = ANY($${params.length})`) }
   const whereSql = `WHERE ${where.join(' AND ')}`
 
   // WHERE do ranking: categoria + busca por nome. A busca não afeta KPIs/contagens
@@ -72,6 +87,35 @@ export async function GET(req: NextRequest) {
   const rankParams = [...params]
   if (q) { rankParams.push(`%${q}%`); rankWhere.push(`r.nome_fornecedor ILIKE $${rankParams.length}`) }
   const rankWhereSql = `WHERE ${rankWhere.join(' AND ')}`
+
+  // ── Export "itens": breakdown por (fornecedor, item) com quantidade, valor
+  // total e valor unitário. Reflete os filtros atuais (uf/ano/categoria + busca).
+  if (formato === 'itens') {
+    try {
+      const itens = await query<BreakdownItemRow>(
+        `SELECT ${FNOME} AS fornecedor,
+                MAX(r.ni_fornecedor) AS cnpj,
+                COALESCE(NULLIF(r.nome_catmat, ''), '(sem descrição)') AS item,
+                r.codigo_catmat,
+                SUM(r.quantidade_homologada)::float8 AS quantidade,
+                (SUM(r.valor_total_homologado) / NULLIF(SUM(r.quantidade_homologada), 0))::float8 AS valor_unitario,
+                SUM(r.valor_total_homologado)::float8 AS valor_total,
+                COUNT(DISTINCT r.numero_controle_pncp)::int AS convenios
+         FROM resultados r ${rankWhereSql}
+         GROUP BY ${FKEY}, item, r.codigo_catmat
+         ORDER BY valor_total DESC NULLS LAST
+         LIMIT 5000`,
+        rankParams,
+      )
+      const payload = { formato: 'itens', itens }
+      setCached(cacheKey, payload, TTL.SHORT)
+      return NextResponse.json(payload)
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error('[resultados/fornecedores:itens]', error)
+      return NextResponse.json({ error: 'Erro ao gerar breakdown de itens', detalhe: msg }, { status: 500 })
+    }
+  }
 
   try {
     const [ranking, kpiRows, catCounts, ufsComDados] = await Promise.all([
@@ -132,7 +176,7 @@ export async function GET(req: NextRequest) {
     const kpi = kpiRows[0]
     const payload = {
       escopo: ufs ? ufs.join(',') : 'BR',
-      categoria: categoria ?? null,
+      categoria: categorias.length ? categorias.join(',') : null,
       kpis: {
         valorTotal: kpi?.valor_total ?? 0,
         fornecedores: kpi?.n_fornecedores ?? 0,

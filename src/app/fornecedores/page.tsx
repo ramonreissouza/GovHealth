@@ -4,18 +4,20 @@
 // Ao clicar num fornecedor, mostra o que ele vendeu por estado, categoria e item.
 // Lê /api/resultados/fornecedores (resultados homologados do PNCP via ETL).
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Search, Trophy, Database, MapPin, Boxes, Package, X } from 'lucide-react'
+import { Search, Trophy, Database, MapPin, Boxes, Package, X, Loader2 } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
-import type { ExportColumn } from '@/lib/export'
+import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
+import { exportToXLSX, type ExportColumn } from '@/lib/export'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -26,6 +28,10 @@ interface PorRow { chave: string | null; valor: number; qtd: number }
 interface PorCat { categoria: string; valor: number; qtd: number }
 interface PorItem { item: string; codigo_catmat: string | null; valor: number; qtd: number }
 interface Detalhe { fornecedor: string; porEstado: PorRow[]; porCategoria: PorCat[]; porItem: PorItem[] }
+interface BreakdownItem {
+  fornecedor: string | null; cnpj: string | null; item: string; codigo_catmat: string | null
+  quantidade: number | null; valor_unitario: number | null; valor_total: number | null; convenios: number
+}
 interface ApiResponse {
   escopo: string
   categoria: string | null
@@ -49,6 +55,19 @@ const COLS_EXPORT: ExportColumn<Ranking>[] = [
   { key: 'ufs', label: 'UFs de atuação' },
 ]
 
+// Export detalhado (item 10): o que cada fornecedor forneceu, com quantidade,
+// valor unitário e valor total.
+const COLS_ITENS: ExportColumn<BreakdownItem>[] = [
+  { key: 'fornecedor', label: 'Fornecedor' },
+  { key: 'cnpj', label: 'CNPJ' },
+  { key: 'item', label: 'Item' },
+  { key: 'codigo_catmat', label: 'CATMAT' },
+  { key: 'quantidade', label: 'Quantidade', format: (v) => (v == null ? '' : Number(v).toLocaleString('pt-BR')) },
+  { key: 'valor_unitario', label: 'Valor unitário (R$)', format: (v) => (v == null ? '' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) },
+  { key: 'valor_total', label: 'Valor total (R$)', format: (v) => (v == null ? '' : Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) },
+  { key: 'convenios', label: 'Convênios' },
+]
+
 export default function FornecedoresPage() {
   const [data, setData] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -58,10 +77,13 @@ export default function FornecedoresPage() {
   // Pré-filtra pelos estados do Setup da Empresa (item 4).
   const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [ano, setAno] = useState('2026') // ano recente pré-setado (consistente com Vencedores)
-  const [catAtiva, setCatAtiva] = useState<string | null>(null)
+  // Categorias (múltiplas) — pré-marcadas pelas categorias de interesse do Setup (item 9).
+  const [catsAtivas, setCatsAtivas] = useState<Set<string>>(new Set())
+  const { marcarTocado: marcarCatTocado } = useSetupCategoriasDefault((cats) => setCatsAtivas(new Set(cats)))
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // fornecedores por página (50 padrão)
+  const [expItens, setExpItens] = useState(false) // baixando breakdown de itens
 
   const [selecionado, setSelecionado] = useState<Ranking | null>(null)
   const [det, setDet] = useState<Detalhe | null>(null)
@@ -71,21 +93,46 @@ export default function FornecedoresPage() {
     const params = new URLSearchParams({ limit: String(pageSize) })
     if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
     if (ano !== 'todos') params.set('ano', ano)
-    if (catAtiva) params.set('categoria', catAtiva)
+    if (catsAtivas.size > 0) params.set('categoria', [...catsAtivas].join(','))
     return params
-  }, [ufsAtivos, ano, catAtiva, pageSize])
+  }, [ufsAtivos, ano, catsAtivas, pageSize])
 
+  const toggleCat = (key: string) => { marcarCatTocado(); setCatsAtivas((p) => { const s = new Set(p); s.has(key) ? s.delete(key) : s.add(key); return s }) }
+
+  // Export detalhado (item 10): busca o breakdown por item no servidor e baixa .xlsx.
+  const exportarItens = useCallback(async () => {
+    setExpItens(true)
+    try {
+      const params = filtrosParams()
+      params.delete('limit')
+      params.set('formato', 'itens')
+      if (buscaQuery) params.set('q', buscaQuery)
+      const res = await fetch(`/api/resultados/fornecedores?${params}`)
+      const json = await res.json()
+      const rows: BreakdownItem[] = json.itens ?? []
+      if (rows.length === 0) { alert('Sem itens para exportar com os filtros atuais.'); return }
+      exportToXLSX(rows, COLS_ITENS, 'govhealth-fornecedores-itens')
+    } catch { alert('Não foi possível gerar o breakdown de itens.') }
+    finally { setExpItens(false) }
+  }, [filtrosParams, buscaQuery])
+
+  // Sequenciador de requisições: descarta respostas fora de ordem. Sem isso, a busca
+  // inicial (sem filtro) podia chegar DEPOIS da filtrada e sobrescrevê-la — o filtro do
+  // Setup "se perdia" e só voltava no F5.
+  const reqIdRef = useRef(0)
   const load = useCallback(async () => {
+    const myId = ++reqIdRef.current
     setLoading(true); setErro(null)
     try {
       const params = filtrosParams()
       if (buscaQuery) params.set('q', buscaQuery)
       const res = await fetch(`/api/resultados/fornecedores?${params}`)
       const json: ApiResponse = await res.json()
+      if (myId !== reqIdRef.current) return // resposta obsoleta — ignora
       if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
       else { setData(json); publishDataStatus(json) }
-    } catch (e) { setErro({ msg: String(e) }); setData(null) }
-    finally { setLoading(false) }
+    } catch (e) { if (myId === reqIdRef.current) { setErro({ msg: String(e) }); setData(null) } }
+    finally { if (myId === reqIdRef.current) setLoading(false) }
   }, [filtrosParams, buscaQuery])
 
   useEffect(() => { load() }, [load])
@@ -131,7 +178,7 @@ export default function FornecedoresPage() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Topbar
           title="Ranking de Fornecedores"
-          subtitle={loading ? 'Carregando…' : `${escopoLabel}${catAtiva ? ' · ' + (CATEGORIA_LABEL[catAtiva] ?? catAtiva) : ''}`}
+          subtitle={loading ? 'Carregando…' : `${escopoLabel}${catsAtivas.size ? ' · ' + [...catsAtivas].map((c) => CATEGORIA_LABEL[c] ?? c).join(', ') : ''}`}
         />
         <main className="flex-1 overflow-y-auto p-6 bg-bg">
 
@@ -166,28 +213,33 @@ export default function FornecedoresPage() {
             </div>
           </div>
 
-          {/* Categoria */}
+          {/* Categoria (múltipla — já vem marcada pelas categorias do Setup) */}
           <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
-            <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">Categoria</div>
+            <div className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-2">
+              Categoria {catsAtivas.size > 0 && <span className="text-accent">· {catsAtivas.size} selecionada{catsAtivas.size !== 1 ? 's' : ''}</span>}
+            </div>
             <div className="flex gap-1 flex-wrap items-center">
-              <button onClick={() => setCatAtiva(null)}
+              <button onClick={() => { marcarCatTocado(); setCatsAtivas(new Set()) }}
                 className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all',
-                  catAtiva === null ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                  catsAtivas.size === 0 ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                 Todas
               </button>
               {CATEGORIAS.map(({ key, label }) => {
                 const n = catMap.get(key)
+                const on = catsAtivas.has(key)
                 return (
-                  <button key={key} onClick={() => setCatAtiva((p) => (p === key ? null : key))}
+                  <button key={key} onClick={() => toggleCat(key)}
                     className={clsx('text-[10px] font-mono-custom px-2.5 py-1 rounded-md transition-all flex items-center gap-1',
-                      catAtiva === key ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                      on ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
                     {label}
-                    {n != null && <span className={clsx('text-[9px]', catAtiva === key ? 'text-black/60' : 'text-faint')}>{n}</span>}
+                    {n != null && <span className={clsx('text-[9px]', on ? 'text-black/60' : 'text-faint')}>{n}</span>}
                   </button>
                 )
               })}
             </div>
           </div>
+
+          <SetupFilterHint estados categorias className="mb-3" />
 
           {/* Ano + busca */}
           <div className="flex items-center gap-3 mb-4 flex-wrap">
@@ -209,6 +261,16 @@ export default function FornecedoresPage() {
             <div className="ml-auto flex items-center gap-3">
               <PageSizeSelector value={pageSize} onChange={setPageSize} />
               <ExportButton data={ranking} columns={COLS_EXPORT} filename="govhealth-fornecedores" title="Ranking de Fornecedores — GovHealth AI" />
+              {/* Export detalhado (item 10): itens fornecidos com qtd, valor unit. e total */}
+              <button
+                onClick={exportarItens}
+                disabled={expItens || loading}
+                title="Baixar planilha com os itens fornecidos: quantidade, valor unitário e valor total"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg3 border border-subtle text-[12px] text-muted hover:text-strong hover:border-subtle2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                {expItens ? <Loader2 size={13} className="animate-spin" /> : <Package size={13} />}
+                Exportar itens
+                <span className="text-[10px] font-mono-custom text-faint">.xlsx</span>
+              </button>
             </div>
           </div>
 
@@ -223,7 +285,7 @@ export default function FornecedoresPage() {
               {/* Ranking */}
               <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden self-start">
                 <div className="px-4 py-2.5 border-b border-subtle bg-bg3/30 text-[10px] font-mono-custom text-faint uppercase tracking-wider">
-                  Maiores vendedores {catAtiva ? `· ${CATEGORIA_LABEL[catAtiva] ?? catAtiva}` : '· todas categorias'}
+                  Maiores vendedores {catsAtivas.size ? `· ${[...catsAtivas].map((c) => CATEGORIA_LABEL[c] ?? c).join(', ')}` : '· todas categorias'}
                 </div>
                 {loading ? (
                   <div className="p-10 text-center text-faint text-[13px]">Carregando ranking…</div>

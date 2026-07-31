@@ -15,6 +15,20 @@ function applyFormat<T>(col: ExportColumn<T>, row: T): string {
   return String(val)
 }
 
+// Largura de coluna adaptativa (em caracteres): usa o maior conteúdo da coluna
+// (cabeçalho + células), com piso e teto para não estourar. Sem isso, links longos
+// (ex.: URL do edital) apareciam "cortados" na largura fixa do Excel.
+function autoColWidths<T>(data: T[], columns: ExportColumn<T>[]): { wch: number }[] {
+  return columns.map((col) => {
+    let max = col.label.length
+    for (const row of data) {
+      const len = applyFormat(col, row).length
+      if (len > max) max = len
+    }
+    return { wch: Math.min(Math.max(max + 2, 10), 80) }
+  })
+}
+
 export function exportToCSV<T>(data: T[], columns: ExportColumn<T>[], filename: string) {
   const header = columns.map((c) => `"${c.label}"`).join(',')
   const rows = data.map((row) =>
@@ -35,8 +49,8 @@ export function exportToXLSX<T>(data: T[], columns: ExportColumn<T>[], filename:
   ]
   const ws = XLSX.utils.aoa_to_sheet(ws_data)
 
-  // Column widths
-  ws['!cols'] = columns.map(() => ({ wch: 22 }))
+  // Column widths — adaptáveis ao conteúdo (links longos não ficam cortados).
+  ws['!cols'] = autoColWidths(data, columns)
 
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Dados')
@@ -61,7 +75,7 @@ export function exportSheetsToXLSX(sheets: ExportSheet[], filename: string) {
       ...s.data.map((row) => s.columns.map((col) => applyFormat(col, row))),
     ]
     const ws = XLSX.utils.aoa_to_sheet(ws_data)
-    ws['!cols'] = s.columns.map(() => ({ wch: 24 }))
+    ws['!cols'] = autoColWidths(s.data, s.columns)
     // Nome da aba: máx 31 chars e único.
     let nome = s.name.slice(0, 31)
     let i = 2
@@ -84,12 +98,16 @@ export function printTable<T>(data: T[], columns: ExportColumn<T>[], title: stri
       <meta charset="utf-8"/>
       <title>${title}</title>
       <style>
-        body { font-family: Arial, sans-serif; font-size: 11px; color: #111; margin: 20px; }
-        h1 { font-size: 14px; margin-bottom: 4px; }
-        p.meta { font-size: 10px; color: #666; margin-bottom: 12px; }
+        /* Paisagem + fonte compacta = mais largura por coluna, então links longos
+           (URL do edital) cabem sem quebra feia. table-layout automático deixa cada
+           coluna do tamanho do seu conteúdo (a de link fica larga, "UF" fica estreita). */
+        @page { size: A4 landscape; margin: 10mm; }
+        body { font-family: Arial, sans-serif; font-size: 9px; color: #111; margin: 0; }
+        h1 { font-size: 13px; margin: 0 0 2px; }
+        p.meta { font-size: 9px; color: #666; margin: 0 0 10px; }
         table { border-collapse: collapse; width: 100%; }
-        th { background: #1a1a2e; color: #fff; padding: 6px 8px; text-align: left; font-size: 10px; text-transform: uppercase; }
-        td { padding: 5px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
+        th { background: #1a1a2e; color: #fff; padding: 4px 6px; text-align: left; font-size: 8px; text-transform: uppercase; }
+        td { padding: 3px 6px; border-bottom: 1px solid #eee; font-size: 9px; overflow-wrap: anywhere; vertical-align: top; }
         tr:nth-child(even) td { background: #f9f9f9; }
       </style>
     </head>

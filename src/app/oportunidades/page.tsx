@@ -10,6 +10,7 @@ import type { ItemPNCP } from '@/lib/pncp'
 import { clsx } from 'clsx'
 import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target, MapPin, X } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 // Preço de referência Compras.gov REMOVIDO do breakdown por item (dava valores
@@ -490,6 +491,8 @@ function OportunidadesInner() {
               title="Licitações GovHealth AI"
               columns={[
                 { key: 'descricao', label: 'Descrição' },
+                { key: 'hospital', label: 'Proponente', format: (_v, row) => row.hospital ?? row.municipio ?? '' },
+                { key: 'licitacaoRelacionada', label: 'Convênio / PNCP', format: (_v, row) => row.licitacaoRelacionada?.numeroControlePNCP ?? '' },
                 { key: 'categoria', label: 'Categoria' },
                 { key: 'uf', label: 'UF' },
                 { key: 'municipio', label: 'Município' },
@@ -516,6 +519,8 @@ function OportunidadesInner() {
               </button>
             </div>
           </div>
+
+          <SetupFilterHint estados className="mb-3" />
 
           {/* ── UF bar (multi-select) ─────────────────────────────────────── */}
           <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">

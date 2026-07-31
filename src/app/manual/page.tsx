@@ -11,7 +11,7 @@ import {
   Flame, TrendingUp, Database, Filter, Search, Zap,
   Calendar, MapPin, ArrowRight, Info, CheckCircle, Clock,
   LayoutDashboard, Boxes, Users, Kanban, CalendarClock, Map as MapIcon,
-  FileText, Trophy, Building2, Wallet, DollarSign, Bell, Flag, Crown, Lock, LayoutGrid,
+  FileText, Trophy, Building2, Wallet, DollarSign, Bell, Crown, Lock, LayoutGrid,
 } from 'lucide-react'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -190,15 +190,16 @@ const MODULOS: Modulo[] = [
     ],
     valor: 'Nunca perca o prazo de envio de proposta de um edital que interessa.',
   },
-  {
-    label: 'Minhas Disputas', icon: Flag, pro: true,
-    desc: 'Acompanhe os editais que você está disputando, com status e prazos.',
-    passos: [
-      'Marque as licitações que você está disputando.',
-      'Acompanhe status e prazos num só painel.',
-    ],
-    valor: 'Visão consolidada do que está em jogo agora — sem planilha paralela.',
-  },
+  // DESATIVADO (a pedido) — Minhas Disputas. Reativar: descomentar este bloco.
+  // {
+  //   label: 'Minhas Disputas', icon: Flag, pro: true,
+  //   desc: 'Acompanhe os editais que você está disputando, com status e prazos.',
+  //   passos: [
+  //     'Marque as licitações que você está disputando.',
+  //     'Acompanhe status e prazos num só painel.',
+  //   ],
+  //   valor: 'Visão consolidada do que está em jogo agora — sem planilha paralela.',
+  // },
   {
     label: 'Editais', icon: FileText, pro: true,
     desc: 'Leitura estruturada dos editais acompanhados.',
@@ -208,16 +209,17 @@ const MODULOS: Modulo[] = [
     ],
     valor: 'Entenda o que o edital pede em minutos, sem ler dezenas de páginas.',
   },
-  {
-    label: 'Concorrentes', icon: Users, pro: true,
-    desc: 'Análise de concorrentes e participação (share) por estado.',
-    passos: [
-      'Selecione a categoria e a UF.',
-      'Veja o share de cada concorrente.',
-      'Compare a atuação deles por estado.',
-    ],
-    valor: 'Mapeie onde o concorrente é forte e onde há espaço aberto para atacar.',
-  },
+  // DESATIVADO (a pedido) — Concorrentes (a tela Concorrentes/UF permanece).
+  // {
+  //   label: 'Concorrentes', icon: Users, pro: true,
+  //   desc: 'Análise de concorrentes e participação (share) por estado.',
+  //   passos: [
+  //     'Selecione a categoria e a UF.',
+  //     'Veja o share de cada concorrente.',
+  //     'Compare a atuação deles por estado.',
+  //   ],
+  //   valor: 'Mapeie onde o concorrente é forte e onde há espaço aberto para atacar.',
+  // },
   {
     label: 'Breakdown', icon: LayoutGrid, pro: true,
     desc: 'Detalhamento item a item dos resultados homologados.',

@@ -9,6 +9,9 @@ import { X, Search, ExternalLink, ChevronDown, ChevronUp, Package } from 'lucide
 import type { LicitacaoEnriquecida } from '@/app/api/licitacoes/route'
 import type { ItemPNCP } from '@/lib/pncp'
 import { PrecosReferencia } from '@/components/ui/PrecosReferencia'
+import { ExportButton } from '@/components/ui/ExportButton'
+import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { CATEGORIA_LABEL as CAT_LABEL, CATEGORIA_COLOR as CAT_COLOR, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
@@ -72,6 +75,10 @@ export default function AnalisePage() {
   const [situacao, setSituacao] = useState('todos')
   const [queryProponente, setQueryProponente] = useState('')
 
+  // Paginação — 50 por página (padrão), com seletor p/ mostrar mais (igual Licitações).
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_PADRAO)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -99,6 +106,10 @@ export default function AnalisePage() {
   })
 
   const valorTotal = filtered.reduce((s, l) => s + l.valor, 0)
+
+  // Ao trocar filtros/dados, volta a mostrar só a 1ª página.
+  useEffect(() => { setVisibleCount(pageSize) }, [pageSize, all, anosAtivos, tiposAtivos, categoriasAtivas, ufsAtivos, situacao, queryProponente])
+  const visible = filtered.slice(0, visibleCount)
 
   // Active filter chips
   const chips = [
@@ -267,6 +278,34 @@ export default function AnalisePage() {
                 </div>
               </div>
 
+              <SetupFilterHint estados />
+
+              {/* Toolbar — exportar + itens por página (igual Licitações) */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <ExportButton
+                  data={filtered}
+                  filename="maior-atuacao"
+                  title="Maior Atuação · GovHealth AI"
+                  columns={[
+                    { key: 'descricao', label: 'Item' },
+                    { key: 'categoria', label: 'Categoria', format: (v) => CAT_LABEL[String(v)] ?? String(v ?? '') },
+                    { key: 'uf', label: 'UF' },
+                    { key: 'proponente', label: 'Proponente' },
+                    { key: 'municipio', label: 'Município' },
+                    { key: 'ano', label: 'Ano' },
+                    { key: 'modalidade', label: 'Modalidade' },
+                    { key: 'numeroControlePNCP', label: 'Convênio / PNCP' },
+                    { key: 'situacao', label: 'Status' },
+                    { key: 'valor', label: 'Valor', format: (v) => `R$ ${Number(v ?? 0).toLocaleString('pt-BR')}` },
+                    { key: 'link', label: 'Edital' },
+                  ]}
+                />
+                <PageSizeSelector value={pageSize} onChange={setPageSize} className="bg-bg2 border border-subtle2 rounded-lg px-2 py-1.5" />
+                <span className="ml-auto text-[11px] font-mono-custom text-faint">
+                  {loading ? '' : `Mostrando ${Math.min(visible.length, filtered.length)} de ${filtered.length}`}
+                </span>
+              </div>
+
               {/* Table */}
               <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
                 {loading ? (
@@ -285,7 +324,7 @@ export default function AnalisePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.map((l) => {
+                      {visible.map((l) => {
                         const isOpen = expandedId === l.id
                         const itens = itensCache[l.id] ?? []
                         return (
@@ -391,6 +430,20 @@ export default function AnalisePage() {
                   </table>
                 )}
               </div>
+
+              {/* Mostrar mais */}
+              {!loading && filtered.length > visible.length && (
+                <div className="flex items-center justify-center gap-3 mt-1">
+                  <span className="text-[11px] font-mono-custom text-faint">
+                    Mostrando {visible.length} de {filtered.length}
+                  </span>
+                  <button
+                    onClick={() => setVisibleCount((n) => n + pageSize)}
+                    className="text-[12px] font-mono-custom px-4 py-2 rounded-lg bg-bg2 border border-subtle2 text-strong hover:border-accent hover:text-accent transition-all">
+                    Mostrar mais {pageSize}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </main>
