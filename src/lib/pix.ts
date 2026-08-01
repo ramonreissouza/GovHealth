@@ -12,5 +12,6 @@ export const PIX = {
     '00020101021126360014br.gov.bcb.pix0114338889160001895204000053039865802BR5925TEC HEALTH ENGENHARIA HOS6009SAO PAULO622905251KX44JDZ080QF3Z956MF4W5RQ63042545',
 }
 
-/** E-mail de contato/suporte e destino dos comprovantes de pagamento. */
-export const CONTATO_EMAIL = 'contato@techealth.com.br'
+/** E-mail que RECEBE o contato dos clientes (orçamento, comprovantes, suporte).
+ * Fonte única — configurável por env (NEXT_PUBLIC_CONTATO_EMAIL); default oficial. */
+export const CONTATO_EMAIL = process.env.NEXT_PUBLIC_CONTATO_EMAIL || 'contato@techealth.com.br'

@@ -36,6 +36,7 @@ function priceIdDe(plano: Plano): string | undefined {
   const map: Record<Plano['id'], string | undefined> = {
     essencial: process.env.STRIPE_PRICE_ESSENCIAL,
     pro: process.env.STRIPE_PRICE_PRO,
+    empresa: process.env.STRIPE_PRICE_EMPRESA,   // sob consulta — normalmente sem checkout self-service
   }
   return map[plano.id]
 }

@@ -8,7 +8,7 @@ import Image from 'next/image'
 import type { Metadata } from 'next'
 import { clsx } from 'clsx'
 import { ArrowRight, ShieldCheck, Check, Radar, Swords, Flame } from 'lucide-react'
-import { PLANOS, formatarPreco } from '@/lib/planos'
+import { PLANOS, precoLabel, orcamentoHref } from '@/lib/planos'
 import { query } from '@/lib/db'
 import { siteUrl } from '@/lib/site'
 
@@ -197,17 +197,18 @@ export default async function InicioPage() {
           <div className="max-w-[1080px] mx-auto px-6 py-20">
             <h2 className="text-center font-heading font-bold text-[28px] mb-1">Escolha o plano da sua operação</h2>
             <p className="text-center text-[13.5px] text-muted mb-10 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
-            <div className="grid sm:grid-cols-2 gap-5 max-w-[760px] mx-auto">
+            <div className="grid sm:grid-cols-3 gap-5 max-w-[1000px] mx-auto">
               {PLANOS.map((p, i) => (
                 <div key={p.id} className={clsx('reveal rounded-2xl p-7 border flex flex-col', p.destaque ? 'border-accent shadow-xl shadow-accent/10 bg-gradient-brand-soft' : 'border-subtle bg-bg2')} style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="font-heading font-bold text-[19px]">{p.nome}</h3>
                     {p.destaque && <span className="text-[10px] font-mono-custom text-white bg-gradient-brand px-2 py-0.5 rounded-full font-bold">Mais completo</span>}
+                    {p.contato && <span className="text-[10px] font-mono-custom text-brand-blue bg-brand-blue/10 border border-brand-blue/30 px-2 py-0.5 rounded-full font-bold">Equipe</span>}
                   </div>
                   <p className="text-[12.5px] text-muted mb-4">{p.resumo}</p>
                   <div className="flex items-baseline gap-1 mb-5">
-                    <span className="font-heading font-bold text-[34px]">{formatarPreco(p.preco)}</span>
-                    <span className="text-[13px] text-faint">/{p.ciclo}</span>
+                    <span className="font-heading font-bold text-[34px]">{precoLabel(p)}</span>
+                    {!p.contato && <span className="text-[13px] text-faint">/{p.ciclo}</span>}
                   </div>
                   <ul className="space-y-2.5 mb-6 flex-1">
                     {p.features.map((f) => (
@@ -216,16 +217,25 @@ export default async function InicioPage() {
                       </li>
                     ))}
                   </ul>
-                  <Link href={`/login?criar=1&plano=${p.id}`}
-                    className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-all',
-                      p.destaque ? 'bg-gradient-brand text-white hover:brightness-105 shadow-lg shadow-accent/20' : 'bg-bg2 border border-subtle2 text-strong hover:border-accent/50')}>
-                    Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
-                  </Link>
-                  <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2.5">ou assinar direto</Link>
+                  {p.contato ? (
+                    <a href={orcamentoHref(p.nome)}
+                      className="inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-all bg-bg2 border border-brand-blue/50 text-brand-blue hover:bg-brand-blue/5">
+                      Entrar em contato para orçamento <ArrowRight size={15} />
+                    </a>
+                  ) : (
+                    <>
+                      <Link href={`/login?criar=1&plano=${p.id}`}
+                        className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-all',
+                          p.destaque ? 'bg-gradient-brand text-white hover:brightness-105 shadow-lg shadow-accent/20' : 'bg-bg2 border border-subtle2 text-strong hover:border-accent/50')}>
+                        Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
+                      </Link>
+                      <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2.5">ou assinar direto</Link>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
-            <p className="text-center text-[11px] text-faint mt-5">Precisa de mais usuários ou plano corporativo? <a href="mailto:contato@techealth.com.br?subject=Plano%20corporativo" className="text-accent hover:underline">Fale com a gente</a>.</p>
+            <p className="text-center text-[11px] text-faint mt-5">O <strong className="text-muted">Radar de Chat</strong> e o uso por equipe (vários usuários) são exclusivos do plano <strong className="text-muted">Empresa</strong>. <a href={orcamentoHref('Empresa')} className="text-accent hover:underline">Fale com a gente</a>.</p>
           </div>
         </section>
 

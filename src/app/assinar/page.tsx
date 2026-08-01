@@ -13,8 +13,8 @@ import { clsx } from 'clsx'
 import { QRCodeSVG } from 'qrcode.react'
 import { loadStripe } from '@stripe/stripe-js'
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js'
-import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock, Copy, Mail, LogOut } from 'lucide-react'
-import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
+import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock, Copy, Mail, LogOut, Building2, Radar } from 'lucide-react'
+import { PLANOS, planoPorId, formatarPreco, orcamentoHref } from '@/lib/planos'
 import { PIX, CONTATO_EMAIL } from '@/lib/pix'
 
 type Metodo = 'pix' | 'cartao' | 'boleto'
@@ -64,7 +64,64 @@ export default function AssinarPage() {
 function Checkout() {
   const sp = useSearchParams()
   const { status: authStatus } = useSession()
-  const plano = planoPorId(sp.get('plano')) ?? PLANOS.find((p) => p.destaque) ?? PLANOS[0]
+  // Resolve o plano: ?plano=… explícito, ou o alvo do upgrade (rota Empresa
+  // travada manda ?upgrade=empresa sem plano), senão o plano em destaque.
+  const plano =
+    planoPorId(sp.get('plano')) ??
+    (sp.get('upgrade') === 'empresa' ? planoPorId('empresa') : undefined) ??
+    PLANOS.find((p) => p.destaque) ??
+    PLANOS[0]
+
+  // Plano Empresa é "sob consulta": não há checkout self-service — mostramos o
+  // caminho de orçamento (Radar de Chat + equipe são exclusivos deste plano).
+  if (plano.contato) {
+    return (
+      <div className="relative min-h-screen bg-bg text-strong overflow-hidden">
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+          <div className="absolute -top-40 -left-32 w-[420px] h-[420px] rounded-full bg-accent/[0.06] blur-3xl" />
+          <div className="absolute top-1/3 -right-40 w-[440px] h-[440px] rounded-full bg-[#17b8a6]/[0.06] blur-3xl" />
+        </div>
+        <header className="border-b border-subtle bg-bg2/80 backdrop-blur sticky top-0 z-20">
+          <div className="max-w-[900px] mx-auto px-6 py-4 flex items-center justify-between">
+            <Link href="/inicio" className="flex items-center gap-1.5 text-[13px] text-muted hover:text-strong"><ArrowLeft size={15} /> Voltar</Link>
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={130} height={59} priority className="h-6 w-auto" />
+          </div>
+        </header>
+        <main className="max-w-[620px] mx-auto px-6 py-14">
+          {sp.get('upgrade') === 'empresa' && (
+            <div className="mb-5 bg-brand-blue/10 border border-brand-blue/30 rounded-lg px-3.5 py-2.5 text-[12.5px] text-brand-blue flex items-center gap-2">
+              <Radar size={14} className="flex-shrink-0" />
+              {sp.get('recurso') === '/equipe'
+                ? 'A gestão de equipe (vários usuários) é exclusiva do plano Empresa.'
+                : 'O Radar de Chat é exclusivo do plano Empresa.'}
+            </div>
+          )}
+          <div className="bg-bg2 border border-subtle rounded-2xl p-7">
+            <div className="flex items-center gap-2.5 mb-1.5">
+              <Building2 size={20} className="text-brand-blue" />
+              <h1 className="font-heading font-bold text-[22px]">Plano <span className="text-gradient-brand">{plano.nome}</span></h1>
+            </div>
+            <p className="text-[13px] text-muted mb-5">{plano.resumo} O valor é sob consulta — montamos a proposta conforme o número de usuários da sua operação.</p>
+            <ul className="space-y-2.5 mb-6">
+              {plano.features.map((ft) => (
+                <li key={ft} className="flex items-start gap-2 text-[13px] text-strong"><Check size={15} className="text-accent flex-shrink-0 mt-0.5" /> {ft}</li>
+              ))}
+            </ul>
+            <a href={orcamentoHref(plano.nome)}
+              className="w-full inline-flex items-center justify-center gap-2 text-[15px] font-semibold bg-gradient-brand text-white py-3 rounded-lg hover:brightness-105 transition-all shadow-lg shadow-accent/20">
+              <Mail size={16} /> Entrar em contato para orçamento
+            </a>
+            <p className="text-[11.5px] text-faint text-center mt-3">Responderemos com uma proposta e liberamos um teste guiado. Ou escreva para <strong className="text-muted">contato@techealth.com.br</strong>.</p>
+            <div className="border-t border-subtle mt-5 pt-4 flex gap-3 justify-center">
+              {PLANOS.filter((p) => p.id !== plano.id).map((p) => (
+                <Link key={p.id} href={`/assinar?plano=${p.id}`} className="text-[12px] text-accent hover:underline">Ver plano {p.nome}</Link>
+              ))}
+            </div>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   const [f, setF] = useState({ nome: '', email: '', empresa: '', instituicao: '', cpfCnpj: '', telefone: '', endereco: '' })
   const [metodo, setMetodo] = useState<Metodo>('pix')

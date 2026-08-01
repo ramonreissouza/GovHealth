@@ -15,7 +15,7 @@ import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
-import { ehRotaPro, temAcessoPro } from '@/lib/plano-gating'
+import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 
 const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
 
@@ -110,15 +110,20 @@ export async function middleware(req: NextRequest) {
       url.searchParams.set('plano', t.plano || 'pro')
       return NextResponse.redirect(url)
     }
-    // Gate por plano: rotas Pro exigem plano Pro (essencial → tela de upgrade).
-    if (
-      !pathname.startsWith('/api/') && !ehPublica(pathname) &&
-      ehRotaPro(pathname) && !temAcessoPro({ plano: t.plano, role: t.role, status: t.status })
-    ) {
-      const url = new URL('/assinar', req.url)
-      url.searchParams.set('upgrade', 'pro')
-      url.searchParams.set('recurso', pathname)
-      return NextResponse.redirect(url)
+    // Gate por plano. Empresa (Radar de Chat, Equipe) tem prioridade sobre Pro.
+    if (!pathname.startsWith('/api/') && !ehPublica(pathname)) {
+      const ctx = { plano: t.plano, role: t.role, status: t.status }
+      const bloqueio = ehRotaEmpresa(pathname) && !temAcessoEmpresa(ctx)
+        ? 'empresa'
+        : ehRotaPro(pathname) && !temAcessoPro(ctx)
+        ? 'pro'
+        : null
+      if (bloqueio) {
+        const url = new URL('/assinar', req.url)
+        url.searchParams.set('upgrade', bloqueio)
+        url.searchParams.set('recurso', pathname)
+        return NextResponse.redirect(url)
+      }
     }
     return NextResponse.next()
   }

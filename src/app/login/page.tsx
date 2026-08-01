@@ -56,7 +56,8 @@ function Auth() {
           ))}
         </div>
 
-        {modo === 'entrar' ? <Entrar router={router} /> : <Criar router={router} planoInicial={querPlano?.id} />}
+        {/* Empresa é sob consulta (contato) — não entra no fluxo de teste grátis. */}
+        {modo === 'entrar' ? <Entrar router={router} /> : <Criar router={router} planoInicial={querPlano && !querPlano.contato ? (querPlano.id as 'essencial' | 'pro') : undefined} />}
       </div>
     </div>
   )
@@ -260,8 +261,8 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
           <div className="mt-1">
             <div className="text-[11px] text-muted font-mono-custom uppercase tracking-wide mb-2">Plano para o teste</div>
             <div className="grid grid-cols-2 gap-2">
-              {PLANOS.map((op) => (
-                <button type="button" key={op.id} onClick={() => setPlano(op.id)}
+              {PLANOS.filter((op) => !op.contato).map((op) => (
+                <button type="button" key={op.id} onClick={() => setPlano(op.id as 'essencial' | 'pro')}
                   className={clsx('text-left px-3 py-2.5 rounded-xl border transition-colors',
                     plano === op.id ? 'border-accent bg-accent/10' : 'border-subtle hover:border-muted')}>
                   <div className="flex items-center justify-between">

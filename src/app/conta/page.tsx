@@ -10,7 +10,7 @@ import {
   Loader2, CreditCard, ShieldCheck, Save, CheckCircle2, AlertTriangle, Check,
   Building2, ExternalLink, KeyRound, Eye, EyeOff, Sparkles, XCircle,
 } from 'lucide-react'
-import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
+import { PLANOS, planoPorId, precoLabel } from '@/lib/planos'
 
 const SUPORTE = 'contato@techealth.com.br'
 
@@ -135,7 +135,7 @@ function PlanoCard({ conta }: { conta: Conta }) {
             <span className={clsx('text-[10.5px] font-medium px-2 py-0.5 rounded-full border', status.cls)}>{status.label}</span>
           </div>
           {planoDef && (
-            <div className="text-[13px] text-muted mt-1.5">{formatarPreco(planoDef.preco)}<span className="text-faint">/{planoDef.ciclo}</span></div>
+            <div className="text-[13px] text-muted mt-1.5">{precoLabel(planoDef)}{!planoDef.contato && <span className="text-faint">/{planoDef.ciclo}</span>}</div>
           )}
           {dataFmt && (
             <div className="text-[12px] text-faint mt-1">
@@ -165,10 +165,14 @@ function PlanoCard({ conta }: { conta: Conta }) {
               <div key={p.id} className={clsx('rounded-lg border p-3 flex items-center justify-between gap-2', atual ? 'border-accent/40 bg-accent/5' : 'border-subtle bg-bg3')}>
                 <div>
                   <div className="text-[13px] font-semibold text-strong">{p.nome}</div>
-                  <div className="text-[11px] text-faint">{formatarPreco(p.preco)}/{p.ciclo}</div>
+                  <div className="text-[11px] text-faint">{precoLabel(p)}{!p.contato && `/${p.ciclo}`}</div>
                 </div>
                 {atual ? (
                   <span className="text-[11px] text-accent font-medium flex items-center gap-1"><Check size={12} /> Atual</span>
+                ) : p.contato ? (
+                  <Link href={`/assinar?plano=${p.id}`} className="text-[11.5px] font-semibold px-3 py-1.5 rounded-lg bg-brand-blue/10 border border-brand-blue/30 text-brand-blue hover:bg-brand-blue/15 transition-colors">
+                    Orçamento
+                  </Link>
                 ) : conta.temPagamento ? (
                   <button onClick={abrirPortal} disabled={abrindoPortal} className="text-[11.5px] font-semibold px-3 py-1.5 rounded-lg bg-accent text-black hover:bg-accent/90 transition-colors disabled:opacity-50">
                     Mudar

@@ -13,7 +13,7 @@ import { useSession, signOut } from 'next-auth/react'
 import { useEffect, useState } from 'react'
 import { contarNaoLidas } from '@/lib/alertas'
 import { IA_HABILITADA } from '@/lib/features'
-import { ehRotaPro, temAcessoPro } from '@/lib/plano-gating'
+import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 import { clearLocalData } from '@/lib/synced'
 
 // Rotas que dependem de IA — ocultadas da navegação quando IA_HABILITADA é false.
@@ -96,8 +96,10 @@ export default function Sidebar() {
   // Teste grátis: dias restantes (banner no rodapé).
   const su = session?.user as { status?: string | null; expiraEm?: string | null; plano?: string | null; role?: string | null } | undefined
   const emTrial = su?.status === 'trial'
-  // Acesso Pro (master/trial/plano pro). Essencial vê as rotas Pro travadas.
+  // Acesso Pro (master/trial/plano pro/empresa). Essencial vê as rotas Pro travadas.
   const acessoPro = temAcessoPro({ plano: su?.plano, role: su?.role, status: su?.status })
+  // Acesso Empresa: Radar de Chat + Equipe (só master/plano empresa).
+  const acessoEmpresa = temAcessoEmpresa({ plano: su?.plano, role: su?.role, status: su?.status })
   const diasRestantes = emTrial && su?.expiraEm
     ? Math.ceil((new Date(su.expiraEm + 'T23:59:59Z').getTime() - Date.now()) / 86_400_000)
     : null
@@ -158,15 +160,19 @@ export default function Sidebar() {
             {section.items.map((item) => {
               const active = pathname === item.href
               const isAlertBadge = item.href === '/alertas' && alertCount > 0
-              // Rota Pro sem acesso: fica travada e leva à tela de upgrade.
-              const locked = ehRotaPro(item.href) && !acessoPro
-              const href = locked ? `/assinar?upgrade=pro&recurso=${encodeURIComponent(item.href)}` : item.href
+              // Travas por plano: Empresa (Radar de Chat, Equipe) tem prioridade
+              // sobre Pro; cada uma leva à tela de upgrade do respectivo plano.
+              const lockedEmpresa = ehRotaEmpresa(item.href) && !acessoEmpresa
+              const lockedPro = ehRotaPro(item.href) && !acessoPro
+              const locked = lockedEmpresa || lockedPro
+              const upgradeAlvo = lockedEmpresa ? 'empresa' : 'pro'
+              const href = locked ? `/assinar?upgrade=${upgradeAlvo}&recurso=${encodeURIComponent(item.href)}` : item.href
               return (
                 <Link
                   key={item.href}
                   href={href}
                   onClick={() => setOpen(false)}
-                  title={locked ? 'Disponível no plano Pro' : undefined}
+                  title={locked ? (lockedEmpresa ? 'Disponível no plano Empresa' : 'Disponível no plano Pro') : undefined}
                   className={clsx(
                     'flex items-center gap-2.5 mx-1 px-3 py-2 rounded-md text-[13px] transition-all relative',
                     active
