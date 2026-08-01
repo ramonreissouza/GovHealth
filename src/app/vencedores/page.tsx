@@ -110,7 +110,8 @@ export default function VencedoresPage() {
     finally { if (myId === reqIdRef.current) setLoading(false) }
   }, [ufsAtivos, empresaQuery, catsAtivas, ano, pageSize])
 
-  useEffect(() => { load() }, [load])
+  // Debounce dos filtros: junta cliques rápidos (UF/categoria) numa só query pesada.
+  useEffect(() => { const t = setTimeout(() => { load() }, 250); return () => clearTimeout(t) }, [load])
 
   const kpis = data?.kpis
   const vencedores = data?.vencedores ?? []

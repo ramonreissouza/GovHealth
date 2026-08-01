@@ -116,7 +116,8 @@ export default function ConcorrentesEstadoPage() {
     finally { if (myId === reqIdRef.current) setLoading(false) }
   }, [ufsAtivos, ano, itemFiltro, catAtiva, buscaQuery, fornecedorSel])
 
-  useEffect(() => { load() }, [load])
+  // Debounce dos filtros: junta cliques rápidos (UF/categoria) numa só query pesada.
+  useEffect(() => { const t = setTimeout(() => { load() }, 250); return () => clearTimeout(t) }, [load])
 
   // debounce da busca por nome (server-side).
   useEffect(() => { const t = setTimeout(() => setBuscaQuery(busca.trim()), 350); return () => clearTimeout(t) }, [busca])

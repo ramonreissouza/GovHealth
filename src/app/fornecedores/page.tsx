@@ -135,7 +135,11 @@ export default function FornecedoresPage() {
     finally { if (myId === reqIdRef.current) setLoading(false) }
   }, [filtrosParams, buscaQuery])
 
-  useEffect(() => { load() }, [load])
+  // Debounce dos filtros: cada clique (UF/categoria/ano) recria `load` e reinicia o
+  // timer. Sem isto, remover 4 filtros disparava 4 queries pesadas (~2s cada) em fila.
+  // Agora só dispara ~250ms depois que o usuário para de mexer. A busca por nome já tem
+  // seu próprio debounce (busca→buscaQuery), então os dois se somam de forma suave.
+  useEffect(() => { const t = setTimeout(() => { load() }, 250); return () => clearTimeout(t) }, [load])
 
   // debounce da busca por nome (server-side): acha qualquer fornecedor, não só o top 100.
   useEffect(() => { const t = setTimeout(() => setBuscaQuery(busca.trim()), 350); return () => clearTimeout(t) }, [busca])

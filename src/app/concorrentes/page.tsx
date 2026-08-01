@@ -111,7 +111,8 @@ export default function ConcorrentesPage() {
     finally { setLoading(false) }
   }, [filtrosParams, buscaQuery])
 
-  useEffect(() => { load() }, [load])
+  // Debounce dos filtros: junta cliques rápidos (UF/categoria) numa só query pesada.
+  useEffect(() => { const t = setTimeout(() => { load() }, 250); return () => clearTimeout(t) }, [load])
 
   // debounce da busca por nome (server-side): acha qualquer fornecedor, não só o top 100.
   useEffect(() => { const t = setTimeout(() => setBuscaQuery(busca.trim()), 350); return () => clearTimeout(t) }, [busca])
