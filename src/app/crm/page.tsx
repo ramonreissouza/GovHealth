@@ -8,7 +8,7 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { clsx } from 'clsx'
 import {
   Plus, Trash2, Edit2, X, TrendingUp, DollarSign, CheckCircle2,
-  Percent, Clock, ChevronRight, GripVertical, ExternalLink, Save,
+  Percent, Clock, ChevronRight, GripVertical, ExternalLink, Save, FileSearch,
 } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
 import {
@@ -268,6 +268,36 @@ function DealModal({
 
         {/* Form */}
         <div className="flex-1 p-5 space-y-4">
+
+          {/* Link para a licitação de origem (issue #15) */}
+          {deal?.oportunidadeId ? (
+            <a
+              href={`/oportunidades?opp=${encodeURIComponent(deal.oportunidadeId)}`}
+              className="group flex items-center justify-between gap-2 rounded-xl border border-accent/30 bg-accent/5 px-3.5 py-3 hover:bg-accent/10 transition-colors"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <FileSearch size={15} className="text-accent flex-shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-[12px] font-semibold text-accent leading-tight">Ver licitação completa</span>
+                  <span className="block text-[10px] text-faint font-mono-custom truncate">abre em Licitações, filtrado por esta demanda</span>
+                </span>
+              </span>
+              <ChevronRight size={15} className="text-accent flex-shrink-0 group-hover:translate-x-0.5 transition-transform" />
+            </a>
+          ) : deal?.licitacaoLink ? (
+            <a
+              href={deal.licitacaoLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex items-center justify-between gap-2 rounded-xl border border-subtle2 bg-bg3 px-3.5 py-3 hover:border-accent/40 transition-colors"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <ExternalLink size={15} className="text-faint flex-shrink-0" />
+                <span className="text-[12px] font-semibold text-strong leading-tight">Abrir edital / PNCP de origem</span>
+              </span>
+              <ChevronRight size={15} className="text-faint flex-shrink-0 group-hover:translate-x-0.5 transition-transform" />
+            </a>
+          ) : null}
 
           {/* Stage */}
           <div>
