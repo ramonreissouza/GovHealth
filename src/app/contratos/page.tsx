@@ -30,6 +30,7 @@ export default function ContratosPage() {
   const [erro, setErro] = useState<string | null>(null)
   const [contratos, setContratos] = useState<ContratoGov[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
+  const [fonte, setFonte] = useState<string>('')
 
   const buscar = useCallback(async () => {
     const q = valor.trim()
@@ -42,6 +43,7 @@ export default function ContratosPage() {
       if (!res.ok) throw new Error(data?.error ?? 'Erro')
       setContratos(data.contratos ?? [])
       setStats(data.stats ?? null)
+      setFonte(data.fonte ?? '')
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao consultar o Contratos.gov.br.')
     } finally {
@@ -118,6 +120,13 @@ export default function ContratosPage() {
 
           {!loading && searched && !erro && (
             <>
+              {modo === 'cnpj' && contratos.length > 0 && contratos[0].fornecedorNome && (
+                <div className="flex items-center gap-2 mb-4 text-[13px] text-strong">
+                  <Building2 size={15} className="text-accent flex-shrink-0" />
+                  <span className="font-semibold">{contratos[0].fornecedorNome}</span>
+                  <span className="text-faint font-mono-custom text-[11px]">{formatCNPJ(contratos[0].fornecedorCnpj)}</span>
+                </div>
+              )}
               {stats && (
                 <div className="grid grid-cols-4 gap-3 mb-4">
                   {[
@@ -214,10 +223,10 @@ export default function ContratosPage() {
                     </tbody>
                   </table>
                   <div className="px-4 py-3 border-t border-subtle flex items-center justify-between">
-                    <span className="text-[10px] font-mono-custom text-faint flex items-center gap-1.5"><Users size={11} /> Fonte: Contratos.gov.br (Comprasnet Contratos)</span>
-                    <a href="https://contratos.comprasnet.gov.br" target="_blank" rel="noopener noreferrer"
+                    <span className="text-[10px] font-mono-custom text-faint flex items-center gap-1.5"><Users size={11} /> Fonte: {fonte || (modo === 'cnpj' ? 'PNCP' : 'Contratos.gov.br')}</span>
+                    <a href={modo === 'cnpj' ? 'https://pncp.gov.br' : 'https://contratos.comprasnet.gov.br'} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-[10px] font-mono-custom text-faint hover:text-accent transition-colors">
-                      <ExternalLink size={10} /> Abrir no Contratos.gov.br
+                      <ExternalLink size={10} /> {modo === 'cnpj' ? 'Abrir no PNCP' : 'Abrir no Contratos.gov.br'}
                     </a>
                   </div>
                 </div>

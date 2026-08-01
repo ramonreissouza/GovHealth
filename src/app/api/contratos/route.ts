@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     const payload = {
       contratos,
       stats: calcularContratosStats(contratos),
-      fonte: 'contratos.gov.br',
+      fonte: ug ? 'Contratos.gov.br (Comprasnet)' : 'PNCP — Portal Nacional de Contratações Públicas',
       atualizadoEm: new Date().toISOString(),
     }
     // Contratos mudam pouco no dia — cache de 24h em caso de sucesso.
@@ -42,8 +42,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(payload)
   } catch (error) {
     console.error('[contratos]', error)
+    // Mensagem específica quando a lib já traz uma (ex.: PNCP indisponível / CNPJ inválido).
+    const msg = error instanceof Error ? error.message : ''
+    const fonte = ug ? 'o Contratos.gov.br' : 'o PNCP'
     return NextResponse.json(
-      { error: 'Erro ao consultar o Contratos.gov.br', detalhe: String(error) },
+      { error: msg || `Erro ao consultar ${fonte}. Tente novamente em instantes.`, detalhe: String(error) },
       { status: 502 },
     )
   }
