@@ -351,19 +351,29 @@ function OportunidadesInner() {
   // Deep-link (?opp=): posição do lead focado na lista filtrada. Declarado APÓS o efeito
   // que reinicia o lote (para o bump de visibleCount não ser sobrescrito) — garante que
   // a linha exista no DOM antes de rolar até ela.
-  const focusIndex = focusId ? filtered.findIndex((o) => o.id === focusId) : -1
+  // Aceita tanto o id da oportunidade (`pncp-<nºcontrole>`) quanto o nº de controle
+  // PNCP "cru" — Portais Estaduais e outros linkadores mandam o controle sem prefixo.
+  const focusOpp = focusId
+    ? filtered.find((o) =>
+        o.id === focusId ||
+        o.id === `pncp-${focusId}` ||
+        o.licitacaoRelacionada?.numeroControlePNCP === focusId,
+      )
+    : undefined
+  const focusRealId = focusOpp?.id ?? null
+  const focusIndex = focusOpp ? filtered.indexOf(focusOpp) : -1
   useEffect(() => {
-    if (!focusId || loading || focusIndex < 0) return
+    if (!focusRealId || loading || focusIndex < 0) return
     setVisibleCount((n) => (focusIndex >= n ? focusIndex + 1 : n)) // renderiza a linha do lead
-    setExpanded((p) => new Set(p).add(focusId))
-    setHighlightId(focusId)
+    setExpanded((p) => new Set(p).add(focusRealId))
+    setHighlightId(focusRealId)
     const t = setTimeout(() => {
-      document.getElementById(`opp-${focusId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      document.getElementById(`opp-${focusRealId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 220)
     const t2 = setTimeout(() => setHighlightId(null), 2800)
     return () => { clearTimeout(t); clearTimeout(t2) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusId, loading, focusIndex])
+  }, [focusRealId, loading, focusIndex])
 
   return (
     <div className="flex h-screen overflow-hidden">

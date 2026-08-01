@@ -2,12 +2,14 @@
 // src/app/estados/page.tsx — Portais Estaduais (SP, RJ, MG, BA)
 
 import React, { useState, useEffect, useMemo } from 'react'
+import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
   ExternalLink, Search, CheckCircle2, AlertCircle, RefreshCw,
   Building2, MapPin, ChevronDown, ChevronUp, Wifi, WifiOff, Package,
+  FileSearch, ChevronRight,
 } from 'lucide-react'
 import type { ResultadoEstado, KPIsEstado, UFEstadual, LicitacaoEstadual } from '@/lib/portais-estaduais'
 import type { ItemPNCP } from '@/lib/pncp'
@@ -47,7 +49,8 @@ function isAbertaLic(l: LicitacaoEstadual): boolean {
 }
 
 // Estado da pré-análise de itens de uma licitação.
-interface ItensState { itens: ItemPNCP[]; loading: boolean; erro?: boolean }
+// liveTried = já tentamos o fallback ao vivo no PNCP (evita refetch a cada abrir).
+interface ItensState { itens: ItemPNCP[]; loading: boolean; erro?: boolean; liveTried?: boolean }
 
 type StatusFiltro = 'todas' | 'abertas' | 'fechadas'
 
@@ -255,8 +258,33 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
   // PNCP em segundo plano. Alimenta tanto o detalhe expandido quanto a busca.
   const [itensMap, setItensMap] = useState<Record<string, ItensState>>({})
 
-  const toggle = (id: string) =>
-    setExpanded((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s })
+  const toggle = (id: string) => {
+    let abriu = false
+    setExpanded((p) => {
+      const s = new Set(p)
+      if (s.has(id)) s.delete(id)
+      else { s.add(id); abriu = true }
+      return s
+    })
+    if (abriu) carregarItensLive(id)
+  }
+
+  // Fallback ao vivo: ao expandir uma licitação sem itens no banco (ex.: Portais
+  // Estaduais / DF), busca os itens direto no PNCP — para o detalhe não "morrer".
+  const carregarItensLive = (id: string) => {
+    const cur = itensMap[id]
+    // já tem itens, está carregando, ou já tentamos ao vivo → nada a fazer
+    if (cur && (cur.itens.length > 0 || cur.loading || cur.liveTried)) return
+    setItensMap((prev) => ({ ...prev, [id]: { itens: prev[id]?.itens ?? [], loading: true, liveTried: true } }))
+    fetch(`/api/itens-pncp?id=${encodeURIComponent(id)}`)
+      .then((r) => r.json())
+      .then((j: { itens?: ItemPNCP[] }) => {
+        setItensMap((prev) => ({ ...prev, [id]: { itens: j.itens ?? [], loading: false, liveTried: true } }))
+      })
+      .catch(() => {
+        setItensMap((prev) => ({ ...prev, [id]: { itens: prev[id]?.itens ?? [], loading: false, liveTried: true, erro: true } }))
+      })
+  }
 
   useEffect(() => {
     setLoading(true)
@@ -297,6 +325,17 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
       })
     return () => { cancelled = true }
   }, [resultado])
+
+  // Rede de segurança: se um card já está aberto e o banco não trouxe itens (e
+  // ainda não tentamos ao vivo), dispara o fallback no PNCP. Cobre o caso de o
+  // usuário abrir antes do lote do banco terminar. carregarItensLive é idempotente.
+  useEffect(() => {
+    for (const id of expanded) {
+      const st = itensMap[id]
+      if (st && !st.loading && !st.liveTried && st.itens.length === 0) carregarItensLive(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, itensMap])
 
   const portal  = PORTAIS_CONFIG[uf]
   const color   = accent(uf)
@@ -567,6 +606,22 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
                     {isOpen && (
                       <tr className="border-b border-subtle bg-bg3/40">
                         <td colSpan={8} className="px-6 py-4">
+                          {/* Deep-link para a tela Licitações, já filtrada nesta demanda
+                              (score, itens, concorrentes, análise completa). */}
+                          <Link
+                            href={`/oportunidades?opp=${encodeURIComponent(l.id)}&uf=${l.uf}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="group flex items-center justify-between gap-2 rounded-xl border border-accent/30 bg-accent/5 px-3.5 py-3 mb-4 hover:bg-accent/10 transition-colors"
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              <FileSearch size={15} className="text-accent flex-shrink-0" />
+                              <span className="min-w-0">
+                                <span className="block text-[12px] font-semibold text-accent leading-tight">Ver licitação completa em Licitações</span>
+                                <span className="block text-[10px] text-faint">abre filtrado nesta demanda — score, itens, vencedores/concorrentes e mais</span>
+                              </span>
+                            </span>
+                            <ChevronRight size={15} className="text-accent flex-shrink-0 group-hover:translate-x-0.5 transition-transform" />
+                          </Link>
                           <div className="grid grid-cols-2 gap-6 text-[12px]">
                             <div className="space-y-2">
                               <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1">Objeto completo</div>
