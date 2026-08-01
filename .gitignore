@@ -23,3 +23,6 @@ scripts/licite/licite.log
 /*.docx
 .ba-tmp/
 .estados-tmp/
+
+# Radar — artefatos de calibração (contêm cookies de sessão)
+scripts/radar/.calibra/

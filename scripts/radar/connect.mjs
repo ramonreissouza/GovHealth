@@ -8,7 +8,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
-import { capturarSessaoGovbr, encrypt } from './capture.mjs'
+import { capturarSessaoPortal, encrypt } from './capture.mjs'
 
 function loadEnv() {
   try {
@@ -44,7 +44,7 @@ try {
 
   const r = SIMULADO
     ? { status: 'ok', detalhe: 'sessão simulada', storageState: JSON.stringify({ cookies: [], origins: [] }) }
-    : await capturarSessaoGovbr({ waitS: WAIT_S })
+    : await capturarSessaoPortal(cred.conector_id, { waitS: WAIT_S })
 
   const conexao = r.status === 'ok' ? 'conectado' : 'erro'
   await client.query(

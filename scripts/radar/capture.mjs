@@ -5,6 +5,7 @@
 // Nenhuma senha passa por nós.
 
 import crypto from 'node:crypto'
+import { portalMeta } from './portais.mjs'
 
 export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento'
 
@@ -18,11 +19,13 @@ export function encrypt(keyHex, plain) {
 }
 
 /**
- * Abre o gov.br e aguarda o login. Retorna { status, detalhe, storageState }.
- * status ∈ ok | sessao_expirada | captcha_2fa | portal_indisponivel | falha.
- * `onAbrir` é chamado quando a janela abre (para o daemon marcar 'conectando').
+ * Captura de sessão PORTAL-AGNÓSTICA: abre a página de login do portal informado e
+ * aguarda o login humano; ao detectar `logado`, devolve o storage_state.
+ * @param {string} conectorId  id do portal (ver scripts/radar/portais.mjs)
+ * @returns {{ status:'ok'|'sessao_expirada'|'captcha_2fa'|'portal_indisponivel'|'falha', detalhe:string, storageState?:string }}
  */
-export async function capturarSessaoGovbr({ waitS = 300, onAbrir } = {}) {
+export async function capturarSessaoPortal(conectorId, { waitS = 300, onAbrir } = {}) {
+  const meta = portalMeta(conectorId)
   let chromium
   try { ({ chromium } = await import('playwright')) }
   catch { return { status: 'falha', detalhe: 'Playwright não instalado (npx playwright install chromium)' } }
@@ -33,34 +36,37 @@ export async function capturarSessaoGovbr({ waitS = 300, onAbrir } = {}) {
     const context = await browser.newContext()
     const page = await context.newPage()
     if (onAbrir) { try { await onAbrir() } catch { /* ignore */ } }
-    await page.goto(ACOMPANHAMENTO_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
+    // Abre a área autenticada; se a sessão não existe, o portal cai no login.
+    await page.goto(meta.areaUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
 
-    // Autenticado = saiu das telas de login (acesso.gov.br/sso/login) e está na
-    // área segura do comprasnet-web, de forma estável por 2 checagens.
+    // Logado = detector do portal responde verdadeiro, estável por 2 checagens.
     const deadline = Date.now() + waitS * 1000
     let estavel = 0
     while (Date.now() < deadline) {
       await page.waitForTimeout(3000)
       const url = page.url()
-      const naArea = /comprasnet-web\/seguro/.test(url)
-      const emLogin = /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url)
       const conteudo = (await page.content().catch(() => '')).toLowerCase()
-      if (/captcha|recaptcha|hcaptcha/.test(conteudo) && emLogin) { /* segue aguardando o humano resolver */ }
-      if (naArea && !emLogin) { estavel++; if (estavel >= 2) break } else estavel = 0
+      if (meta.logado({ url, conteudo })) { estavel++; if (estavel >= 2) break } else estavel = 0
     }
 
     const url = page.url()
-    if (!/comprasnet-web\/seguro/.test(url) || /acesso\.gov\.br|sso\.|\/login/i.test(url)) {
+    const conteudo = (await page.content().catch(() => '')).toLowerCase()
+    if (!meta.logado({ url, conteudo })) {
       await browser.close()
-      return { status: 'sessao_expirada', detalhe: 'Login não concluído dentro do tempo — tente novamente' }
+      return { status: 'sessao_expirada', detalhe: `Login no ${meta.nome} não concluído dentro do tempo — tente novamente` }
     }
     const storageState = JSON.stringify(await context.storageState())
     await browser.close()
-    return { status: 'ok', detalhe: 'sessão capturada via login no gov.br', storageState }
+    return { status: 'ok', detalhe: `sessão capturada via login no ${meta.nome}`, storageState }
   } catch (e) {
     try { if (browser) await browser.close() } catch { /* ignore */ }
     const msg = String(e?.message ?? e).slice(0, 180)
     if (/timeout|net::|ECONN|ENOTFOUND|navigation/i.test(msg)) return { status: 'portal_indisponivel', detalhe: msg }
     return { status: 'falha', detalhe: msg }
   }
+}
+
+/** Compatibilidade: captura do Compras.gov.br (gov.br) — usa o fluxo genérico. */
+export function capturarSessaoGovbr(opts = {}) {
+  return capturarSessaoPortal('comprasgov', opts)
 }

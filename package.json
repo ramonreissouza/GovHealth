@@ -41,7 +41,8 @@
     "radar:sync": "node scripts/radar/run.mjs",
     "radar:connect": "node scripts/radar/connect.mjs",
     "radar:connect-service": "node scripts/radar/connect-service.mjs",
-    "radar:browser-service": "node scripts/radar/browser-service.mjs"
+    "radar:browser-service": "node scripts/radar/browser-service.mjs",
+    "radar:calibrate-pcp": "node scripts/radar/calibrate-pcp.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",

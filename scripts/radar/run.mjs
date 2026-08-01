@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import pg from 'pg'
 import { conectorSync } from './registry.mjs'
+import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 
 // ── env ────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -29,6 +30,9 @@ loadEnv()
 
 const DRY = process.argv.includes('--dry')
 const SIMULADO = process.argv.includes('--simulado')
+const ONLY_PCP = process.argv.includes('--pcp-only') // pula o laço de credenciais; só o passo público (PCP)
+const argVal = (name, def) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : def }
+const LIMIT = Number(argVal('limit', '0')) || 0 // 0 = sem limite; N = no máx. N processos PCP públicos
 
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada.'); process.exit(1) }
 
@@ -78,6 +82,74 @@ function classificar(texto, cnpj, regras) {
 }
 const prioridadeDe = (cats) => (cats.some((c) => ALTA.has(c)) ? 'alta' : cats.length ? 'normal' : 'baixa')
 
+// ── PCP público: resolve a URL pública de cada processo (manual > auto-resolver) ─
+// link_portal já apontando p/ /processos do PCP = link colado pelo cliente (fallback).
+// Sem link → tenta o auto-resolver e, se achar com confiança, CACHEIA em link_portal.
+async function resolverUrlsPCP(client, processos, dry) {
+  const mapaUrl = new Map()
+  for (const p of processos) {
+    const manual = (p.link_portal || '').includes('portaldecompraspublicas.com.br/processos') ? p.link_portal : null
+    if (manual) { mapaUrl.set(p.licitacao_id, manual); continue }
+    try {
+      const achado = await resolverUrlPublicaPCP({ titulo: p.titulo, uf: p.uf })
+      if (achado?.url) {
+        mapaUrl.set(p.licitacao_id, achado.url)
+        console.log(`    ↳ PCP resolvido (conf ${achado.confianca}) p/ "${(p.titulo || p.licitacao_id).slice(0, 50)}": ${achado.candidato.numero}/${achado.candidato.uf}`)
+        if (!dry) await client.query(`UPDATE radar_processos SET link_portal = $2, atualizado_em = now() WHERE id = $1`, [p.id, achado.url])
+      } else {
+        console.log(`    ↳ PCP sem match confiável p/ "${(p.titulo || p.licitacao_id).slice(0, 50)}" — precisa do link manual (${PCP_BASE_PROCESSOS})`)
+      }
+    } catch (e) { console.warn(`    ↳ PCP resolver falhou: ${e?.message ?? e}`) }
+  }
+  return mapaUrl
+}
+
+// ── Persiste mensagens novas + enfileira notificações (compartilhado pelos dois
+// caminhos: credencial e público). Retorna {total, novas}. Respeita DRY. ─────────
+async function gravarMensagens(client, ctx, mensagens) {
+  const { titularId, conectorId, cnpj, mapa, regras, destinatario } = ctx
+  let total = 0, novas = 0
+  for (const m of mensagens) {
+    const proc = mapa.get(m.licitacaoId)
+    if (!proc) continue // mensagem de processo não monitorado — ignora
+    const cats = classificar(m.texto, cnpj, regras)
+    const prioridade = prioridadeDe(cats)
+    const hash = msgHash({ conectorId, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem })
+    total++
+    if (DRY) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
+    const { rows: ins } = await client.query(
+      `INSERT INTO radar_mensagens
+         (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13)
+       ON CONFLICT (msg_hash) DO NOTHING
+       RETURNING id`,
+      [hash, titularId, proc.id, conectorId, cnpj, m.licitacaoId, m.autor, m.texto,
+       JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade],
+    )
+    if (!ins.length) continue // já existia (dedup)
+    novas++
+    const msgId = ins[0].id
+    const assunto = proc.titulo || m.licitacaoId
+    // e-mail + in-app (a leitura confirma ambas).
+    await client.query(
+      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
+       VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
+      [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+    )
+    await client.query(
+      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
+       VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
+      [`nm:${msgId}:app`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+    )
+    await client.query(
+      `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+       VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
+      [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
+    )
+  }
+  return { total, novas }
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
 await client.connect()
@@ -88,19 +160,22 @@ try {
     `SELECT id, titular_id, user_id, conector_id, cnpj, login, cred_cipher, storage_state
        FROM radar_credenciais WHERE ativo = true`,
   )
-  console.log(`→ ${creds.length} credencial(is) ativa(s)${SIMULADO ? ' [SIMULADO]' : ''}${DRY ? ' [DRY]' : ''}`)
+  console.log(`→ ${creds.length} credencial(is) ativa(s)${SIMULADO ? ' [SIMULADO]' : ''}${DRY ? ' [DRY]' : ''}${ONLY_PCP ? ' [PCP-ONLY]' : ''}${LIMIT ? ` [LIMIT ${LIMIT}]` : ''}`)
 
-  for (const cred of creds) {
+  for (const cred of (ONLY_PCP ? [] : creds)) {
     conectores++
     const inicio = Date.now()
 
     // Processos ativos (não silenciados) do tenant p/ este conector.
     const { rows: processos } = await client.query(
-      `SELECT id, licitacao_id, titulo, link_portal FROM radar_processos
+      `SELECT id, licitacao_id, titulo, uf, link_portal FROM radar_processos
         WHERE titular_id = $1 AND conector_id = $2 AND status = 'ativo' AND mutado = false`,
       [cred.titular_id, cred.conector_id],
     )
     const mapa = new Map(processos.map((p) => [p.licitacao_id, p]))
+
+    // PCP: resolve a URL pública de cada processo (manual > auto), p/ o modo público.
+    const urlPublicaPorLic = cred.conector_id === 'pcp' ? await resolverUrlsPCP(client, processos, DRY) : new Map()
 
     // Regras do tenant (+ globais) e destinatário dos alertas.
     const { rows: regras } = await client.query(
@@ -126,7 +201,11 @@ try {
       if (!sync) {
         resultado = { status: 'falha', detalhe: `conector desconhecido: ${cred.conector_id}`, mensagens: [] }
       } else {
-        resultado = await sync({ credencial, processos: processos.map((p) => ({ licitacaoId: p.licitacao_id })), simulado: SIMULADO })
+        resultado = await sync({
+          credencial,
+          processos: processos.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })),
+          simulado: SIMULADO,
+        })
       }
     } catch (e) {
       resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] }
@@ -134,47 +213,9 @@ try {
 
     console.log(`  · ${cred.conector_id}/${cred.cnpj}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
 
-    // Grava mensagens novas + enfileira notificações.
-    for (const m of resultado.mensagens) {
-      const proc = mapa.get(m.licitacaoId)
-      if (!proc) continue // mensagem de processo não monitorado — ignora
-      const cats = classificar(m.texto, cred.cnpj, regras)
-      const prioridade = prioridadeDe(cats)
-      const hash = msgHash({ conectorId: cred.conector_id, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem })
-      totalMsgs++
-
-      if (DRY) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
-
-      const { rows: ins } = await client.query(
-        `INSERT INTO radar_mensagens
-           (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13)
-         ON CONFLICT (msg_hash) DO NOTHING
-         RETURNING id`,
-        [hash, cred.titular_id, proc.id, cred.conector_id, cred.cnpj, m.licitacaoId, m.autor, m.texto,
-         JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade],
-      )
-      if (!ins.length) continue // já existia (dedup)
-      novasMsgs++
-      const msgId = ins[0].id
-      const assunto = proc.titulo || m.licitacaoId
-      // e-mail + in-app (a leitura confirma ambas).
-      await client.query(
-        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
-         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
-        [`nm:${msgId}:email`, cred.titular_id, msgId, proc.id, destinatario, assunto, proc.link_portal],
-      )
-      await client.query(
-        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
-         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
-        [`nm:${msgId}:app`, cred.titular_id, msgId, proc.id, destinatario, assunto, proc.link_portal],
-      )
-      await client.query(
-        `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
-         VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
-        [cred.titular_id, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
-      )
-    }
+    // Grava mensagens novas + enfileira notificações (helper compartilhado).
+    const g = await gravarMensagens(client, { titularId: cred.titular_id, conectorId: cred.conector_id, cnpj: cred.cnpj, mapa, regras, destinatario }, resultado.mensagens)
+    totalMsgs += g.total; novasMsgs += g.novas
 
     // Saúde do conector (requisito 4.2): verificado_em só avança em 'ok'.
     if (!DRY) {
@@ -200,6 +241,46 @@ try {
            tentado_em = now(), detalhe = EXCLUDED.detalhe, duracao_ms = EXCLUDED.duracao_ms, atualizado_em = now()`,
         [cred.id, cred.titular_id, cred.conector_id, resultado.status, resultado.detalhe ?? null, Date.now() - inicio],
       )
+    }
+  }
+
+  // ── PASSO PÚBLICO (PCP sem login) ───────────────────────────────────────────
+  // Tenants com processos PCP ativos e SEM credencial PCP ativa: o Radar lê a
+  // página PÚBLICA do andamento (não exige login). Tenants que conectaram sessão
+  // PCP já foram cobertos no laço acima (modo híbrido). SIMULADO pula.
+  if (!SIMULADO) {
+    const { rows: pubProcs } = await client.query(
+      `SELECT p.id, p.titular_id, p.licitacao_id, p.titulo, p.uf, p.link_portal
+         FROM radar_processos p
+        WHERE p.conector_id = 'pcp' AND p.status = 'ativo' AND p.mutado = false
+          AND NOT EXISTS (SELECT 1 FROM radar_credenciais c
+                          WHERE c.titular_id = p.titular_id AND c.conector_id = 'pcp' AND c.ativo = true)
+        ORDER BY p.criado_em DESC`,
+    )
+    const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs
+    const porTitular = new Map()
+    for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
+    if (porTitular.size) console.log(`→ PCP público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
+
+    const syncPcp = conectorSync('pcp')
+    for (const [titularId, procs] of porTitular) {
+      conectores++
+      const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
+      const urlPublicaPorLic = await resolverUrlsPCP(client, procs, DRY)
+      const { rows: regras } = await client.query(`SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
+      const { rows: [tit] } = await client.query(`SELECT email FROM usuarios WHERE id = $1`, [titularId])
+      const destinatario = tit?.email ?? titularId
+
+      let resultado
+      try {
+        resultado = syncPcp
+          ? await syncPcp({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
+          : { status: 'falha', detalhe: 'conector pcp ausente', mensagens: [] }
+      } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
+      console.log(`  · pcp[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
+
+      const g = await gravarMensagens(client, { titularId, conectorId: 'pcp', cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
+      totalMsgs += g.total; novasMsgs += g.novas
     }
   }
 

@@ -11,7 +11,8 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
-import { capturarSessaoGovbr, encrypt } from './capture.mjs'
+import { capturarSessaoPortal, encrypt } from './capture.mjs'
+import { portalMeta } from './portais.mjs'
 
 function loadEnv() {
   try {
@@ -70,8 +71,9 @@ async function processarUm() {
     console.log(`  ✓ [simulado] conectado (CNPJ ${cred.cnpj})`)
     return true
   }
-  console.log('  Abrindo o gov.br… o fornecedor deve concluir o login na janela.')
-  const r = await capturarSessaoGovbr({ waitS: WAIT_S })
+  const meta = portalMeta(cred.conector_id)
+  console.log(`  Abrindo o ${meta.nome}… o fornecedor deve concluir o login na janela.`)
+  const r = await capturarSessaoPortal(cred.conector_id, { waitS: WAIT_S })
   await concluir(cred, r.status, r.detalhe, r.storageState)
   console.log(`  ${r.status === 'ok' ? '✓ conectado' : '✗ ' + r.status}: ${r.detalhe ?? ''}`)
   return true

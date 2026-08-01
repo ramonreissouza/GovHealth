@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const t = await tenantDe(req)
   if (!t) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
-  let body: { id?: string; mutado?: boolean; prioridade?: string; responsavel?: string; status?: string }
+  let body: { id?: string; mutado?: boolean; prioridade?: string; responsavel?: string; status?: string; linkPortal?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'body inválido' }, { status: 400 }) }
   if (!body.id) return NextResponse.json({ error: 'id obrigatório' }, { status: 400 })
 
@@ -37,6 +37,7 @@ export async function PATCH(req: NextRequest) {
   if (body.prioridade) { params.push(body.prioridade); sets.push(`prioridade = $${params.length}`) }
   if (body.responsavel !== undefined) { params.push(body.responsavel || null); sets.push(`responsavel = $${params.length}`) }
   if (body.status) { params.push(body.status); sets.push(`status = $${params.length}`) }
+  if (body.linkPortal !== undefined) { params.push(body.linkPortal || null); sets.push(`link_portal = $${params.length}`) }
   if (!sets.length) return NextResponse.json({ error: 'nada a atualizar' }, { status: 400 })
 
   const row = await queryOne<{ id: string }>(
@@ -51,17 +52,24 @@ export async function PATCH(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const t = await tenantDe(req)
   if (!t) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
-  let body: { conectorId?: string; cnpj?: string; licitacaoId?: string; titulo?: string; linkPortal?: string }
+  let body: { conectorId?: string; cnpj?: string; licitacaoId?: string; titulo?: string; uf?: string; linkPortal?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'body inválido' }, { status: 400 }) }
   const cnpj = (body.cnpj ?? '').replace(/\D+/g, '')
-  const licitacaoId = (body.licitacaoId ?? '').trim()
-  if (!licitacaoId) return NextResponse.json({ error: 'licitacaoId obrigatório' }, { status: 400 })
+  const conectorId = body.conectorId ?? 'comprasgov'
+  const uf = (body.uf ?? '').trim().toUpperCase().slice(0, 2) || null
+  // No modo público (PCP), a licitação é o próprio objeto/título — não exige nº de controle.
+  const licitacaoId = (body.licitacaoId ?? '').trim() || (conectorId === 'pcp' ? (body.titulo ?? '').trim().slice(0, 120) : '')
+  if (!licitacaoId) return NextResponse.json({ error: 'licitacaoId (ou título) obrigatório' }, { status: 400 })
   const id = randomUUID()
   await query(
-    `INSERT INTO radar_processos (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, origem, link_portal)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'manual',$8)
-     ON CONFLICT (titular_id, conector_id, cnpj, licitacao_id) DO UPDATE SET atualizado_em = now()`,
-    [id, t.titularId, t.userId, body.conectorId ?? 'comprasgov', cnpj, licitacaoId, body.titulo ?? null, body.linkPortal ?? null],
+    `INSERT INTO radar_processos (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, uf, origem, link_portal)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'manual',$9)
+     ON CONFLICT (titular_id, conector_id, cnpj, licitacao_id) DO UPDATE SET
+       titulo = COALESCE(EXCLUDED.titulo, radar_processos.titulo),
+       uf = COALESCE(EXCLUDED.uf, radar_processos.uf),
+       link_portal = COALESCE(EXCLUDED.link_portal, radar_processos.link_portal),
+       atualizado_em = now()`,
+    [id, t.titularId, t.userId, conectorId, cnpj, licitacaoId, body.titulo ?? null, uf, body.linkPortal ?? null],
   )
   return NextResponse.json({ ok: true })
 }
