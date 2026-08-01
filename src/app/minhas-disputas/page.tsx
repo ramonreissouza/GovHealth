@@ -27,6 +27,7 @@ interface Resp {
   fornecedor: { cnpj: string | null; nome: string | null }
   semCnpj?: boolean
   disputas: Disputa[]
+  totais?: { licitacoes: number; itens: number; valor: number; itensVencidos: number }
   ufs: string[]
   concorrentesDisponiveis?: number
   aviso?: string
@@ -59,8 +60,10 @@ export default function MinhasDisputasPage() {
   useEffect(() => { load() }, [load])
 
   const disputas = data?.disputas ?? []
-  const totalValor = disputas.reduce((s, d) => s + d.meuValor, 0)
-  const totalItens = disputas.reduce((s, d) => s + d.meusItens, 0)
+  // KPIs = histórico COMPLETO (vem de `totais`, não da lista que traz só as 10 recentes).
+  const totalLicitacoes = data?.totais?.licitacoes ?? disputas.length
+  const totalValor = data?.totais?.valor ?? disputas.reduce((s, d) => s + d.meuValor, 0)
+  const totalItens = data?.totais?.itens ?? disputas.reduce((s, d) => s + d.meusItens, 0)
   const ufsComDados = data?.ufs ?? []
 
   return (
@@ -101,7 +104,7 @@ export default function MinhasDisputasPage() {
               {/* KPIs */}
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { label: 'Licitações participadas', value: String(disputas.length) },
+                  { label: 'Licitações participadas', value: String(totalLicitacoes) },
                   { label: 'Itens homologados', value: String(totalItens) },
                   { label: 'Valor homologado (você)', value: formatBRL(totalValor) },
                 ].map(({ label, value }) => (
@@ -143,6 +146,11 @@ export default function MinhasDisputasPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
+                  {totalLicitacoes > disputas.length && (
+                    <div className="text-[10px] font-mono-custom text-faint px-1">
+                      Mostrando as {disputas.length} licitações mais recentes de {totalLicitacoes}{uf ? ` em ${uf}` : ''}. Os KPIs acima somam o histórico completo.
+                    </div>
+                  )}
                   {disputas.map((d) => {
                     const open = aberta === d.nc
                     return (

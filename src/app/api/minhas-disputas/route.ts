@@ -82,6 +82,18 @@ export async function GET(req: NextRequest) {
       params,
     )
 
+    // Totais REAIS do fornecedor (todas as licitações, não só as 10 exibidas na lista).
+    // Os KPIs devem refletir o histórico completo; a lista mostra só as 10 mais recentes.
+    const totaisRow = await queryOne<{ licitacoes: number; itens: number; valor: number; vencidos: number }>(
+      `SELECT COUNT(DISTINCT r.numero_controle_pncp)::int AS licitacoes,
+              COUNT(*)::int AS itens,
+              COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor,
+              COUNT(*) FILTER (WHERE r.ordem_classificacao_srp = 1)::int AS vencidos
+         FROM resultados r
+        WHERE regexp_replace(r.ni_fornecedor, '\\D', '', 'g') = $1 ${ufWhere}`,
+      params,
+    )
+
     const ncs = headers.map((h) => h.nc)
     // Todas as linhas (eu + concorrentes) dos itens dessas licitações.
     const linhas = ncs.length
@@ -143,6 +155,14 @@ export async function GET(req: NextRequest) {
     const payload = {
       fornecedor: { cnpj: conta?.cnpj ?? null, nome: conta?.empresa ?? null },
       disputas,
+      // Totais do histórico COMPLETO (todas as licitações do CNPJ no escopo de UF).
+      // A lista `disputas` traz só as 10 mais recentes; os KPIs usam estes totais.
+      totais: {
+        licitacoes: totaisRow?.licitacoes ?? 0,
+        itens: totaisRow?.itens ?? 0,
+        valor: totaisRow?.valor ?? 0,
+        itensVencidos: totaisRow?.vencidos ?? 0,
+      },
       ufs: ufsRows.map((u) => u.uf),
       // Gap de dados: concorrentes por item são raríssimos no dado aberto homologado.
       concorrentesDisponiveis: totalConcorrentes,
