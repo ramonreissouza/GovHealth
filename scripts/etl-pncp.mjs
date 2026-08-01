@@ -102,7 +102,7 @@ async function fetchJsonSafe(url) { try { return await fetchJson(url) } catch { 
 // responde? Serve para distinguir outage global do PNCP de página profunda quebrada.
 async function pncpVivo(mod, uf) {
   try {
-    const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf, pagina: '1', tamanhoPagina: '1' })
+    const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf, pagina: '1', tamanhoPagina: '10' })
     const res = await fetch(`${CONSULTA}/contratacoes/publicacao?${sp}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) })
     return res.ok
   } catch { return false }
