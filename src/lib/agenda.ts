@@ -26,6 +26,28 @@ export function diasAte(iso: string): number {
   return Math.round((d.getTime() - hoje.getTime()) / 86_400_000)
 }
 
+// Rótulo humano de contagem regressiva ("Falta 1 semana", "Vence hoje", …).
+// prazo perdido é venda perdida — o vendedor precisa ver isto sem contar dias.
+export function rotuloAlerta(dias: number): string {
+  if (dias < 0) return `Atrasado há ${Math.abs(dias)} ${Math.abs(dias) === 1 ? 'dia' : 'dias'}`
+  if (dias === 0) return 'Vence hoje'
+  if (dias === 1) return 'Falta 1 dia'
+  if (dias < 7) return `Faltam ${dias} dias`
+  if (dias === 7) return 'Falta 1 semana'
+  if (dias < 14) return `Falta 1 semana e ${dias - 7} ${dias - 7 === 1 ? 'dia' : 'dias'}`
+  if (dias <= 30) return `Faltam ${Math.round(dias / 7)} semanas`
+  const meses = Math.round(dias / 30)
+  return meses <= 1 ? 'Falta ~1 mês' : `Faltam ~${meses} meses`
+}
+
+// Nível de urgência p/ estilo/ordem de alerta.
+export function nivelAlerta(dias: number): 'atrasado' | 'critico' | 'proximo' | 'normal' {
+  if (dias < 0) return 'atrasado'
+  if (dias <= 1) return 'critico'      // hoje ou amanhã
+  if (dias <= 7) return 'proximo'      // dentro de 1 semana
+  return 'normal'
+}
+
 // Reúne prazos das duas fontes, ordenados por data (mais próximos primeiro).
 export function getPrazosAgenda(): PrazoAgenda[] {
   const prazos: PrazoAgenda[] = []
@@ -88,6 +110,17 @@ function dtstamp(): string {
   return `${n.getUTCFullYear()}${p(n.getUTCMonth() + 1)}${p(n.getUTCDate())}T${p(n.getUTCHours())}${p(n.getUTCMinutes())}${p(n.getUTCSeconds())}Z`
 }
 
+// Bloco VALARM (lembrete) com gatilho relativo ao início do evento.
+function alarme(trigger: string, descricao: string): string[] {
+  return [
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    `TRIGGER:${trigger}`,
+    `DESCRIPTION:${escICS(descricao)}`,
+    'END:VALARM',
+  ]
+}
+
 /** Monta um arquivo .ics (VCALENDAR) com um VEVENT de dia inteiro por prazo. */
 export function buildICS(prazos: PrazoAgenda[]): string {
   const stamp = dtstamp()
@@ -109,6 +142,11 @@ export function buildICS(prazos: PrazoAgenda[]): string {
       `DTEND;VALUE=DATE:${ymdNext(p.data)}`,
       `SUMMARY:${escICS(`[GovHealth] ${p.titulo}`)}`,
       `DESCRIPTION:${escICS(desc)}`,
+      // Alertas (VALARM): o calendário dispara "falta 1 semana", "falta 1 dia" e
+      // um lembrete final na véspera. Cobre o pedido de alertas escalonados.
+      ...alarme('-P1W', `Falta 1 semana — ${p.titulo}`),
+      ...alarme('-P1D', `Falta 1 dia — ${p.titulo}`),
+      ...alarme('-PT1H', `Prazo se aproximando — ${p.titulo}`),
       'END:VEVENT',
     )
   }

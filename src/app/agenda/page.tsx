@@ -7,9 +7,16 @@ import { useState, useEffect } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { CalendarClock, Download, ExternalLink, AlertTriangle, KanbanSquare, FolderKanban } from 'lucide-react'
-import { getPrazosAgenda, baixarICS, type PrazoAgenda } from '@/lib/agenda'
+import { CalendarClock, Download, ExternalLink, AlertTriangle, KanbanSquare, FolderKanban, BellRing } from 'lucide-react'
+import { getPrazosAgenda, baixarICS, rotuloAlerta, nivelAlerta, type PrazoAgenda } from '@/lib/agenda'
 import { formatDate } from '@/lib/format'
+
+const COR_ALERTA: Record<ReturnType<typeof nivelAlerta>, string> = {
+  atrasado: 'text-red',
+  critico: 'text-amber',
+  proximo: 'text-amber',
+  normal: 'text-brand-blue',
+}
 
 interface Grupo { chave: string; label: string; itens: PrazoAgenda[] }
 
@@ -66,8 +73,10 @@ export default function AgendaPage() {
             <div>
               <h1 className="font-heading font-bold text-[20px] text-strong">Agenda de prazos</h1>
               <p className="text-[12px] text-muted mt-1 max-w-[560px]">
-                Prazos do seu Pipeline CRM e dos Dossiês de Edital reunidos. Exporte para o
-                Google Calendar ou Outlook — prazo perdido é venda perdida.
+                Prazos do seu Pipeline CRM e dos Dossiês de Edital reunidos, com contagem
+                regressiva por item. Ao exportar para o Google Calendar ou Outlook, cada prazo
+                já vem com alertas (falta 1 semana, falta 1 dia e véspera) — prazo perdido é
+                venda perdida.
               </p>
             </div>
             <button
@@ -140,6 +149,11 @@ export default function AgendaPage() {
                               </span>
                             </div>
                             {p.subtitulo && <p className="text-[11px] text-muted mt-0.5 truncate">{p.subtitulo}</p>}
+                            {/* Alerta de contagem regressiva (issue #16) */}
+                            <div className={clsx('flex items-center gap-1 mt-1', COR_ALERTA[nivelAlerta(p.diasRestantes)])}>
+                              <BellRing size={11} className="flex-shrink-0" />
+                              <span className="text-[11px] font-semibold">{rotuloAlerta(p.diasRestantes)}</span>
+                            </div>
                           </div>
 
                           {/* Ações */}
