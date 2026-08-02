@@ -17,7 +17,7 @@ import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
 import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 
-const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
+const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/privacidade', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
 
 function ehPublica(pathname: string): boolean {
   return ROTAS_PUBLICAS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
@@ -55,12 +55,12 @@ export async function middleware(req: NextRequest) {
   if (pathname.startsWith('/api/')) {
     const ip = ipDe(req)
     if (pathname === '/api/auth/callback/credentials' || pathname === '/api/auth/otp' || pathname === '/api/senha/solicitar') {
-      const r = rateLimit(`login:${ip}`, 10, 60_000) // brute force de login/OTP/reset: 10/min
+      const r = await rateLimit(`login:${ip}`, 10, 60_000) // brute force de login/OTP/reset: 10/min
       if (!r.ok) return resp429(r)
     } else if (!pathname.startsWith('/api/auth/') && !pathname.startsWith('/api/cron/') && !pathname.startsWith('/api/stripe/')) {
       // /api/stripe/webhook: o Stripe pode enviar rajadas de eventos — não limitar
       // (é autenticado pela assinatura HMAC do payload na própria rota).
-      const r = rateLimit(`api:${ip}`, 150, 60_000) // APIs de dados: 150/min
+      const r = await rateLimit(`api:${ip}`, 150, 60_000) // APIs de dados: 150/min
       if (!r.ok) return resp429(r)
     }
   }

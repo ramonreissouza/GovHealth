@@ -8,8 +8,19 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import pg from 'pg'
 import bcrypt from 'bcryptjs'
+
+// Senhas de seed: SEMPRE via variável de ambiente. Sem env, gera uma senha ALEATÓRIA
+// e a imprime (nunca embute senha em texto no repositório).
+function senhaSeed(varName, quem) {
+  const v = process.env[varName]
+  if (v) return v
+  const gen = crypto.randomBytes(9).toString('base64url')
+  console.warn(`⚠ ${varName} não definida — senha ALEATÓRIA p/ ${quem}: ${gen}  (defina ${varName} no .env.local p/ senha estável)`)
+  return gen
+}
 
 function loadEnv() {
   if (process.env.DATABASE_URL) return
@@ -23,14 +34,14 @@ loadEnv()
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada.'); process.exit(1) }
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? 'admin@govhealth.ai').toLowerCase()
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin@GovHealth2026'
+const ADMIN_PASSWORD = senhaSeed('ADMIN_PASSWORD', ADMIN_EMAIL)
 
-// Contas migradas do auth hardcoded (mantêm as senhas conhecidas).
+// Contas migradas do auth hardcoded. Senhas SEMPRE via env (SEED_*), com fallback aleatório.
 const SEED = [
-  { email: ADMIN_EMAIL, nome: 'Administrador', senha: ADMIN_PASSWORD, role: 'master', plano: 'Enterprise', status: 'ativa' },
-  { email: 'demo@govhealth.ai', nome: 'Demo User', senha: 'demo123', role: 'user', plano: 'trial', status: 'trial' },
-  { email: 'teste@govhealth.ai', nome: 'Usuário de Teste', senha: 'Teste@2026', role: 'user', plano: 'Starter', status: 'ativa' },
-  { email: 'pedro.moreira@techealth.com.br', nome: 'Pedro Moreira', senha: 'pedrotec123', role: 'user', plano: 'Growth', status: 'ativa', empresa: 'TecHealth' },
+  { email: ADMIN_EMAIL, nome: 'Administrador', senha: ADMIN_PASSWORD, role: 'master', plano: 'empresa', status: 'ativa' },
+  { email: 'demo@govhealth.ai', nome: 'Demo User', senha: senhaSeed('SEED_DEMO_PASSWORD', 'demo@govhealth.ai'), role: 'user', plano: 'trial', status: 'trial' },
+  { email: 'teste@govhealth.ai', nome: 'Usuário de Teste', senha: senhaSeed('SEED_TESTE_PASSWORD', 'teste@govhealth.ai'), role: 'user', plano: 'Starter', status: 'ativa' },
+  { email: 'pedro.moreira@techealth.com.br', nome: 'Pedro Moreira', senha: senhaSeed('SEED_PEDRO_PASSWORD', 'pedro.moreira@techealth.com.br'), role: 'user', plano: 'Growth', status: 'ativa', empresa: 'TecHealth' },
 ]
 
 const sql = fs.readFileSync(path.join('db', 'schema-admin.sql'), 'utf8')
@@ -55,7 +66,7 @@ try {
 
   const total = await client.query('SELECT count(*)::int c, count(*) FILTER (WHERE role=\'master\') m FROM usuarios')
   console.log(`✓ Seed concluído. usuarios=${total.rows[0].c} (master=${total.rows[0].m}).`)
-  console.log(`  Master: ${ADMIN_EMAIL}${process.env.ADMIN_PASSWORD ? '' : `  (senha default de dev: ${ADMIN_PASSWORD} — troque via ADMIN_PASSWORD)`}`)
+  console.log(`  Master: ${ADMIN_EMAIL}`)
 } catch (e) {
   console.error('Falha no seed:', e.message)
   process.exitCode = 1

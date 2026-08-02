@@ -1,11 +1,21 @@
 // scripts/seed-demo-contas.mjs
 // Cria/atualiza duas contas de DEMONSTRAÇÃO para navegar as diferenças de plano:
 //   - essencial@govhealth.ai  (plano Essencial)
-//   - siemens@govhealth.ai    (plano Pro, perfil "Siemens" para a tela Minhas Disputas)
+//   - siemens@govhealth.ai    (plano Empresa — Radar de Chat + equipe; perfil "Siemens")
 // Idempotente (upsert). Uso: node scripts/seed-demo-contas.mjs
 import fs from 'fs'
+import crypto from 'node:crypto'
 import pg from 'pg'
 import bcrypt from 'bcryptjs'
+
+// Senha de seed via env; sem env, gera aleatória e avisa (nunca hardcode no repo).
+function senhaSeed(varName, quem) {
+  const v = process.env[varName]
+  if (v) return v
+  const gen = crypto.randomBytes(9).toString('base64url')
+  console.warn(`⚠ ${varName} não definida — senha ALEATÓRIA p/ ${quem}: ${gen}  (defina ${varName} no .env.local p/ senha estável)`)
+  return gen
+}
 
 const url = fs.readFileSync('.env.local', 'utf8').match(/DATABASE_URL=(.*)/)[1].trim().replace(/^["']|["']$/g, '')
 const c = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
@@ -20,8 +30,8 @@ const siemensCnpj = sie.rows[0]?.cnpj ?? null
 console.log('Siemens CNPJ (resultados):', siemensCnpj)
 
 const contas = [
-  { email: 'essencial@govhealth.ai', nome: 'Cliente Essencial (demo)', senha: 'Essencial@2026', empresa: 'Distribuidora Demo', cnpj: null, plano: 'essencial' },
-  { email: 'siemens@govhealth.ai', nome: 'Comercial Siemens (demo)', senha: 'Siemens@2026', empresa: 'Siemens Healthineers', cnpj: siemensCnpj, plano: 'pro' },
+  { email: 'essencial@govhealth.ai', nome: 'Cliente Essencial (demo)', senha: senhaSeed('SEED_ESSENCIAL_PASSWORD', 'essencial@govhealth.ai'), empresa: 'Distribuidora Demo', cnpj: null, plano: 'essencial' },
+  { email: 'siemens@govhealth.ai', nome: 'Comercial Siemens (demo)', senha: senhaSeed('SEED_SIEMENS_PASSWORD', 'siemens@govhealth.ai'), empresa: 'Siemens Healthineers', cnpj: siemensCnpj, plano: 'empresa' },
 ]
 
 for (const u of contas) {
@@ -40,4 +50,5 @@ for (const u of contas) {
 }
 
 await c.end()
-console.log('\nContas de demo prontas:\n  essencial@govhealth.ai / Essencial@2026 (Essencial)\n  siemens@govhealth.ai   / Siemens@2026   (Pro)')
+console.log('\nContas de demo prontas (senhas nas envs SEED_ESSENCIAL_PASSWORD / SEED_SIEMENS_PASSWORD):')
+for (const u of contas) console.log(`  ${u.email}  ·  ${u.senha}  (${u.plano})`)

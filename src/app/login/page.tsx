@@ -188,6 +188,8 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
 
       <p className="text-[11px] text-faint text-center mt-5 font-mono-custom">
         <a href="/metodologia" className="text-muted hover:text-accent hover:underline">Fontes e metodologia</a>
+        <span className="mx-2 text-subtle">·</span>
+        <a href="/privacidade" className="text-muted hover:text-accent hover:underline">Privacidade</a>
       </p>
     </div>
   )
