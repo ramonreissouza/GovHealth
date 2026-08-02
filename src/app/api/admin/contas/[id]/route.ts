@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { exigirMaster } from '@/lib/admin-guard'
-import { atualizarUsuario, excluirUsuario, buscarUsuario } from '@/lib/users'
+import { atualizarUsuario, excluirUsuario, anonimizarUsuario, buscarUsuario } from '@/lib/users'
 import { registrarAudit } from '@/lib/admin-audit'
 
 export const runtime = 'nodejs'
@@ -58,8 +58,15 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: 'Confirmação incorreta: digite o e-mail exato da conta.' }, { status: 400 })
     }
 
-    await excluirUsuario(id) // soft delete (deleted_at) — nunca apaga a linha
-    await registrarAudit(String(guard.token.id ?? guard.token.email), 'excluir_conta', id, { email: alvo.email })
+    // LGPD (Art. 18): com `anonimizar`, escurece a PII (usuarios + satélites) de forma
+    // irreversível; sem ele, mantém o soft delete padrão (dado preservado/reversível).
+    if (body?.anonimizar === true) {
+      await anonimizarUsuario(id)
+      await registrarAudit(String(guard.token.id ?? guard.token.email), 'anonimizar_lgpd', id, { email: alvo.email })
+    } else {
+      await excluirUsuario(id) // soft delete (deleted_at) — nunca apaga a linha
+      await registrarAudit(String(guard.token.id ?? guard.token.email), 'excluir_conta', id, { email: alvo.email })
+    }
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[admin/contas DELETE]', e)

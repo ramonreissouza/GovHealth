@@ -95,6 +95,26 @@ export function isAnexoMimePermitido(mime: string): boolean {
   return Object.prototype.hasOwnProperty.call(ANEXO_MIMES, mime)
 }
 
+/**
+ * Verifica a assinatura (magic bytes) do conteúdo e devolve o MIME REAL, ou null se
+ * não corresponder a nenhum tipo suportado. NÃO confia no `type` declarado pelo
+ * cliente (que é forjável) — a aceitação deve usar ESTE resultado. `text/plain` não
+ * tem assinatura: é aceito quando os primeiros bytes não contêm NUL (heurística
+ * simples de "texto, não binário").
+ */
+export function sniffAnexoMime(bytes: Uint8Array): string | null {
+  const b = bytes
+  const has = (sig: number[], off = 0) => sig.every((v, i) => b[off + i] === v)
+  if (has([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png'
+  if (has([0xff, 0xd8, 0xff])) return 'image/jpeg'
+  if (has([0x47, 0x49, 0x46, 0x38])) return 'image/gif'                       // "GIF8"
+  if (has([0x52, 0x49, 0x46, 0x46]) && has([0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp' // RIFF….WEBP
+  if (has([0x25, 0x50, 0x44, 0x46, 0x2d])) return 'application/pdf'           // "%PDF-"
+  const n = Math.min(b.length, 512)
+  for (let i = 0; i < n; i++) if (b[i] === 0) return null                     // NUL → binário desconhecido
+  return 'text/plain'
+}
+
 /** KB/MB legível para rótulos de UI. */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`

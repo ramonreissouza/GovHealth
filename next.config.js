@@ -2,11 +2,16 @@
 
 // Content-Security-Policy (item 12 do checklist de segurança).
 // Baseline pragmatico: bloqueia object/base/frame-ancestors e restringe conexoes,
-// permitindo o que a app realmente usa — Next (scripts inline/eval na hidratacao),
+// permitindo o que a app realmente usa — Next (styles/scripts inline na hidratacao),
 // Tailwind (styles inline), imagens https (avatars/PNCP/Portal) e o mapa MapLibre
 // + tiles OpenFreeMap (fetch de estilo/glyphs/tiles via connect-src; workers via blob).
-// scripts 'unsafe-inline'/'unsafe-eval' sao exigidos pelo runtime do Next sem nonces —
-// protecao de XSS aqui e limitada; endurecer com nonce/hashes e evolucao futura.
+//
+// script-src: 'unsafe-inline' é EXIGIDO pelas paginas estaticas do App Router (scripts
+// inline `self.__next_f` de hidratacao, sem nonce em build estatico). Ja 'unsafe-eval'
+// foi REMOVIDO (endurecimento: elimina a primitiva string→codigo, principal alavanca de
+// XSS); 'wasm-unsafe-eval' cobre o WASM do MapLibre sem reabrir eval de JS. Protecao XSS
+// de inline permanece limitada — nonce pleno exigiria renderizacao dinamica app-wide
+// (custo de perf); tratado como follow-up.
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -16,7 +21,7 @@ const csp = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   "worker-src 'self' blob:",
   "connect-src 'self' https://tiles.openfreemap.org",
   "upgrade-insecure-requests",
