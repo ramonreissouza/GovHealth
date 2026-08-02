@@ -26,6 +26,7 @@ ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS endereco   TEXT;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS instituicao TEXT;  -- instituição de trabalho
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS cpf        TEXT;
 ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS cnpj       TEXT;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS anonimizado_em TIMESTAMPTZ; -- LGPD: direito à eliminação
 
 -- Assinaturas/leads de plano (do checkout público). A cobrança real é feita por
 -- um gateway (Asaas/Iugu/Pagar.me/Stripe) — aqui fica a INTENÇÃO/pendência até a

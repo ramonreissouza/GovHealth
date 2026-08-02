@@ -1,6 +1,8 @@
 // src/app/api/feedback/anexo/[id]/route.ts — serve o conteúdo de um anexo do backlog.
-// Somente MASTER (mesma regra do GET do backlog). Retorna os bytes com o content-type
-// original; imagens inline, txt/pdf também inline (o navegador decide exibir/baixar).
+// Somente MASTER (mesma regra do GET do backlog). Servido como ANEXO (download) com
+// CSP/sandbox e nosniff: o arquivo é enviado por QUALQUER usuário logado e aberto pelo
+// master — servir 'inline' permitiria conteúdo ativo (ex.: HTML/SVG) executar na sessão
+// do admin. 'attachment' + "default-src 'none'; sandbox" neutraliza esse vetor.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
@@ -29,7 +31,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     status: 200,
     headers: {
       'Content-Type': tipo,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(nome)}"`,
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(nome)}"`,
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+      'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, max-age=300',
     },
   })

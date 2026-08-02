@@ -114,6 +114,47 @@ export async function excluirUsuario(id: string): Promise<void> {
   await query(`UPDATE usuarios SET deleted_at=now(), suspenso=true, atualizado_em=now() WHERE id=$1`, [norm(id)])
 }
 
+/**
+ * LGPD (Art. 18, direito à eliminação): anonimiza o titular. Não apaga a linha
+ * (preserva integridade referencial e trilha de auditoria), mas remove TODO dado
+ * que identifica a pessoa — em `usuarios` e nas satélites com PII (acessos,
+ * feedback_issues). A conta fica inutilizável (senha zerada, suspensa, soft-deletada).
+ * Após isto o registro é anônimo e sai do escopo da LGPD.
+ *
+ * ⚠️ Limitação conhecida: `id` == e-mail (chave legada referenciada por FKs não
+ * enforçadas). O e-mail é substituído por um marcador derivado do hash na COLUNA
+ * `email`, mas persiste como `id`. Erasure total exige migração para chave
+ * substituta (surrogate) — follow-up. Requer a coluna `anonimizado_em`
+ * (npm run lgpd:migrate).
+ */
+export async function anonimizarUsuario(id: string): Promise<void> {
+  const alvo = norm(id)
+  await query(
+    `UPDATE usuarios SET
+       email = 'anon+' || left(md5(id), 16) || '@anonimizado.local',
+       nome = NULL, empresa = NULL, telefone = NULL, instituicao = NULL,
+       endereco = NULL, cpf = NULL, cnpj = NULL,
+       senha_hash = '', suspenso = true, deleted_at = COALESCE(deleted_at, now()),
+       anonimizado_em = now(), atualizado_em = now()
+     WHERE id = $1`,
+    [alvo],
+  )
+  // Satélites com PII — best-effort (não falha a operação principal).
+  try {
+    await query(
+      `UPDATE acessos SET nome=NULL, email=NULL, ip=NULL, cidade=NULL, regiao=NULL,
+              pais=NULL, latitude=NULL, longitude=NULL, user_agent=NULL WHERE user_id=$1`,
+      [alvo],
+    )
+  } catch (e) { console.warn('[lgpd] acessos:', e) }
+  try {
+    await query(
+      `UPDATE feedback_issues SET user_email=NULL, user_nome=NULL, empresa=NULL WHERE user_id=$1`,
+      [alvo],
+    )
+  } catch (e) { console.warn('[lgpd] feedback_issues:', e) }
+}
+
 /** KPIs do dashboard gerencial (dados reais). */
 export async function kpisAdmin() {
   const [contas, ativos30, novasMes, acessosHoje, acessos7d, porPlano, expirando] = await Promise.all([

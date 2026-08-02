@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { query } from '@/lib/db'
 import { exigirMaster } from '@/lib/admin-guard'
 import {
-  isFeedbackTipo, isFeedbackSeveridade, isFeedbackStatus, isAnexoMimePermitido,
+  isFeedbackTipo, isFeedbackSeveridade, isFeedbackStatus, isAnexoMimePermitido, sniffAnexoMime,
   ANEXO_MAX_ARQUIVOS, ANEXO_MAX_BYTES, ANEXO_MAX_TOTAL_BYTES,
   type FeedbackIssue, type FeedbackContexto, type FeedbackAnalise, type FeedbackSolucao, type FeedbackAnexo,
 } from '@/lib/feedback'
@@ -81,7 +81,14 @@ export async function POST(req: NextRequest) {
       if (total > ANEXO_MAX_TOTAL_BYTES) {
         return NextResponse.json({ error: `Anexos somam mais que ${ANEXO_MAX_TOTAL_BYTES / 1024 / 1024} MB.` }, { status: 400 })
       }
-      arquivos.push({ nome: f.name.slice(0, 200), mime: f.type, buf: Buffer.from(await f.arrayBuffer()) })
+      const buf = Buffer.from(await f.arrayBuffer())
+      // Não confia no MIME declarado: valida pela assinatura (magic bytes) e persiste
+      // o tipo REAL detectado — bloqueia, p.ex., um .html/.svg renomeado para .png.
+      const real = sniffAnexoMime(buf)
+      if (!real || !isAnexoMimePermitido(real)) {
+        return NextResponse.json({ error: `O conteúdo de "${f.name}" não corresponde a um tipo permitido.` }, { status: 400 })
+      }
+      arquivos.push({ nome: f.name.slice(0, 200), mime: real, buf })
     }
   } else {
     let body: { tipo?: unknown; severidade?: unknown; titulo?: unknown; descricao?: unknown; contexto?: unknown }
