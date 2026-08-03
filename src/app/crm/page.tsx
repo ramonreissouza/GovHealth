@@ -213,7 +213,11 @@ const EMPTY_FORM: Omit<PipelineDeal, 'id' | 'createdAt' | 'updatedAt' | 'movedAt
   licitacaoLink: '',
 }
 
-const CATEGORIAS = ['imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'outros']
+const CATEGORIAS = [
+  'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento',
+  'material_hospitalar', 'equipamento_medico', 'servicos_medicos',
+  'odontologia', 'ambulancia', 'manutencao', 'opme', 'outros',
+]
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
 function DealModal({

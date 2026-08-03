@@ -19,6 +19,14 @@ export const CATEGORIA_META: Record<CategoriaEquipamento, CategoriaMeta> = {
   cirurgia:    { label: 'Cirurgia',    labelCurto: 'Cirurgia',    tag: 'tag-purple',       chart: '#c084fc' },
   oncologia:   { label: 'Oncologia',   labelCurto: 'Oncologia',   tag: 'tag-green',        chart: '#4ade80' },
   medicamento: { label: 'Medicamento', labelCurto: 'Medicamento', tag: 'tag-cyan',         chart: '#22d3ee' },
+  // ── categorias que drenaram o balde 'outros' ──
+  material_hospitalar: { label: 'Material Hospitalar', labelCurto: 'Mat. Hosp.',  tag: 'tag-teal',   chart: '#2dd4bf' },
+  equipamento_medico:  { label: 'Equip. Médicos',      labelCurto: 'Equip.',      tag: 'tag-indigo', chart: '#818cf8' },
+  servicos_medicos:    { label: 'Serviços Médicos',    labelCurto: 'Serviços',    tag: 'tag-orange', chart: '#fb923c' },
+  odontologia:         { label: 'Odontologia',         labelCurto: 'Odonto',      tag: 'tag-rose',   chart: '#fb7185' },
+  ambulancia:          { label: 'Ambulância',          labelCurto: 'Ambulância',  tag: 'tag-red',    chart: '#ef4444' },
+  manutencao:          { label: 'Manutenção',          labelCurto: 'Manut.',      tag: 'tag-slate',  chart: '#64748b' },
+  opme:                { label: 'OPME',                labelCurto: 'OPME',        tag: 'tag-purple', chart: '#a855f7' },
   outros:      { label: 'Outros',      labelCurto: 'Outros',      tag: 'bg-bg4 text-faint', chart: '#94a3b8' },
 }
 

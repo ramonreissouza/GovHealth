@@ -31,9 +31,14 @@ function inferirRegiao(uf: string): string {
 }
 
 const CATEGORIAS_VALIDAS = new Set<Oportunidade['categoria']>([
-  'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento', 'outros',
+  'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento',
+  'material_hospitalar', 'equipamento_medico', 'servicos_medicos',
+  'odontologia', 'ambulancia', 'manutencao', 'opme', 'outros',
 ])
 
+// Só entra em ação quando o registro não tem categoria_saude no banco (ex.: dado
+// vindo direto do PNCP ao vivo). A ordem espelha scripts/saude-filter.mjs — se
+// divergir, a mesma licitação muda de categoria conforme a origem.
 function inferirCategoria(objeto: string): Oportunidade['categoria'] {
   const l = objeto.toLowerCase()
   if (/tomógraf|tomografia|ressonância|ultrassom|raio.?x|mamógraf|radiolog|monitor.*fetal|frequência cardíaca/.test(l)) return 'imagem'
@@ -41,6 +46,14 @@ function inferirCategoria(objeto: string): Oportunidade['categoria'] {
   if (/laboratóri|analisador|hematológ|bioquím|reagente/.test(l)) return 'laboratorio'
   if (/cirurgia|cirúrg|bisturi|mesa cirúrg/.test(l)) return 'cirurgia'
   if (/oncolog|quimioterap|radioterap/.test(l)) return 'oncologia'
+  if (/medicament|fármac|vacina|soro fisiol|medicinal/.test(l)) return 'medicamento'
+  if (/odontológ|dentári|dentist|bucal|endôdont|ortodônt|periodont/.test(l)) return 'odontologia'
+  if (/ambulânci|\bsamu\b|remoção de paciente|transporte de paciente/.test(l)) return 'ambulancia'
+  if (/prótese|órtese|implantes?[^a-z]|implantável|stent|marca.?passo/.test(l)) return 'opme'
+  if (/manutenção (preventiva|corretiva|de equipament)|corretiva e preventiva|preventiva e corretiva|assistência técnica|calibração/.test(l)) return 'manutencao'
+  if (/prestação de serviços? (médic|de saúde|especializ)|atendimento (médic|especializ)|credenciamento|plantão|hemodiálise|diálise/.test(l)) return 'servicos_medicos'
+  if (/material (médic|hospitalar|penso)|materiais (médic|hospitalar)|insumo|descartáv|seringa|agulha|cateter|gaze|atadura|luva|curativo|fralda|sutura/.test(l)) return 'material_hospitalar'
+  if (/equipament|aparelh|instrumental|mobiliário|materia(l|is) permanente|autoclave|cadeira de rodas|nebuliz|incubadora/.test(l)) return 'equipamento_medico'
   return 'outros'
 }
 

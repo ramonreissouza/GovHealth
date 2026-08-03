@@ -86,6 +86,10 @@ export interface Oportunidade {
   updatedAt: string
 }
 
+// As seis primeiras são as originais. As sete seguintes nasceram para drenar o
+// balde 'outros', que sozinho guardava 61.211 dos 93.595 registros (65%) e ficava
+// invisível para quem filtra por categoria no Setup da Empresa.
+// A ordem de classificação vive em scripts/saude-filter.mjs (categoria()).
 export type CategoriaEquipamento =
   | 'imagem'
   | 'uti'
@@ -93,6 +97,13 @@ export type CategoriaEquipamento =
   | 'cirurgia'
   | 'oncologia'
   | 'medicamento'
+  | 'material_hospitalar'
+  | 'equipamento_medico'
+  | 'servicos_medicos'
+  | 'odontologia'
+  | 'ambulancia'
+  | 'manutencao'
+  | 'opme'
   | 'outros'
 
 // Classificação por tipo de fornecimento (eixo de navegação por aba)

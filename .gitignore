@@ -26,3 +26,7 @@ scripts/licite/licite.log
 
 # Radar — artefatos de calibração (contêm cookies de sessão)
 scripts/radar/.calibra/
+
+# Vídeos soltos na raiz (gravações de tela para benchmark) — arquivos locais
+/*.mp4
+/*.mov

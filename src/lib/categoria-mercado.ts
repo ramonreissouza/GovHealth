@@ -30,6 +30,15 @@ const CLINICA_PARA_MERCADO: Record<string, CategoriaKey> = {
   outros: 'equip_medico',
   laboratorio: 'laboratorio',
   medicamento: 'medicamento',
+  // As categorias novas já nascem alinhadas à taxonomia de mercado — várias têm
+  // correspondente exato, o que antes se perdia dentro de 'outros'.
+  equipamento_medico: 'equip_medico',
+  manutencao: 'servico_saude',
+  servicos_medicos: 'servico_saude',
+  ambulancia: 'servico_saude',
+  odontologia: 'odontologico',
+  opme: 'opme',
+  material_hospitalar: 'acessorio',
 }
 
 /** Converte as categorias clínicas do Setup nas categorias de mercado desta tela. */

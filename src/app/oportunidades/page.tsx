@@ -16,6 +16,7 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 // Preço de referência Compras.gov REMOVIDO do breakdown por item (dava valores
 // distoantes p/ itens sem CATMAT — a ref cai em texto e desalinha). Ver PrecoRefItem.
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
+import AcoesLicitacao from './components/AcoesLicitacao'
 // Dossiê de edital DESATIVADO nas Licitações (a pedido). Reativar: descomentar.
 // import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
@@ -29,7 +30,11 @@ import { matchesTermo } from '@/lib/text'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORIAS = ['todos', 'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento', 'outros']
+const CATEGORIAS = [
+  'todos', 'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento',
+  'material_hospitalar', 'equipamento_medico', 'servicos_medicos',
+  'odontologia', 'ambulancia', 'manutencao', 'opme', 'outros',
+]
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos','2026','2025','2024','2023']
@@ -692,6 +697,7 @@ function OportunidadesInner() {
                                   )}
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <AddToCRMButton oportunidade={opp} />
+                                    {lic && <AcoesLicitacao lic={lic} uf={opp.uf} />}
                                     {/* Dossiê de edital desativado nas Licitações (a pedido).
                                         Reativar: descomentar. <AbrirDossieButton oportunidade={opp} /> */}
                                   </div>
@@ -853,6 +859,7 @@ function OportunidadesInner() {
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
                               <AddToCRMButton oportunidade={opp} />
+                              {lic && <AcoesLicitacao lic={lic} uf={opp.uf} />}
                               {/* Dossiê de edital desativado nas Licitações (a pedido).
                                   Reativar: descomentar. <AbrirDossieButton oportunidade={opp} /> */}
                             </div>

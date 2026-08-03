@@ -32,6 +32,13 @@ const CICLO_MEDIO: Record<CategoriaEquipamento, number> = {
   cirurgia: 72,
   oncologia: 48,
   medicamento: 12, // medicamentos são compra recorrente (ciclo curto)
+  material_hospitalar: 12, // consumo: recompra constante
+  equipamento_medico: 60,
+  servicos_medicos: 24,    // contrato de serviço: renovação bianual típica
+  odontologia: 24,
+  ambulancia: 84,          // veículo: vida útil longa
+  manutencao: 12,          // contrato de manutenção costuma ser anual
+  opme: 12,                // implante é consumo, não bem durável
   outros: 54,
 }
 

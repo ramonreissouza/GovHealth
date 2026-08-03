@@ -30,7 +30,16 @@ const CATEGORIAS = [
   { key: 'laboratorio', label: 'Laboratório',          desc: 'Analisadores, reagentes, centrífugas' },
   { key: 'cirurgia',    label: 'Cirurgia',             desc: 'Bisturis, mesas cirúrgicas, laparoscopia' },
   { key: 'oncologia',   label: 'Oncologia',            desc: 'Aceleradores, braquiterapia, infusoras' },
-  { key: 'outros',      label: 'Outros Equipamentos',  desc: 'Autoclaves, incubadoras, bombas' },
+  { key: 'medicamento', label: 'Medicamentos',         desc: 'Fármacos, vacinas, soros, gases medicinais' },
+  // Estas sete nasceram ao drenar o antigo balde 'outros', que guardava 65% da base.
+  { key: 'material_hospitalar', label: 'Material Hospitalar', desc: 'Material médico-hospitalar, penso, descartáveis' },
+  { key: 'equipamento_medico',  label: 'Equip. Médicos',      desc: 'Material permanente, autoclaves, mobiliário' },
+  { key: 'servicos_medicos',    label: 'Serviços Médicos',    desc: 'Credenciamento, plantão, diálise, exames' },
+  { key: 'odontologia',         label: 'Odontologia',         desc: 'Material odontológico, próteses dentárias' },
+  { key: 'ambulancia',          label: 'Ambulâncias',         desc: 'Ambulâncias, SAMU, transporte de pacientes' },
+  { key: 'manutencao',          label: 'Manutenção',          desc: 'Preventiva/corretiva, calibração, assist. técnica' },
+  { key: 'opme',                label: 'OPME',                desc: 'Órteses, próteses, implantes, stents' },
+  { key: 'outros',      label: 'Não classificado',     desc: 'Objeto genérico, sem produto identificável' },
 ]
 
 const SEGMENTOS = [
@@ -48,14 +57,17 @@ const SEGMENTOS = [
 // segmento, as "Categorias de Interesse" se adaptam para as mais prováveis daquele
 // perfil (o usuário ainda pode ajustar manualmente depois). Segmentos sem casamento
 // óbvio (TI, Serviços, Outro) não forçam sugestão — retornam [].
+// As sugestões apontavam para 'outros' quando queriam dizer "equipamento genérico"
+// ou "consumível" — era o que existia. Agora que essas categorias têm nome próprio,
+// a sugestão aponta para elas: 'outros' passou a significar "não classificado".
 const SEGMENTO_CATEGORIAS: Record<string, string[]> = {
-  'Equipamentos Médicos':        ['imagem', 'uti', 'cirurgia', 'outros'],
+  'Equipamentos Médicos':        ['imagem', 'uti', 'cirurgia', 'equipamento_medico'],
   'Equipamentos de Diagnóstico': ['imagem', 'laboratorio'],
-  'Dispositivos Implantáveis':   ['cirurgia', 'oncologia'],
-  'Mobiliário Hospitalar':       ['outros'],
-  'Reagentes e Consumíveis':     ['laboratorio', 'outros'],
+  'Dispositivos Implantáveis':   ['cirurgia', 'oncologia', 'opme'],
+  'Mobiliário Hospitalar':       ['equipamento_medico'],
+  'Reagentes e Consumíveis':     ['laboratorio', 'material_hospitalar'],
   'TI em Saúde':                 [],
-  'Serviços Técnicos':           [],
+  'Serviços Técnicos':           ['manutencao', 'servicos_medicos'],
   'Outro':                       [],
 }
 

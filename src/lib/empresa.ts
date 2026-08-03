@@ -43,7 +43,11 @@ export const DEFAULT_EMPRESA: EmpresaSetup = {
 // Categorias de interesse reconhecidas no Setup (mesmo conjunto exibido na aba
 // Empresa). Usadas para refletir a categoria de um produto do portfólio numa
 // categoria de interesse válida.
-const CATEGORIAS_SETUP = ['imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'outros']
+const CATEGORIAS_SETUP = [
+  'imagem', 'uti', 'laboratorio', 'cirurgia', 'oncologia', 'medicamento',
+  'material_hospitalar', 'equipamento_medico', 'servicos_medicos',
+  'odontologia', 'ambulancia', 'manutencao', 'opme', 'outros',
+]
 
 /** Mapeia a categoria de um produto do portfólio para uma categoria de interesse. */
 function categoriaSetupDoProduto(cat: string): string {

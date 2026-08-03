@@ -103,6 +103,13 @@ body {
   .tag-blue { background: rgba(47,128,237,.10); color: var(--accent); border: 1px solid rgba(47,128,237,.22); }
   .tag-purple { background: rgba(124,58,237,.10); color: var(--purple); border: 1px solid rgba(124,58,237,.22); }
   .tag-cyan { background: rgba(8,145,178,.10); color: var(--cyan); border: 1px solid rgba(8,145,178,.22); }
+  /* Cores literais (sem var()) porque estas não têm cor semântica no tema — existem
+     só para dar contraste entre as categorias clínicas, que passaram de 7 para 14. */
+  .tag-teal { background: rgba(13,148,136,.10); color: #0d9488; border: 1px solid rgba(13,148,136,.22); }
+  .tag-indigo { background: rgba(79,70,229,.10); color: #4f46e5; border: 1px solid rgba(79,70,229,.22); }
+  .tag-orange { background: rgba(234,88,12,.10); color: #ea580c; border: 1px solid rgba(234,88,12,.22); }
+  .tag-rose { background: rgba(225,29,72,.10); color: #e11d48; border: 1px solid rgba(225,29,72,.22); }
+  .tag-slate { background: rgba(100,116,139,.12); color: #64748b; border: 1px solid rgba(100,116,139,.24); }
 }
 
 /* Animations */
