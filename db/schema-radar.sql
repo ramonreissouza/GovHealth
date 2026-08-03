@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS radar_mensagens (
   lida_em        TIMESTAMPTZ,
   UNIQUE (msg_hash)
 );
+-- Lote/item ao qual a mensagem pertence, quando o portal separa o chat por lote
+-- (o "Lote 1" da ferramenta de benchmark). NULL = portal manda um chat único.
+-- Quem preenche é o conector; a UI só mostra o seletor quando há mais de um lote.
+ALTER TABLE radar_mensagens ADD COLUMN IF NOT EXISTS lote TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_radar_msg_titular  ON radar_mensagens (titular_id);
 CREATE INDEX IF NOT EXISTS idx_radar_msg_processo ON radar_mensagens (processo_id);
 CREATE INDEX IF NOT EXISTS idx_radar_msg_lida     ON radar_mensagens (titular_id, lida);

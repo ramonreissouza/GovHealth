@@ -1,19 +1,37 @@
 'use client'
-// src/app/radar/page.tsx — Radar de Chat (monitoramento de mensagens de licitações).
-// Caixa de entrada única: mensagens capturadas dos processos que a SELEÇÃO AUTOMÁTICA
-// escolheu a partir do perfil. Alerta por e-mail/in-app e — REQUISITO 4.2 — deixa
-// sempre claro o estado de cada conector (nunca "sem novidades" quando não deu p/ verificar).
+// src/app/radar/page.tsx — Monitorar Chat (monitoramento de mensagens de licitações).
+//
+// Layout espelhado da ferramenta "Monitorar Chat" da ConLicitação (benchmark):
+//   • dois painéis: pregões monitorados à esquerda, conversa à direita;
+//   • alternador "Monitorado por mim" × "Monitorado por todos";
+//   • card com nº do processo + data, órgão e SELO DO PORTAL colorido;
+//   • cabeçalho da conversa com nº / órgão / prazo e ações ✓✓ (marcar lidas),
+//     ⟳ (atualizar) e ⋮ (Informações da licitação · Acessar local da disputa ·
+//     Desativar monitoramento);
+//   • abas "Mensagens do chat" + seletor de lote;
+//   • PALAVRAS-CHAVE PINTADAS dentro do texto (âmbar) e anexo/arquivo (verde);
+//   • modal "Detalhes da licitação".
+//
+// Diferenças de propósito, mantidas de lado:
+//   • a seleção dos processos é AUTOMÁTICA pelo perfil (não é opt-in edital a edital);
+//   • REQUISITO 4.2: a saúde dos conectores fica sempre à vista — nunca dizemos
+//     "sem novidades" quando na verdade não deu para verificar.
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
   Radar, AlertTriangle, ExternalLink, X, Check, Plus, Loader2, Bell,
-  Search, Star, Archive, ArchiveRestore, CheckCheck, MessageSquare, Paperclip, Inbox as InboxIcon,
+  Search, Star, Archive, ArchiveRestore, CheckCheck, MessageSquare, Paperclip,
+  Inbox as InboxIcon, MoreVertical, RefreshCw, Info, BellOff, Settings,
 } from 'lucide-react'
 import { comProblema } from '@/lib/radar/saude'
 import { CONECTORES, conectorDisponivel, conectorPublico } from '@/lib/radar/conectores'
+import { destacar, temChave } from '@/lib/radar/destaque'
+import { nomePortal } from '@/lib/portais'
+import { CONFIG_PADRAO, type ConfigRadar } from '@/lib/radar/config'
 import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
 
 const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'cnpj']
@@ -22,56 +40,86 @@ interface Mensagem {
   id: number; processo_id: string; conector_id: string; cnpj: string; licitacao_id: string
   autor: string | null; texto: string; anexos: { nome: string; url?: string }[]
   horario_origem: string | null; capturado_em: string; categorias: string[]; prioridade: string
-  lida: boolean; titulo: string | null; link_portal: string | null
+  lida: boolean; titulo: string | null; link_portal: string | null; lote?: string | null
+}
+/** Pregão monitorado como vem da API (existe mesmo sem mensagem capturada ainda). */
+interface ProcessoApi {
+  id: string; conectorId: string; cnpj: string; licitacaoId: string; titulo: string | null
+  uf: string | null; valor: number | null; prioridade: string; mutado: boolean; origem: string
+  linkPortal: string | null; atualizadoEm: string
+  orgao: string | null; municipio: string | null; modalidade: string | null
+  prazo: string | null; abertura: string | null; situacao: 'aberta' | 'encerrada'; meu: boolean
+  /** Portal REAL da sessão (Licitanet/BNC/BLL/…), derivado do PNCP. */
+  portal: string
+  /** URL do portal de origem, quando o PNCP informou. */
+  linkOrigem: string | null
 }
 interface Inbox {
   mensagens: Mensagem[]
+  processos: ProcessoApi[]
+  chaves: string[]
   kpis: { naoLidas: number; processosAtivos: number; conectores: number }
   saude: SaudeItem[]
   atualizadoEm: string
 }
 
-// ── Agrupamento por PROCESSO (benchmark ConLicitação "Monitorar Chat") ─────────
-// A caixa deixa de ser uma lista solta de mensagens e vira uma CONVERSA por
-// processo: à esquerda os processos monitorados; à direita a thread do chat.
-interface Processo {
-  id: string
-  titulo: string
-  conectorId: string
-  cnpj: string
-  licitacaoId: string
-  linkPortal: string | null
-  mensagens: Mensagem[]   // ordem cronológica (mais antiga → mais recente)
+/** Pregão + sua conversa, já ordenada. */
+interface Processo extends ProcessoApi {
+  mensagens: Mensagem[]
   naoLidas: number
-  ultima: Mensagem
+  ultima: Mensagem | null
   prioridadeAlta: boolean
 }
 
-function agruparProcessos(mensagens: Mensagem[]): Processo[] {
-  const mapa = new Map<string, Mensagem[]>()
-  for (const m of mensagens) {
+function montarProcessos(data: Inbox): Processo[] {
+  const porProcesso = new Map<string, Mensagem[]>()
+  for (const m of data.mensagens) {
     const chave = m.processo_id || m.licitacao_id || String(m.id)
-    ;(mapa.get(chave) ?? mapa.set(chave, []).get(chave)!).push(m)
+    const lista = porProcesso.get(chave)
+    if (lista) lista.push(m)
+    else porProcesso.set(chave, [m])
   }
-  const procs: Processo[] = []
-  for (const [id, msgs] of mapa) {
-    const ordenadas = [...msgs].sort((a, b) => tempoMs(a) - tempoMs(b))
-    const ultima = ordenadas[ordenadas.length - 1]
+
+  const procs: Processo[] = data.processos.map((p) => {
+    const msgs = (porProcesso.get(p.id) ?? []).sort((a, b) => tempoMs(a) - tempoMs(b))
+    porProcesso.delete(p.id)
+    return {
+      ...p,
+      mensagens: msgs,
+      naoLidas: msgs.filter((m) => !m.lida).length,
+      ultima: msgs[msgs.length - 1] ?? null,
+      prioridadeAlta: msgs.some((m) => m.prioridade === 'alta' && !m.lida),
+    }
+  })
+
+  // Mensagens órfãs (processo já removido da seleção, mas a conversa existe):
+  // não somem — viram um card a partir do que a própria mensagem carrega.
+  for (const [id, msgs] of porProcesso) {
+    const ordenadas = msgs.sort((a, b) => tempoMs(a) - tempoMs(b))
+    const u = ordenadas[ordenadas.length - 1]
     procs.push({
-      id,
-      titulo: ultima.titulo || ultima.licitacao_id || 'Processo',
-      conectorId: ultima.conector_id,
-      cnpj: ultima.cnpj,
-      licitacaoId: ultima.licitacao_id,
-      linkPortal: ultima.link_portal,
+      id, conectorId: u.conector_id, cnpj: u.cnpj, licitacaoId: u.licitacao_id,
+      titulo: u.titulo, uf: null, valor: null, prioridade: u.prioridade, mutado: false,
+      origem: 'auto', linkPortal: u.link_portal, atualizadoEm: u.capturado_em,
+      orgao: null, municipio: null, modalidade: null, prazo: null, abertura: null,
+      situacao: 'aberta', meu: true, portal: u.conector_id, linkOrigem: null,
       mensagens: ordenadas,
       naoLidas: ordenadas.filter((m) => !m.lida).length,
-      ultima,
+      ultima: u,
       prioridadeAlta: ordenadas.some((m) => m.prioridade === 'alta' && !m.lida),
     })
   }
-  // Mais recente primeiro; não lidos sobem.
-  return procs.sort((a, b) => (b.naoLidas > 0 ? 1 : 0) - (a.naoLidas > 0 ? 1 : 0) || tempoMs(b.ultima) - tempoMs(a.ultima))
+
+  // Não lidos sobem; depois, conversa mais recente (ou o processo mais recente).
+  return procs.sort((a, b) =>
+    (b.naoLidas > 0 ? 1 : 0) - (a.naoLidas > 0 ? 1 : 0) ||
+    ordemMs(b) - ordemMs(a))
+}
+
+function ordemMs(p: Processo): number {
+  if (p.ultima) return tempoMs(p.ultima)
+  const t = p.atualizadoEm ? new Date(p.atualizadoEm).getTime() : 0
+  return Number.isFinite(t) ? t : 0
 }
 
 function tempoMs(m: Mensagem): number {
@@ -80,20 +128,61 @@ function tempoMs(m: Mensagem): number {
   return Number.isFinite(t) ? t : 0
 }
 
-function horaCurta(m: Mensagem): string {
+/** "14/11/2025 | 08:00" — o formato do carimbo de hora do benchmark. */
+function carimbo(m: Mensagem): string {
   const d = m.horario_origem || m.capturado_em
   if (!d) return ''
   const dt = new Date(d)
-  return dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  if (Number.isNaN(dt.getTime())) return ''
+  return `${dt.toLocaleDateString('pt-BR')} | ${dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
 }
 
-const PORTAL_LABEL: Record<string, string> = {
-  comprasgov: 'Compras.gov', comprasnet: 'Comprasnet', 'licitacoes-e': 'Licitações-e',
-  bll: 'BLL', bnc: 'BNC', pcp: 'PCP', portal_compras_publicas: 'PCP',
+function dataCurta(iso: string | null): string {
+  if (!iso) return '—'
+  const dt = new Date(iso)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleDateString('pt-BR')
 }
-const portalLabel = (id: string) => PORTAL_LABEL[id] ?? (id ? id.toUpperCase() : 'Portal')
 
-// Papel do autor (Pregoeiro × Fornecedor × Participante) para estilizar a thread.
+function prazoLongo(iso: string | null): string {
+  if (!iso) return '—'
+  const dt = new Date(iso)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+const moeda = (v: number | null) =>
+  v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+
+// Selo do portal com cor própria (o benchmark distingue Licitanet, ComprasNet,
+// Bolsa Nacional… à primeira vista). Os nomes vêm de lib/portais (fonte única);
+// aqui ficam só as cores. Portal sem cor definida cai num cinza neutro.
+const COR_PORTAL: Record<string, string> = {
+  comprasgov: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+  licitanet: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+  bnc: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
+  bll: 'bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/30',
+  'licitacoes-e': 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  pcp: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+  licitamaisbrasil: 'bg-lime-500/15 text-lime-300 border-lime-500/30',
+  licitardigital: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+  ammlicita: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+  banrisul: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+}
+// Rótulo curto: o nome completo ("BNC — Bolsa Nacional de Compras") não cabe no selo.
+const CURTO: Record<string, string> = {
+  comprasgov: 'Compras.gov', bnc: 'BNC', bll: 'BLL', 'licitacoes-e': 'Licitações-e',
+  pcp: 'PCP', licitamaisbrasil: 'Licita+Brasil', licitardigital: 'Licitar Digital',
+  ammlicita: 'AMM Licita', desconhecido: 'não informado',
+}
+function selo(id: string) {
+  return {
+    label: CURTO[id] ?? nomePortal(id),
+    cls: COR_PORTAL[id] ?? 'bg-bg4 text-faint border-subtle2',
+  }
+}
+
+// Papel do autor (Pregoeiro × Fornecedor × Sistema) para rotular a fala.
 function papelAutor(autor: string | null): 'pregoeiro' | 'fornecedor' | 'sistema' | 'outro' {
   const a = (autor ?? '').toLowerCase()
   if (/preg|agente|comiss|autoridade/.test(a)) return 'pregoeiro'
@@ -107,43 +196,113 @@ const PAPEL_CLS: Record<string, string> = {
   sistema: 'text-faint',
   outro: 'text-muted',
 }
+const PAPEL_LABEL: Record<string, string> = {
+  pregoeiro: 'Pregoeiro(a)', fornecedor: 'Fornecedor', sistema: 'Sistema', outro: 'Mensagem',
+}
 
-// Flags locais por processo (Importante / Arquivado) — v1 client-side; a captura
-// vem de um worker, então marcações do usuário ficam no navegador (localStorage).
+// Flags locais por processo (Importante / Arquivado) — a captura vem de um worker,
+// então marcação do usuário fica no navegador.
 type Flags = Record<string, { importante?: boolean; arquivado?: boolean }>
 const FLAGS_KEY = 'radar_flags_v1'
 function lerFlags(): Flags { try { return JSON.parse(localStorage.getItem(FLAGS_KEY) || '{}') } catch { return {} } }
 function salvarFlags(f: Flags) { try { localStorage.setItem(FLAGS_KEY, JSON.stringify(f)) } catch { /* quota */ } }
 
-type Aba = 'todas' | 'nao_lidas' | 'importantes' | 'arquivados'
+type Escopo = 'mim' | 'todos'
+type Filtro = 'todos' | 'nao_lidas' | 'importantes' | 'desativados' | 'arquivados'
+
+const FILTRO_LABEL: Record<Filtro, string> = {
+  todos: 'Todos os pregões monitorados',
+  nao_lidas: 'Somente com mensagem não lida',
+  importantes: 'Somente marcados como importante',
+  desativados: 'Monitoramento desativado',
+  arquivados: 'Arquivados',
+}
 
 export default function RadarPage() {
   const [data, setData] = useState<Inbox | null>(null)
+  const [config, setConfig] = useState<ConfigRadar>(CONFIG_PADRAO)
   const [loading, setLoading] = useState(true)
-  const [aba, setAba] = useState<Aba>('todas')
+  const [atualizando, setAtualizando] = useState(false)
+  const [escopo, setEscopo] = useState<Escopo>('mim')
+  const [filtro, setFiltro] = useState<Filtro>('todos')
   const [busca, setBusca] = useState('')
   const [categoria, setCategoria] = useState('')
-  const [selId, setSelId] = useState<string | null>(null)   // processo selecionado
+  const [selId, setSelId] = useState<string | null>(null)
   const [conectar, setConectar] = useState(false)
   const [flags, setFlags] = useState<Flags>({})
+  const [detalhes, setDetalhes] = useState<Processo | null>(null)
+  const [lote, setLote] = useState('')
+  const [portalFiltro, setPortalFiltro] = useState('')
   const agoraMs = Date.now()
 
   useEffect(() => { setFlags(lerFlags()) }, [])
 
-  const carregar = useCallback(() => {
-    setLoading(true)
-    const p = new URLSearchParams()
-    if (categoria) p.set('categoria', categoria)
-    fetch(`/api/radar/inbox?${p}`)
-      .then((r) => r.json())
-      .then((d: Inbox) => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+  // Trava de requisição em voo: a caixa atualiza sozinha, e sem isso um GET lento
+  // era atropelado pelo tick seguinte — sobrepondo chamadas e podendo aplicar uma
+  // resposta antiga por cima de uma mais nova.
+  const emVoo = useRef(false)
+
+  const carregar = useCallback(async (silencioso = false) => {
+    if (emVoo.current) return
+    emVoo.current = true
+    if (silencioso) setAtualizando(true); else setLoading(true)
+    try {
+      const p = new URLSearchParams()
+      if (categoria) p.set('categoria', categoria)
+      const r = await fetch(`/api/radar/inbox?${p}`)
+      const d: Inbox = await r.json()
+      setData(d)
+    } catch { /* mantém o que já está na tela */ } finally {
+      emVoo.current = false
+      setLoading(false); setAtualizando(false)
+    }
   }, [categoria])
 
-  useEffect(() => { carregar() }, [carregar])
+  useEffect(() => { void carregar() }, [carregar])
 
-  // Marca UMA mensagem lida (otimista) — usada ao abrir a thread do processo.
+  // Config de notificação (aviso sonoro / push / escopo) — do servidor, vale p/ o time.
+  useEffect(() => {
+    fetch('/api/radar/config').then((r) => r.json()).then((j) => { if (j.config) setConfig(j.config) }).catch(() => {})
+  }, [])
+
+  const chaves = data?.chaves ?? []
+
+  const processos = useMemo(() => data ? montarProcessos(data) : [], [data])
+
+  // ── Aviso sonoro / push quando chega mensagem nova ────────────────────────
+  // Só dispara depois da primeira carga (senão avisaria tudo que já estava lá) e
+  // respeita o escopo configurado (todas × somente com palavra-chave).
+  const vistos = useRef<Set<number> | null>(null)
+  useEffect(() => {
+    if (!data) return
+    const relevantes = data.mensagens.filter((m) =>
+      !m.lida && (config.escopo === 'todas' || temChave(m.texto, chaves)))
+    const ids = new Set(relevantes.map((m) => m.id))
+    if (vistos.current === null) { vistos.current = ids; return }   // primeira carga: só registra
+    const novas = relevantes.filter((m) => !vistos.current!.has(m.id))
+    vistos.current = ids
+    if (novas.length === 0 || !config.notificar) return
+
+    if (config.avisoSonoro) beep()
+    if (config.push && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      const m = novas[0]
+      try {
+        new Notification(
+          novas.length === 1 ? 'Nova mensagem no chat' : `${novas.length} novas mensagens no chat`,
+          { body: `${m.autor || 'Mensagem'}: ${m.texto.slice(0, 120)}`, tag: `radar:${m.processo_id}` },
+        )
+      } catch { /* alguns navegadores exigem service worker */ }
+    }
+  }, [data, config, chaves])
+
+  // Atualização periódica (o worker captura fora daqui; a tela só relê). Pausa com a
+  // aba em segundo plano — sem isso, abas esquecidas ficariam consultando para sempre.
+  useEffect(() => {
+    const tick = () => { if (!document.hidden) void carregar(true) }
+    const t = setInterval(tick, 120_000)
+    return () => clearInterval(t)
+  }, [carregar])
+
   const marcarLidaMsg = useCallback(async (m: Mensagem) => {
     if (m.lida) return
     setData((d) => d ? {
@@ -155,7 +314,7 @@ export default function RadarPage() {
       await fetch(`/api/radar/mensagens/${m.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao: 'lida' }),
       })
-    } catch { /* melhor esforço; recarrega depois reconcilia */ }
+    } catch { /* melhor esforço; o próximo carregar reconcilia */ }
   }, [])
 
   const setFlag = (id: string, patch: { importante?: boolean; arquivado?: boolean }) => {
@@ -166,58 +325,90 @@ export default function RadarPage() {
     })
   }
 
+  /** Liga/desliga o monitoramento de um pregão (kebab do benchmark). */
+  async function alternarMonitoramento(p: Processo) {
+    const mutado = !p.mutado
+    setData((d) => d ? { ...d, processos: d.processos.map((x) => x.id === p.id ? { ...x, mutado } : x) } : d)
+    try {
+      await fetch('/api/radar/processos', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, mutado }),
+      })
+    } catch {
+      setData((d) => d ? { ...d, processos: d.processos.map((x) => x.id === p.id ? { ...x, mutado: !mutado } : x) } : d)
+    }
+  }
+
   const problemas = data ? comProblema(data.saude, agoraMs) : []
 
-  // Agrupa em processos e aplica aba/busca/categoria.
-  const processos = useMemo(() => agruparProcessos(data?.mensagens ?? []), [data])
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase()
     return processos.filter((p) => {
       const arq = !!flags[p.id]?.arquivado
       const imp = !!flags[p.id]?.importante
-      if (aba === 'arquivados') { if (!arq) return false } else if (arq) return false
-      if (aba === 'nao_lidas' && p.naoLidas === 0) return false
-      if (aba === 'importantes' && !imp) return false
+      if (filtro === 'arquivados') { if (!arq) return false } else if (arq) return false
+      if (filtro === 'desativados') { if (!p.mutado) return false } else if (p.mutado && filtro !== 'todos') return false
+      if (filtro === 'nao_lidas' && p.naoLidas === 0) return false
+      if (filtro === 'importantes' && !imp) return false
+      if (escopo === 'mim' && !p.meu) return false
+      if (portalFiltro && p.portal !== portalFiltro) return false
       if (categoria && !p.mensagens.some((m) => m.categorias.includes(categoria))) return false
       if (q) {
-        const alvo = `${p.titulo} ${p.licitacaoId} ${p.cnpj} ${p.mensagens.map((m) => m.texto).join(' ')}`.toLowerCase()
+        const alvo = `${p.titulo ?? ''} ${p.licitacaoId} ${p.orgao ?? ''} ${p.cnpj} ${p.mensagens.map((m) => m.texto).join(' ')}`.toLowerCase()
         if (!alvo.includes(q)) return false
       }
       return true
     })
-  }, [processos, flags, aba, categoria, busca])
+  }, [processos, flags, filtro, escopo, categoria, busca])
 
   const contagem = useMemo(() => {
-    const ativos = processos.filter((p) => !flags[p.id]?.arquivado)
+    const noEscopo = processos.filter((p) => escopo === 'todos' || p.meu)
+    const ativos = noEscopo.filter((p) => !flags[p.id]?.arquivado)
     return {
-      todas: ativos.length,
-      nao_lidas: ativos.filter((p) => p.naoLidas > 0).length,
+      todos: ativos.length,
+      nao_lidas: ativos.filter((p) => p.naoLidas > 0 && !p.mutado).length,
       importantes: ativos.filter((p) => flags[p.id]?.importante).length,
-      arquivados: processos.filter((p) => flags[p.id]?.arquivado).length,
+      desativados: ativos.filter((p) => p.mutado).length,
+      arquivados: noEscopo.filter((p) => flags[p.id]?.arquivado).length,
     }
-  }, [processos, flags])
+  }, [processos, flags, escopo])
+
+  // Portais efetivamente presentes na base do tenant (com a contagem) — o filtro só
+  // oferece o que existe, em vez do catálogo inteiro.
+  const portaisPresentes = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const p of processos) {
+      if (escopo === 'mim' && !p.meu) continue
+      m.set(p.portal, (m.get(p.portal) ?? 0) + 1)
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1])
+  }, [processos, escopo])
 
   const selecionado = filtrados.find((p) => p.id === selId) ?? null
 
-  // Ao abrir um processo, marca suas mensagens não lidas como lidas (estilo e-mail).
+  // Lotes presentes na conversa (o portal só informa em alguns casos).
+  const lotes = useMemo(() => {
+    if (!selecionado) return []
+    return [...new Set(selecionado.mensagens.map((m) => m.lote).filter((l): l is string => !!l))]
+  }, [selecionado])
+
+  useEffect(() => { setLote('') }, [selId])
+
+  const mensagensVisiveis = useMemo(() => {
+    if (!selecionado) return []
+    return lote ? selecionado.mensagens.filter((m) => m.lote === lote) : selecionado.mensagens
+  }, [selecionado, lote])
+
   const abrirProcesso = (p: Processo) => {
     setSelId(p.id)
     for (const m of p.mensagens) if (!m.lida) void marcarLidaMsg(m)
   }
   const marcarTodasLidas = (p: Processo) => { for (const m of p.mensagens) if (!m.lida) void marcarLidaMsg(m) }
 
-  const ABAS: { key: Aba; label: string; n: number }[] = [
-    { key: 'todas', label: 'Todas', n: contagem.todas },
-    { key: 'nao_lidas', label: 'Não lidas', n: contagem.nao_lidas },
-    { key: 'importantes', label: 'Importantes', n: contagem.importantes },
-    { key: 'arquivados', label: 'Arquivados', n: contagem.arquivados },
-  ]
-
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Topbar title="Radar de Chat" />
+        <Topbar title="Monitorar Chat" />
         <main className="flex-1 overflow-y-auto p-6 bg-bg">
 
           {/* Header */}
@@ -225,17 +416,23 @@ export default function RadarPage() {
             <div>
               <div className="flex items-center gap-2">
                 <Radar size={18} className="text-accent" />
-                <h1 className="font-heading font-bold text-[20px] text-strong">Radar de Chat</h1>
+                <h1 className="font-heading font-bold text-[20px] text-strong">Monitorar Chat</h1>
               </div>
               <p className="text-[12px] text-muted mt-1 max-w-[640px]">
-                Monitoramento das mensagens e convocações dos processos que combinam com o
-                <strong className="text-strong"> seu perfil</strong> — nada de cadastrar licitação a licitação.
+                Acompanhe as mensagens e convocações dos pregões que combinam com o
+                <strong className="text-strong"> seu perfil</strong> — sem cadastrar licitação a licitação.
                 Convocação, negociação, diligência ou prazo: você é avisado por e-mail e aqui.
               </p>
             </div>
-            <button onClick={() => setConectar(true)} className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md bg-accent text-black font-semibold hover:bg-accent2 transition-colors">
-              <Plus size={14} /> Conectar portal
-            </button>
+            <div className="flex items-center gap-2">
+              <Link href="/radar/configuracoes"
+                className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong hover:border-subtle transition-colors">
+                <Settings size={14} /> Configurações gerais
+              </Link>
+              <button onClick={() => setConectar(true)} className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md bg-accent text-black font-semibold hover:bg-accent2 transition-colors">
+                <Plus size={14} /> Conectar portal
+              </button>
+            </div>
           </div>
 
           {/* REQUISITO 4.2 — banner de incerteza */}
@@ -249,11 +446,22 @@ export default function RadarPage() {
             </div>
           )}
 
+          {/* Aviso quando a notificação está desligada — o valor da ferramenta é o alerta. */}
+          {!config.notificar && (
+            <div className="mb-4 flex items-center gap-2 bg-bg2 border border-subtle rounded-lg px-4 py-2.5">
+              <BellOff size={14} className="text-faint flex-shrink-0" />
+              <p className="text-[12px] text-muted">
+                As notificações estão <strong className="text-strong">desativadas</strong> — continuamos capturando o chat, mas nada é avisado.{' '}
+                <Link href="/radar/configuracoes" className="text-accent hover:underline">Ativar</Link>
+              </p>
+            </div>
+          )}
+
           {/* KPIs */}
           {data && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
               <Kpi label="Mensagens não lidas" valor={String(data.kpis.naoLidas)} destaque={data.kpis.naoLidas > 0} />
-              <Kpi label="Processos ativos" valor={String(data.kpis.processosAtivos)} />
+              <Kpi label="Pregões monitorados" valor={String(data.kpis.processosAtivos)} />
               <Kpi label="Conectores OK" valor={String(data.saude.length - problemas.length)} />
               <Kpi label="Conectores c/ problema" valor={String(problemas.length)} destaque={problemas.length > 0} />
             </div>
@@ -265,135 +473,222 @@ export default function RadarPage() {
             <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} />
           </div>
 
-          {/* Monitorar Chat — 2 painéis (processos × thread), estilo benchmark */}
           {loading ? (
             <div className="space-y-2">{[1, 2, 3, 4].map((i) => <div key={i} className="h-12 bg-bg2 border border-subtle rounded-lg animate-pulse" />)}</div>
           ) : !data || processos.length === 0 ? (
             <div className="bg-bg2 border border-subtle rounded-2xl p-10 text-center">
               <Bell size={28} className="text-faint mx-auto mb-3" />
-              <p className="text-[14px] text-strong mb-1">Nenhuma mensagem capturada ainda</p>
+              <p className="text-[14px] text-strong mb-1">Nenhum pregão monitorado ainda</p>
               <p className="text-[12px] text-muted max-w-[460px] mx-auto">
-                Assim que houver processos monitorados (selecionados pelo seu perfil) e um conector ativo,
-                as mensagens de chat aparecem aqui. Verifique a saúde dos conectores acima.
+                Assim que a seleção automática achar licitações do seu perfil, elas aparecem aqui —
+                e as mensagens do chat entram conforme o conector captura. Verifique a saúde dos conectores acima.
               </p>
             </div>
           ) : (
-            <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden grid grid-cols-1 lg:grid-cols-[340px_1fr] h-[560px]">
-              {/* Esquerda — lista de processos monitorados */}
+            <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden grid grid-cols-1 lg:grid-cols-[360px_1fr] h-[620px]">
+
+              {/* ── Esquerda: pregões monitorados ───────────────────────────── */}
               <div className="border-r border-subtle flex flex-col min-h-0">
+                {/* Monitorado por mim × por todos */}
+                <div className="p-2.5 border-b border-subtle grid grid-cols-2 gap-2">
+                  {([['mim', 'Monitorado por mim'], ['todos', 'Monitorado por todos']] as const).map(([k, label]) => (
+                    <button key={k} onClick={() => setEscopo(k)}
+                      className={clsx('text-[11.5px] font-semibold px-2 py-2 rounded-lg border transition-colors leading-tight',
+                        escopo === k ? 'bg-accent text-black border-accent' : 'bg-bg3 text-muted border-subtle2 hover:text-strong')}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Filtro (dropdown) */}
+                <div className="px-2.5 py-2 border-b border-subtle">
+                  <select value={filtro} onChange={(e) => setFiltro(e.target.value as Filtro)}
+                    className="w-full text-[11.5px] bg-bg3 border border-subtle rounded-md px-2 py-1.5 text-muted focus:border-accent outline-none">
+                    {(Object.keys(FILTRO_LABEL) as Filtro[]).map((f) => (
+                      <option key={f} value={f}>{FILTRO_LABEL[f]} ({contagem[f]})</option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* Busca */}
-                <div className="p-2.5 border-b border-subtle">
+                <div className="px-2.5 pb-2 pt-2 border-b border-subtle">
                   <div className="flex items-center gap-2 bg-bg3 border border-subtle rounded-lg px-2.5 py-1.5">
                     <Search size={13} className="text-faint flex-shrink-0" />
-                    <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Edital, nº, CNPJ ou texto…"
+                    <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nº, órgão, CNPJ ou texto…"
                       className="bg-transparent text-[12px] text-strong placeholder:text-faint outline-none w-full" />
                     {busca && <button onClick={() => setBusca('')} className="text-faint hover:text-strong"><X size={12} /></button>}
                   </div>
                 </div>
-                {/* Abas */}
-                <div className="flex items-center gap-1 px-2 py-1.5 border-b border-subtle overflow-x-auto">
-                  {ABAS.map((t) => (
-                    <button key={t.key} onClick={() => setAba(t.key)}
-                      className={clsx('flex items-center gap-1 text-[11px] px-2 py-1 rounded-md whitespace-nowrap transition-colors',
-                        aba === t.key ? 'bg-accent/15 text-accent font-semibold' : 'text-faint hover:text-strong hover:bg-bg3')}>
-                      {t.label}
-                      {t.n > 0 && <span className={clsx('text-[9px] font-mono-custom px-1 rounded-full', aba === t.key ? 'bg-accent/20' : 'bg-bg4')}>{t.n}</span>}
-                    </button>
-                  ))}
-                </div>
-                {/* Categorias (mantém o filtro fino) */}
-                <div className="px-2.5 py-2 border-b border-subtle">
+
+                {/* Portal + categorias */}
+                <div className="px-2.5 py-2 border-b border-subtle grid grid-cols-2 gap-2">
+                  <select value={portalFiltro} onChange={(e) => setPortalFiltro(e.target.value)}
+                    title="Filtrar pelo portal em que o pregão acontece"
+                    className="w-full text-[11px] bg-bg3 border border-subtle rounded-md px-2 py-1 text-muted focus:border-accent outline-none">
+                    <option value="">Todos os portais ({portaisPresentes.reduce((s, [, n]) => s + n, 0)})</option>
+                    {portaisPresentes.map(([id, n]) => (
+                      <option key={id} value={id}>{selo(id).label} ({n})</option>
+                    ))}
+                  </select>
                   <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full text-[11px] bg-bg3 border border-subtle rounded-md px-2 py-1 text-muted focus:border-accent outline-none">
                     <option value="">Todas as categorias</option>
                     {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
+
                 {/* Lista */}
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {filtrados.length === 0 ? (
                     <div className="p-6 text-center text-[12px] text-faint">
                       <InboxIcon size={22} className="mx-auto mb-2 opacity-60" />
-                      Nada nesta aba.
+                      {escopo === 'mim' && contagem.todos === 0
+                        ? 'Nada monitorado por você — veja em "Monitorado por todos".'
+                        : 'Nada neste filtro.'}
                     </div>
                   ) : filtrados.map((p) => {
                     const ativo = selId === p.id
                     const imp = !!flags[p.id]?.importante
+                    const s = selo(p.portal)
                     return (
                       <button key={p.id} onClick={() => abrirProcesso(p)}
                         className={clsx('w-full text-left px-3 py-2.5 border-b border-subtle/70 transition-colors',
-                          ativo ? 'bg-accent/10' : 'hover:bg-bg3', p.naoLidas > 0 && !ativo && 'bg-accent/[0.04]')}>
-                        <div className="flex items-center gap-1.5">
+                          ativo ? 'bg-accent/10' : 'hover:bg-bg3',
+                          p.naoLidas > 0 && !ativo && 'bg-accent/[0.04]',
+                          p.mutado && 'opacity-55')}>
+                        {/* Nº do processo + data (formato do benchmark) */}
+                        <div className="flex items-baseline gap-2">
                           {p.prioridadeAlta && <span title="Prioridade alta"><AlertTriangle size={11} className="text-red flex-shrink-0" /></span>}
                           {imp && <Star size={11} className="text-amber fill-amber flex-shrink-0" />}
-                          <span className={clsx('text-[12px] truncate flex-1', p.naoLidas > 0 ? 'text-strong font-semibold' : 'text-muted')}>{p.titulo}</span>
+                          <span className={clsx('text-[12px] font-mono-custom truncate flex-1', p.naoLidas > 0 ? 'text-strong font-semibold' : 'text-muted')}>
+                            {p.licitacaoId || '—'}
+                          </span>
+                          <span className="text-[9.5px] font-mono-custom text-faint flex-shrink-0">
+                            {p.ultima ? carimbo(p.ultima) : dataCurta(p.prazo)}
+                          </span>
+                        </div>
+                        {/* Órgão */}
+                        <div className="text-[11.5px] text-strong/80 truncate mt-1">{p.orgao || p.titulo || 'Órgão não informado'}</div>
+                        {/* Selo do portal + prévia */}
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <span className={clsx('text-[8.5px] font-mono-custom uppercase tracking-wide border px-1.5 py-0.5 rounded flex-shrink-0', s.cls)}>{s.label}</span>
+                          {p.mutado && <span className="text-[8.5px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1.5 py-0.5 rounded flex-shrink-0">desativado</span>}
                           {p.naoLidas > 0 && <span className="text-[9px] font-mono-custom bg-accent text-black font-bold px-1.5 rounded-full flex-shrink-0">{p.naoLidas}</span>}
+                          <span className="text-[10px] text-faint truncate flex-1">
+                            {p.ultima ? `${p.ultima.autor || '—'}: ${p.ultima.texto}` : 'Sem mensagem capturada ainda'}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <span className="text-[8.5px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1.5 py-0.5 rounded flex-shrink-0">{portalLabel(p.conectorId)}</span>
-                          <span className="text-[10px] text-faint truncate flex-1">{p.ultima.autor || '—'}: {p.ultima.texto}</span>
-                        </div>
-                        <div className="text-[9px] font-mono-custom text-faint mt-0.5">{horaCurta(p.ultima)}</div>
                       </button>
                     )
                   })}
                 </div>
               </div>
 
-              {/* Direita — thread do processo selecionado */}
+              {/* ── Direita: a conversa ─────────────────────────────────────── */}
               <div className="flex flex-col min-h-0">
                 {!selecionado ? (
                   <div className="flex-1 flex items-center justify-center text-center p-8">
                     <div>
                       <MessageSquare size={26} className="text-faint mx-auto mb-2 opacity-60" />
-                      <p className="text-[13px] text-muted">Selecione um processo à esquerda</p>
-                      <p className="text-[11px] text-faint mt-1">As mensagens do chat (pregoeiro, fornecedores) aparecem aqui.</p>
+                      <p className="text-[13px] text-muted">Selecione um pregão à esquerda</p>
+                      <p className="text-[11px] text-faint mt-1">As mensagens do chat (pregoeiro, fornecedores, sistema) aparecem aqui.</p>
                     </div>
                   </div>
                 ) : (
                   <>
-                    {/* Cabeçalho da thread */}
+                    {/* Cabeçalho: nº / órgão / prazo + ações */}
                     <div className="px-4 py-3 border-b border-subtle flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <h2 className="font-heading font-bold text-[14px] text-strong truncate">{selecionado.titulo}</h2>
-                          <span className="text-[8.5px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1.5 py-0.5 rounded flex-shrink-0">{portalLabel(selecionado.conectorId)}</span>
+                          <h2 className="font-heading font-bold text-[14px] text-strong font-mono-custom truncate">{selecionado.licitacaoId || '—'}</h2>
+                          <span className={clsx('text-[8.5px] font-mono-custom uppercase tracking-wide border px-1.5 py-0.5 rounded flex-shrink-0', selo(selecionado.portal).cls)}>
+                            {selo(selecionado.portal).label}
+                          </span>
+                          <span className={clsx('text-[8.5px] font-mono-custom uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0',
+                            selecionado.situacao === 'encerrada' ? 'bg-bg4 text-faint' : 'bg-emerald-500/15 text-emerald-300')}>
+                            {selecionado.situacao === 'encerrada' ? 'encerrada' : 'aberta'}
+                          </span>
                         </div>
-                        <p className="text-[11px] text-faint mt-0.5 truncate">Nº {selecionado.licitacaoId || '—'} · CNPJ {selecionado.cnpj || '—'} · {selecionado.mensagens.length} mensagens</p>
+                        <p className="text-[11.5px] text-muted mt-1 truncate">Órgão: {selecionado.orgao || '—'}</p>
+                        <p className="text-[11px] text-faint mt-0.5 truncate">
+                          Datas: Prazo: {prazoLongo(selecionado.prazo)} · {selecionado.mensagens.length} mensagens
+                        </p>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <button onClick={() => marcarTodasLidas(selecionado)} disabled={selecionado.naoLidas === 0} title="Marcar todas como lidas"
                           className={clsx('p-1.5 rounded-md transition-colors', selecionado.naoLidas === 0 ? 'text-faint/40' : 'text-faint hover:text-emerald-400 hover:bg-bg3')}><CheckCheck size={15} /></button>
+                        <button onClick={() => void carregar(true)} title="Atualizar" disabled={atualizando}
+                          className="p-1.5 rounded-md text-faint hover:text-accent hover:bg-bg3 transition-colors disabled:opacity-50">
+                          <RefreshCw size={15} className={atualizando ? 'animate-spin' : ''} /></button>
                         <button onClick={() => setFlag(selecionado.id, { importante: !flags[selecionado.id]?.importante })} title="Importante"
                           className={clsx('p-1.5 rounded-md transition-colors hover:bg-bg3', flags[selecionado.id]?.importante ? 'text-amber' : 'text-faint hover:text-amber')}>
                           <Star size={15} className={flags[selecionado.id]?.importante ? 'fill-amber' : ''} /></button>
-                        <button onClick={() => { const arq = !flags[selecionado.id]?.arquivado; setFlag(selecionado.id, { arquivado: arq }); if (arq) setSelId(null) }} title={flags[selecionado.id]?.arquivado ? 'Desarquivar' : 'Arquivar'}
-                          className="p-1.5 rounded-md text-faint hover:text-strong hover:bg-bg3 transition-colors">
-                          {flags[selecionado.id]?.arquivado ? <ArchiveRestore size={15} /> : <Archive size={15} />}</button>
-                        {selecionado.linkPortal && <a href={selecionado.linkPortal} target="_blank" rel="noopener noreferrer" title="Abrir no portal"
-                          className="p-1.5 rounded-md text-faint hover:text-accent hover:bg-bg3 transition-colors"><ExternalLink size={15} /></a>}
+                        <Kebab
+                          processo={selecionado}
+                          onDetalhes={() => setDetalhes(selecionado)}
+                          onMonitoramento={() => void alternarMonitoramento(selecionado)}
+                          onArquivar={() => { const arq = !flags[selecionado.id]?.arquivado; setFlag(selecionado.id, { arquivado: arq }); if (arq) setSelId(null) }}
+                          arquivado={!!flags[selecionado.id]?.arquivado}
+                        />
                       </div>
                     </div>
+
+                    {/* Abas: Mensagens do chat + lote */}
+                    <div className="px-4 py-2 border-b border-subtle flex items-center gap-3 flex-wrap">
+                      <span className="text-[12px] font-semibold text-strong">Mensagens do chat</span>
+                      {lotes.length > 0 ? (
+                        <>
+                          <select value={lote} onChange={(e) => setLote(e.target.value)}
+                            className="text-[11.5px] bg-bg3 border border-subtle rounded-md px-2 py-1 text-muted focus:border-accent outline-none">
+                            <option value="">Todos os lotes</option>
+                            {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+                          </select>
+                          <span className="text-[10.5px] text-faint">{mensagensVisiveis.length} de {selecionado.mensagens.length}</span>
+                        </>
+                      ) : (
+                        <span className="text-[10.5px] text-faint">Este portal não separa o chat por lote.</span>
+                      )}
+                      {config.escopo === 'palavra_chave' && (
+                        <span className="text-[10px] text-amber ml-auto">Avisando só com palavra-chave</span>
+                      )}
+                    </div>
+
                     {/* Mensagens */}
-                    <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-3 bg-bg">
-                      {selecionado.mensagens.map((m) => {
+                    <div className="flex-1 overflow-y-auto min-h-0 p-4 bg-bg">
+                      {mensagensVisiveis.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-center">
+                          <div>
+                            <MessageSquare size={22} className="text-faint mx-auto mb-2 opacity-50" />
+                            <p className="text-[12px] text-muted">Nenhuma mensagem capturada neste pregão ainda</p>
+                            <p className="text-[11px] text-faint mt-1 max-w-[380px]">
+                              O monitoramento está ativo — assim que o pregoeiro escrever no chat, aparece aqui.
+                            </p>
+                          </div>
+                        </div>
+                      ) : mensagensVisiveis.map((m) => {
                         const papel = papelAutor(m.autor)
                         return (
-                          <div key={m.id} className={clsx('rounded-lg border p-3', m.prioridade === 'alta' ? 'border-red/30 bg-red/[0.04]' : 'border-subtle bg-bg2')}>
-                            <div className="flex items-center justify-between gap-2 mb-1">
-                              <span className={clsx('text-[11px] font-semibold uppercase tracking-wide', PAPEL_CLS[papel])}>{m.autor || 'Mensagem'}</span>
-                              <span className="text-[10px] font-mono-custom text-faint flex-shrink-0">{horaCurta(m)}</span>
+                          <div key={m.id} className="mb-3">
+                            {/* Autor (rótulo acima do balão, como no benchmark) */}
+                            <div className={clsx('text-[11px] font-semibold uppercase tracking-wide mb-1', PAPEL_CLS[papel])}>
+                              {m.autor || PAPEL_LABEL[papel]}
                             </div>
-                            <p className="text-[12.5px] text-strong whitespace-pre-wrap leading-snug">{m.texto}</p>
-                            {(m.categorias.length > 0 || m.anexos?.length > 0) && (
-                              <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                                {m.categorias.map((c) => <span key={c} className="text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full bg-bg4 text-faint">{c}</span>)}
-                                {m.anexos?.map((a, i) => (
-                                  <span key={i} className="inline-flex items-center gap-1 text-[10px] text-accent">
-                                    <Paperclip size={10} />{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{a.nome}</a> : a.nome}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            <div className={clsx('rounded-lg border p-3', m.prioridade === 'alta' ? 'border-red/30 bg-red/[0.04]' : 'border-subtle bg-bg2')}>
+                              <p className="text-[12.5px] text-strong whitespace-pre-wrap leading-snug">
+                                <TextoDestacado texto={m.texto} chaves={chaves} />
+                              </p>
+                              {(m.categorias.length > 0 || m.anexos?.length > 0) && (
+                                <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                                  {m.categorias.map((c) => <span key={c} className="text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full bg-bg4 text-faint">{c}</span>)}
+                                  {m.anexos?.map((a, i) => (
+                                    <span key={i} className="inline-flex items-center gap-1 text-[10px] text-emerald-300">
+                                      <Paperclip size={10} />{a.url ? <a href={a.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{a.nome}</a> : a.nome}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {/* Carimbo de hora à direita, abaixo do balão */}
+                            <div className="text-[10px] font-mono-custom text-faint text-right mt-1">{carimbo(m)}</div>
                           </div>
                         )
                       })}
@@ -406,15 +701,195 @@ export default function RadarPage() {
 
           {data && (
             <p className="text-[10px] text-faint mt-3">
-              Os processos são selecionados automaticamente pelo seu perfil (UFs, categorias, termos e portfólio). Ajuste em Perfil & Preferências.
-              A captura de chat depende de um conector ativo — "sem novidades" só é confiável quando o conector está verde acima.
+              Os pregões são selecionados automaticamente pelo seu perfil (UFs, categorias, termos e portfólio) — ajuste em Perfil &amp; Preferências.
+              A captura de chat depende de um conector ativo: &quot;sem novidades&quot; só é confiável quando o conector está verde acima.
+              Palavras-chave e notificações ficam em <Link href="/radar/configuracoes" className="text-accent hover:underline">Configurações gerais</Link>.
               Marcações de <strong>Importante</strong> e <strong>Arquivado</strong> ficam neste navegador.
             </p>
           )}
         </main>
 
-        {conectar && <ConectarModal onClose={() => setConectar(false)} onSaved={() => { setConectar(false); carregar() }} />}
+        {conectar && <ConectarModal onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
+        {detalhes && <DetalhesModal processo={detalhes} onClose={() => setDetalhes(null)} />}
       </div>
+    </div>
+  )
+}
+
+/** Bip curto via WebAudio — evita depender de arquivo de áudio hospedado. */
+function beep() {
+  try {
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctor) return
+    const ctx = new Ctor()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.frequency.value = 880
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35)
+    osc.start(); osc.stop(ctx.currentTime + 0.36)
+    osc.onended = () => void ctx.close()
+  } catch { /* autoplay bloqueado até o usuário interagir */ }
+}
+
+/** Texto da mensagem com as palavras-chave monitoradas pintadas. */
+function TextoDestacado({ texto, chaves }: { texto: string; chaves: string[] }) {
+  const trechos = useMemo(() => destacar(texto, chaves), [texto, chaves])
+  return (
+    <>
+      {trechos.map((t, i) =>
+        t.tipo === null ? <span key={i}>{t.texto}</span> : (
+          <mark key={i} className={clsx('rounded px-0.5',
+            t.tipo === 'chave' ? 'bg-amber/30 text-amber-100' : 'bg-emerald-500/25 text-emerald-100')}>
+            {t.texto}
+          </mark>
+        ))}
+    </>
+  )
+}
+
+/** Menu ⋮ da conversa: Informações · Acessar local da disputa · Desativar monitoramento. */
+function Kebab({ processo, onDetalhes, onMonitoramento, onArquivar, arquivado }: {
+  processo: Processo; onDetalhes: () => void; onMonitoramento: () => void; onArquivar: () => void; arquivado: boolean
+}) {
+  const [aberto, setAberto] = useState(false)
+  const cx = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!aberto) return
+    const fora = (e: MouseEvent) => { if (cx.current && !cx.current.contains(e.target as Node)) setAberto(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setAberto(false) }
+    document.addEventListener('mousedown', fora)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc) }
+  }, [aberto])
+
+  const Item = ({ children, onClick, icone }: { children: React.ReactNode; onClick: () => void; icone: React.ReactNode }) => (
+    <button onClick={() => { onClick(); setAberto(false) }}
+      className="w-full flex items-center gap-2 text-left text-[12px] text-muted hover:text-strong hover:bg-bg3 px-3 py-2 transition-colors">
+      {icone}{children}
+    </button>
+  )
+
+  return (
+    <div className="relative" ref={cx}>
+      <button onClick={() => setAberto((a) => !a)} title="Mais ações"
+        className={clsx('p-1.5 rounded-md transition-colors hover:bg-bg3', aberto ? 'text-strong bg-bg3' : 'text-faint hover:text-strong')}>
+        <MoreVertical size={15} />
+      </button>
+      {aberto && (
+        <div className="absolute right-0 top-full mt-1 z-20 w-[236px] bg-bg2 border border-subtle rounded-lg shadow-xl overflow-hidden py-1">
+          <Item onClick={onDetalhes} icone={<Info size={13} />}>Informações da licitação</Item>
+          {/* Prefere a URL do PORTAL de origem; cai no link do PNCP quando o PNCP
+              não informou o sistema (acontece em ~metade dos registros). */}
+          {(processo.linkOrigem || processo.linkPortal) ? (
+            <a href={processo.linkOrigem || processo.linkPortal!} target="_blank" rel="noopener noreferrer" onClick={() => setAberto(false)}
+              className="w-full flex items-center gap-2 text-left text-[12px] text-muted hover:text-strong hover:bg-bg3 px-3 py-2 transition-colors">
+              <ExternalLink size={13} />Acessar local da disputa
+            </a>
+          ) : (
+            <span className="w-full flex items-center gap-2 text-[12px] text-faint/60 px-3 py-2 cursor-not-allowed">
+              <ExternalLink size={13} />Sem link do portal
+            </span>
+          )}
+          <Item onClick={onArquivar} icone={arquivado ? <ArchiveRestore size={13} /> : <Archive size={13} />}>
+            {arquivado ? 'Desarquivar' : 'Arquivar'}
+          </Item>
+          <div className="border-t border-subtle my-1" />
+          <Item onClick={onMonitoramento} icone={processo.mutado ? <Bell size={13} /> : <BellOff size={13} />}>
+            {processo.mutado ? 'Ativar monitoramento' : 'Desativar monitoramento'}
+          </Item>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Modal "Detalhes da licitação" (kebab → Informações da licitação). */
+function DetalhesModal({ processo, onClose }: { processo: Processo; onClose: () => void }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50" />
+      <div onClick={(e) => e.stopPropagation()} className="relative bg-bg2 border border-subtle rounded-2xl w-full max-w-[620px] p-6">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <h3 className="font-heading font-bold text-[16px] text-strong">Detalhes da licitação</h3>
+          <button onClick={onClose} className="text-faint hover:text-strong"><X size={18} /></button>
+        </div>
+
+        <div className="space-y-4">
+          <Campo2 label="Objeto">
+            <p className="text-[12.5px] text-strong leading-snug">{processo.titulo || '—'}</p>
+          </Campo2>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Campo2 label="Datas">
+              <p className="text-[12.5px] text-strong">Abertura: {dataCurta(processo.abertura)}</p>
+              <p className="text-[12.5px] text-strong">Prazo: {prazoLongo(processo.prazo)}</p>
+            </Campo2>
+            <Campo2 label="Situação">
+              <span className={clsx('inline-block text-[10px] font-mono-custom uppercase tracking-wide px-2 py-1 rounded',
+                processo.situacao === 'encerrada' ? 'bg-bg4 text-faint' : 'bg-emerald-500/15 text-emerald-300')}>
+                {processo.situacao === 'encerrada' ? 'encerrada' : 'aberta'}
+              </span>
+            </Campo2>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Campo2 label="Nº do processo (PNCP)">
+              <p className="text-[12.5px] text-strong font-mono-custom break-all">{processo.licitacaoId || '—'}</p>
+            </Campo2>
+            <Campo2 label="Portal">
+              <span className={clsx('inline-block text-[10px] font-mono-custom uppercase tracking-wide border px-2 py-1 rounded', selo(processo.portal).cls)}>
+                {selo(processo.portal).label}
+              </span>
+            </Campo2>
+          </div>
+
+          <Campo2 label="Órgão">
+            <p className="text-[12.5px] text-strong leading-snug">{processo.orgao || '—'}</p>
+          </Campo2>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Campo2 label="Município / UF">
+              <p className="text-[12.5px] text-strong">{[processo.municipio, processo.uf].filter(Boolean).join(' - ') || '—'}</p>
+            </Campo2>
+            <Campo2 label="Modalidade">
+              <p className="text-[12.5px] text-strong">{processo.modalidade || '—'}</p>
+            </Campo2>
+            <Campo2 label="Valor estimado">
+              <p className="text-[12.5px] text-strong">{moeda(processo.valor)}</p>
+            </Campo2>
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center mt-6">
+          {(processo.linkOrigem || processo.linkPortal) ? (
+            <a href={processo.linkOrigem || processo.linkPortal!} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-[12px] text-accent hover:underline">
+              <ExternalLink size={13} /> Acessar local da disputa
+              {processo.linkOrigem && <span className="text-faint">({selo(processo.portal).label})</span>}
+            </a>
+          ) : <span />}
+          <button onClick={onClose} className="text-[12px] px-4 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Fechar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Campo2({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1">{label}</div>
+      {children}
     </div>
   )
 }
@@ -562,7 +1037,7 @@ function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <div className="mt-2">
             <p className="text-[12px] text-muted mb-3">
               Faça o login na página oficial do <strong className="text-strong">gov.br</strong> abaixo (CPF, senha, 2FA).
-              Ao concluir, clique em <strong className="text-strong">“Já concluí o login”</strong>. A senha é digitada no gov.br — nós guardamos só a sessão cifrada.
+              Ao concluir, clique em <strong className="text-strong">&ldquo;Já concluí o login&rdquo;</strong>. A senha é digitada no gov.br — nós guardamos só a sessão cifrada.
             </p>
             <div className="rounded-lg border border-subtle overflow-hidden bg-black/20">
               {embedUrl && (
