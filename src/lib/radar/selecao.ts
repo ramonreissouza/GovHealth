@@ -51,6 +51,8 @@ interface Candidato {
   municipio: string | null
   valor_total_estimado: number | null
   categoria_saude: string | null
+  link_externo: string | null
+  fonte: string | null
 }
 
 /**
@@ -93,7 +95,7 @@ export async function sincronizarSelecao(
   const destinatario = titular?.email ?? titularId
 
   // Candidatos: contratações ABERTAS (sem resultado homologado) filtradas por
-  // UF / categoria / faixa de valor, recentes. Texto é filtrado depois em JS.
+  // UF / categoria / faixa de valor / TEXTO, recentes.
   const cond: string[] = [`NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = c.numero_controle_pncp)`]
   const params: unknown[] = []
   if (ufs.length) { params.push(ufs); cond.push(`c.uf = ANY($${params.length})`) }
@@ -101,13 +103,37 @@ export async function sincronizarSelecao(
   if (perfil.valorMin != null) { params.push(perfil.valorMin); cond.push(`c.valor_total_estimado >= $${params.length}`) }
   if (perfil.valorMax != null) { params.push(perfil.valorMax); cond.push(`c.valor_total_estimado <= $${params.length}`) }
 
+  // O filtro de TEXTO agora vai para o SQL (antes era só em JS, DEPOIS do LIMIT).
+  // Aquele `LIMIT 800` recortava as 800 contratações mais recentes e só então casava
+  // termos/portfólio: um perfil amplo (poucas UFs, sem categoria, muitos produtos)
+  // nunca via o resto da base. `translate` remove os acentos do lado do banco para
+  // casar com as agulhas já normalizadas — dá para usar sem a extensão `unaccent`,
+  // que não está instalada.
+  // `LIKE ANY(array)` de propósito, NÃO um OR de N LIKEs: com um OR, o Postgres
+  // reavalia translate(lower(objeto)) uma vez POR AGULHA em cada linha — com 101
+  // agulhas isso media 33s. Com ANY(array) a expressão é avaliada uma única vez por
+  // linha e o índice trigram entra: as mesmas 101 agulhas caem para ~640ms.
+  // O índice que sustenta isso é idx_contratacoes_objeto_trgm (scripts/migrate-trgm.mjs)
+  // e ele é sobre ESTA expressão — mudar o translate aqui exige recriar o índice.
+  const SEM_ACENTO = `translate(lower(c.objeto_compra), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn')`
+  if (temFiltroTexto) {
+    const alvos = [...new Set([...termos, ...needles])]
+    params.push(alvos.map((t) => `%${t}%`))
+    cond.push(`${SEM_ACENTO} LIKE ANY($${params.length})`)
+  }
+
+  // Teto de segurança aplicado DEPOIS de todos os filtros (inclusive texto), não
+  // como recorte cego da base. Alto o bastante para não cortar perfil real.
+  const TETO_CANDIDATOS = 5000
+
   const candidatos = await query<Candidato>(
-    `SELECT numero_controle_pncp, objeto_compra, uf, municipio, valor_total_estimado, categoria_saude
+    `SELECT numero_controle_pncp, objeto_compra, uf, municipio, valor_total_estimado, categoria_saude,
+            link_externo, fonte
        FROM contratacoes c
       WHERE ${cond.join(' AND ')}
         AND (data_publicacao IS NULL OR data_publicacao >= (now() - interval '8 months'))
       ORDER BY data_publicacao DESC NULLS LAST
-      LIMIT 800`,
+      LIMIT ${TETO_CANDIDATOS}`,
     params,
   )
 
