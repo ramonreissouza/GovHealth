@@ -193,6 +193,18 @@ export interface PrecoPainelItem {
   nomeClasse?: string
   objetoCompra?: string
   tipoCompra?: 'publica' | 'privada'
+  // Campos que o Painel de Preços do Compras.gov exibe e que mudam a LEITURA do
+  // preço. A unidade de fornecimento é o mais importante: R$ 26 por "UNIDADE" e
+  // R$ 26 por "CAIXA 100 UN" são preços 100x diferentes, e sem isso a referência
+  // parece distante da nossa quando na verdade está comparando embalagens.
+  unidadeFornecimento?: string      // nomeUnidadeFornecimento, ex. "CAIXA"
+  capacidadeUnidade?: number        // capacidadeUnidadeFornecimento, ex. 100
+  nomeUasg?: string                 // unidade compradora de fato
+  codigoUasg?: string
+  criterioJulgamento?: string
+  dataCompra?: string               // distinta de dataResultado
+  nomePdm?: string                  // nome padronizado do item no catálogo
+  descricaoDetalhada?: string       // especificação completa
 }
 
 export interface CatmatMaterial {

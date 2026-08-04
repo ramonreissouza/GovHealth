@@ -99,12 +99,26 @@ export function PrecosReferencia({ termo, uf }: Props) {
       <div className="space-y-1">
         {precos.slice(0, 5).map((p, i) => (
           <div key={`${p.id}-${i}`} className="flex items-center gap-3 px-2 py-1.5 bg-bg4/40 rounded-lg">
-            <span className={`text-[11px] font-mono-custom font-bold flex-shrink-0 w-24 ${
+            {/* Preço SEMPRE junto da unidade de fornecimento. "R$ 26" sozinho é um
+                número sem significado: R$ 26 por UNIDADE e R$ 26 por CAIXA 100 são
+                preços 100x diferentes. Era a leitura mais provável de "a referência
+                está distante" — comparação entre embalagens diferentes. */}
+            <span className={`text-[11px] font-mono-custom font-bold flex-shrink-0 w-24 leading-tight ${
               p.valorUnitario <= (stats?.valorMedio ?? Infinity) ? 'text-emerald-400' : 'text-amber'
             }`}>
               {formatBRL(p.valorUnitario)}
+              {p.unidadeFornecimento && (
+                <span className="block text-[8px] font-normal text-faint uppercase tracking-wide truncate">
+                  /{p.unidadeFornecimento}{p.capacidadeUnidade && p.capacidadeUnidade > 1 ? ` ${p.capacidadeUnidade}` : ''}
+                </span>
+              )}
             </span>
-            <span className="text-[10px] text-muted flex-1 truncate">{p.razaoSocialFornecedor || '—'}</span>
+            <span className="text-[10px] text-muted flex-1 min-w-0 leading-tight">
+              <span className="block truncate">{p.razaoSocialFornecedor || '—'}</span>
+              {/* A UASG é a unidade que comprou de fato — no Painel de Preços ela vem
+                  junto, e é o que permite julgar se o preço é comparável ao seu caso. */}
+              {p.nomeUasg && <span className="block text-[8.5px] text-faint truncate">{p.nomeUasg}</span>}
+            </span>
             <span className="text-[9px] font-mono-custom text-faint flex-shrink-0">{p.siglaUf}</span>
             <span className="text-[9px] font-mono-custom text-faint flex-shrink-0">{formatDate(p.dataResultado)}</span>
             <span className={`text-[8px] font-mono-custom px-1 py-0.5 rounded uppercase flex-shrink-0 ${

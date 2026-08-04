@@ -264,6 +264,15 @@ function normalizarItemPreco(raw: Record<string, unknown>): PrecoPainelItem {
     modalidade: raw.modalidade != null ? Number(raw.modalidade) : undefined,
     nomeClasse: raw.nomeClasse ? String(raw.nomeClasse) : undefined,
     objetoCompra: raw.objetoCompra ? String(raw.objetoCompra) : undefined,
+    // Cópia fiel do que o Painel de Preços mostra (ver PrecoPainelItem).
+    unidadeFornecimento: raw.nomeUnidadeFornecimento ? String(raw.nomeUnidadeFornecimento) : undefined,
+    capacidadeUnidade: Number(raw.capacidadeUnidadeFornecimento) || undefined,
+    nomeUasg: raw.nomeUasg ? String(raw.nomeUasg) : undefined,
+    codigoUasg: raw.codigoUasg ? String(raw.codigoUasg) : undefined,
+    criterioJulgamento: raw.criterioJulgamento ? String(raw.criterioJulgamento) : undefined,
+    dataCompra: raw.dataCompra ? String(raw.dataCompra) : undefined,
+    nomePdm: raw.nomePdm ? String(raw.nomePdm) : undefined,
+    descricaoDetalhada: raw.descricaoDetalhadaItem ? String(raw.descricaoDetalhadaItem) : undefined,
     // A Painel de Preços do governo é 100% compra pública.
     tipoCompra: 'publica',
   }
@@ -275,10 +284,27 @@ async function consultarPrecoItem(
   codigoItemCatalogo: number,
   params: BuscaPrecosParams = {}
 ): Promise<PrecoPainelItem[]> {
+  // O CONTRATO DESTE ENDPOINT NÃO É O ÓBVIO — e era aqui que o Preços-ref morria.
+  //
+  // `1_consultarMaterial` exige DOIS parâmetros obrigatórios: `tipo` e `codigo`.
+  // E `tipo` não é "material/serviço": é o NOME do campo cujo código você está
+  // passando — enum ['codigoItemCatalogo', 'codigoPdm'] (confirmado em
+  // /v3/api-docs). Passar `codigoItemCatalogo=X` direto, como fazíamos, devolve
+  // 404 "Resource not found" em 100% das chamadas. O Preços-ref nunca recebeu
+  // um único preço; a tela ficava vazia ou caía em aproximação por texto.
+  //
+  // Também não serve trocar para `2_consultarMaterialDetalhe`: ele aceita
+  // `codigoItemCatalogo`, mas devolve só 7 campos de identificação e NENHUM
+  // preço. Quem tem preçoUnitário, quantidade, fornecedor, marca, UASG, órgão,
+  // município e unidade de fornecimento é este endpoint 1.
+  //
+  // `tamanhoPagina` mínimo é 10 (abaixo disso: 400 "Informe um número de
+  // paginação no intervalo de 10 a 500").
   const sp = new URLSearchParams({
     pagina: '1',
-    tamanhoPagina: String(params.tamanhoPagina ?? 50),
-    codigoItemCatalogo: String(codigoItemCatalogo),
+    tamanhoPagina: String(Math.max(10, Math.min(500, params.tamanhoPagina ?? 50))),
+    tipo: 'codigoItemCatalogo',
+    codigo: String(codigoItemCatalogo),
   })
   if (params.uf) sp.set('estado', params.uf)
   if (params.esfera) sp.set('esfera', params.esfera)
