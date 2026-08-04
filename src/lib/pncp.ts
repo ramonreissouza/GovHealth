@@ -217,6 +217,14 @@ export interface ItemPNCP {
   quantidade: number
   unidadeMedida: string
   situacaoCompraItemNome: string
+  /**
+   * PDM do CATMAT casado por texto (scripts/casar-pdm.mjs). Presente em ~44% dos
+   * itens do BANCO e ausente em item vindo ao vivo do PNCP — por isso opcional.
+   * Com ele o preço de referência é consulta direta por código; sem ele cai na
+   * aproximação por termo, que é o que fazia a referência errar de produto.
+   */
+  codigoPdm?: number
+  nomePdm?: string
 }
 
 /** Itens individuais de uma compra específica. */

@@ -316,6 +316,42 @@ async function consultarPrecoItem(
   return extractArray(json).map(normalizarItemPreco)
 }
 
+/**
+ * Preços de um PDM (grupo de itens equivalentes do CATMAT).
+ *
+ * É o caminho PREFERIDO quando o item já tem PDM casado (itens.codigo_pdm, ver
+ * scripts/casar-pdm.mjs), por dois motivos medidos:
+ *
+ *  • VOLUME: o PDM 10436 devolve 3.554 registros de preço; o item 401445 devolve 7.
+ *    O dado de preço do Painel vive no nível PDM.
+ *  • COBERTURA: só 0,18% dos nossos itens têm CATMAT de item — e o PNCP não fornece
+ *    (0 de 306 itens sondados). Com PDM casado por texto, 44,3%.
+ *
+ * Nada de resolver termo → catálogo aqui: o código já vem resolvido do banco, então
+ * é UMA chamada, sem throttle e sem risco de a aproximação por texto errar o item.
+ */
+export async function buscarPrecosPorPdm(
+  codigoPdm: number,
+  uf?: string,
+  params: Omit<BuscaPrecosParams, 'descricao' | 'uf' | 'codigoItem'> = {},
+): Promise<PrecoPainelItem[]> {
+  const sp = new URLSearchParams({
+    pagina: '1',
+    tamanhoPagina: String(Math.max(10, Math.min(500, params.tamanhoPagina ?? 50))),
+    tipo: 'codigoPdm',
+    codigo: String(codigoPdm),
+  })
+  if (uf) sp.set('estado', uf)
+  if (params.esfera) sp.set('esfera', params.esfera)
+  if (params.dataInicial) sp.set('dataCompraInicio', params.dataInicial)
+  if (params.dataFinal) sp.set('dataCompraFim', params.dataFinal)
+
+  const json = await getJson(`${BASE}/modulo-pesquisa-preco/1_consultarMaterial?${sp}`, { revalidate: 86_400 })
+  const itens = extractArray(json).map(normalizarItemPreco)
+  // Mais recente primeiro: preço de 2026 vale mais que preço de 2022 como referência.
+  return itens.sort((a, b) => String(b.dataResultado).localeCompare(String(a.dataResultado)))
+}
+
 // ── Busca combinada de preços de saúde (entrada principal) ───────────────────────
 
 /**

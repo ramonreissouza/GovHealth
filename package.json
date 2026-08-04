@@ -50,7 +50,10 @@
     "radar:connect-service": "node scripts/radar/connect-service.mjs",
     "radar:browser-service": "node scripts/radar/browser-service.mjs",
     "radar:calibrate-pcp": "node scripts/radar/calibrate-pcp.mjs",
-    "ruido:limpar": "node scripts/limpar-ruido.mjs"
+    "ruido:limpar": "node scripts/limpar-ruido.mjs",
+    "catmat:migrate": "node scripts/migrate-catmat.mjs",
+    "catmat:ingest": "node scripts/ingest-catmat.mjs",
+    "catmat:casar": "node scripts/casar-pdm.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",

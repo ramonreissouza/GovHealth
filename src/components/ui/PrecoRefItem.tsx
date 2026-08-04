@@ -85,7 +85,12 @@ export function extrairTermo(descricao: string): string {
   return palavras || descricao.slice(0, 30)
 }
 
-export function PrecoRefItem({ descricao, valorUnitario, uf, unidadeEdital }: { descricao: string; valorUnitario: number; uf?: string; unidadeEdital?: string }) {
+export function PrecoRefItem({ descricao, valorUnitario, uf, unidadeEdital, codigoPdm, nomePdm }: {
+  descricao: string; valorUnitario: number; uf?: string; unidadeEdital?: string
+  /** PDM do CATMAT casado no banco. Quando existe, é ele que define a referência. */
+  codigoPdm?: number
+  nomePdm?: string
+}) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [carregado, setCarregado] = useState(false)
@@ -98,7 +103,12 @@ export function PrecoRefItem({ descricao, valorUnitario, uf, unidadeEdital }: { 
     if (carregado) { setOpen((o) => !o); return }
     setOpen(true); setLoading(true)
     try {
-      const params = new URLSearchParams({ descricao: termo, tamanhoPagina: '30' })
+      // Com PDM, consulta por CÓDIGO — é o que torna a referência confiável. A
+      // aproximação por termo (`extrairTermo`) fica só como último recurso, e é
+      // exatamente ela que fazia a referência cair em outro produto.
+      const params = codigoPdm
+        ? new URLSearchParams({ codigoPdm: String(codigoPdm), tamanhoPagina: '30' })
+        : new URLSearchParams({ descricao: termo, tamanhoPagina: '30' })
       if (uf) params.set('uf', uf)
       const r = await fetch(`/api/comprasgov/precos?${params}`)
       const d = await r.json()
@@ -129,6 +139,14 @@ export function PrecoRefItem({ descricao, valorUnitario, uf, unidadeEdital }: { 
             <div className="text-[9px] font-mono-custom text-faint">Sem referência para este item.</div>
           ) : (
             <>
+              {/* DIZER contra o que a referência foi tirada. Sem isso a pessoa não tem
+                  como julgar se a comparação vale — e era a queixa: preço aparecendo
+                  "distante" sem explicar de qual produto ele saiu. */}
+              <div className="text-[8.5px] font-mono-custom text-faint mb-1">
+                {codigoPdm
+                  ? <>catálogo CATMAT · <span className="text-muted">{nomePdm ?? `PDM ${codigoPdm}`}</span></>
+                  : <>aproximação por termo · <span className="text-amber">{termo}</span></>}
+              </div>
               <div className="flex items-center gap-3 flex-wrap text-[9px] font-mono-custom">
                 <span className="text-faint uppercase tracking-wide text-[8px]">por unidade:</span>
                 <span className="text-faint">mín <span className="text-emerald-400 font-bold">{formatBRL(stats!.valorMin)}</span></span>

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   buscarPrecosSaude,
+  buscarPrecosPorPdm,
   calcularEstatisticas,
 } from '@/lib/comprasgov'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
@@ -21,23 +22,29 @@ export async function GET(req: NextRequest) {
   const dataInicial = searchParams.get('dataInicial') ?? undefined
   const dataFinal   = searchParams.get('dataFinal') ?? undefined
   const codigoItem  = searchParams.get('codigoItem') ?? undefined
+  // PDM casado no banco (itens.codigo_pdm). Caminho preferido: é UMA chamada, com
+  // ~500x mais registros de preço que o código de item, e sem a aproximação por
+  // texto que fazia a referência cair em outro produto.
+  const codigoPdm   = searchParams.get('codigoPdm') ?? undefined
   const tamanhoPagina = Number(searchParams.get('tamanhoPagina') ?? 100)
 
-  if (!descricao && !codigoItem) {
+  if (!descricao && !codigoItem && !codigoPdm) {
     return NextResponse.json(
-      { error: 'Parâmetro "descricao" ou "codigoItem" é obrigatório' },
+      { error: 'Parâmetro "descricao", "codigoItem" ou "codigoPdm" é obrigatório' },
       { status: 400 }
     )
   }
 
-  const cacheKey = `comprasgov:precos:${descricao}:${uf ?? ''}:${esfera ?? ''}:${dataInicial ?? ''}:${dataFinal ?? ''}:${codigoItem ?? ''}`
+  const cacheKey = `comprasgov:precos:${descricao}:${uf ?? ''}:${esfera ?? ''}:${dataInicial ?? ''}:${dataFinal ?? ''}:${codigoItem ?? ''}:${codigoPdm ?? ''}`
   const cached = getCached<object>(cacheKey)
   if (cached) return NextResponse.json(cached)
 
   try {
-    let precos = await buscarPrecosSaude(descricao, uf, {
-      codigoItem, esfera, dataInicial, dataFinal, tamanhoPagina,
-    })
+    let precos = codigoPdm && /^\d+$/.test(codigoPdm)
+      ? await buscarPrecosPorPdm(Number(codigoPdm), uf, { esfera, dataInicial, dataFinal, tamanhoPagina })
+      : await buscarPrecosSaude(descricao, uf, {
+          codigoItem, esfera, dataInicial, dataFinal, tamanhoPagina,
+        })
 
     // Fallback: se a API não retornou nada, filtra o dataset local pelo termo buscado
     let usouFallback = false

@@ -17,6 +17,8 @@ interface ItemRow {
   descricao: string | null
   quantidade: number | null
   valor_unitario_estimado: number | null
+  codigo_pdm: number | null
+  nome_pdm: string | null
 }
 
 export async function POST(req: NextRequest) {
@@ -37,12 +39,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const rows = await query<ItemRow>(
-      `SELECT numero_controle_pncp, numero_item, descricao,
-              quantidade::float8              AS quantidade,
-              valor_unitario_estimado::float8 AS valor_unitario_estimado
-         FROM itens
-        WHERE numero_controle_pncp = ANY($1)
-        ORDER BY numero_controle_pncp, numero_item`,
+      `SELECT i.numero_controle_pncp, i.numero_item, i.descricao,
+              i.quantidade::float8              AS quantidade,
+              i.valor_unitario_estimado::float8 AS valor_unitario_estimado,
+              -- PDM do CATMAT casado por texto: é o que permite consultar o Painel
+              -- de Preços por código em vez de por aproximação de termo.
+              i.codigo_pdm, p.nome AS nome_pdm
+         FROM itens i
+         LEFT JOIN catmat_pdm p ON p.codigo_pdm = i.codigo_pdm
+        WHERE i.numero_controle_pncp = ANY($1)
+        ORDER BY i.numero_controle_pncp, i.numero_item`,
       [ids],
     )
 
@@ -55,6 +61,8 @@ export async function POST(req: NextRequest) {
         quantidade: r.quantidade ?? 0,
         unidadeMedida: '',
         situacaoCompraItemNome: '',
+        codigoPdm: r.codigo_pdm ?? undefined,
+        nomePdm: r.nome_pdm ?? undefined,
       })
     }
 

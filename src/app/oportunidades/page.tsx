@@ -13,8 +13,9 @@ import { ExportButton } from '@/components/ui/ExportButton'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
-// Preço de referência Compras.gov REMOVIDO do breakdown por item (dava valores
-// distoantes p/ itens sem CATMAT — a ref cai em texto e desalinha). Ver PrecoRefItem.
+// Preço de referência Compras.gov RELIGADO no breakdown por item, agora só onde há
+// PDM do CATMAT casado (ver PrecoRefItem e scripts/casar-pdm.mjs).
+import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
 import AcoesLicitacao from './components/AcoesLicitacao'
 import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
@@ -137,8 +138,25 @@ function ItemsRow({ opp, preloaded }: { opp: Oportunidade; preloaded?: ItemPNCP[
               </span>
               <span className="block text-[8px] font-mono-custom text-faint uppercase tracking-wide">total</span>
             </span>
-            {/* Preço de referência Compras.gov removido daqui (a pedido): dava valores
-                estranhos p/ itens sem CATMAT. Reativar: reintroduzir <PrecoRefItem />. */}
+            {/* Preço de referência RELIGADO, mas só onde há PDM do CATMAT casado.
+                Foi desligado porque dava valores estranhos, e a causa era dupla:
+                (1) a chamada ao Painel de Preços estava errada (mandava
+                `codigoItemCatalogo` para um endpoint que exige `tipo`+`codigo`, e
+                respondia 404 em 100% dos casos), e (2) só 0,18% dos itens tinham
+                CATMAT, então a referência caía em aproximação por texto e trazia
+                outro produto. Com PDM casado (44% dos itens) a consulta é por
+                código; sem PDM não mostramos nada, porque referência errada é pior
+                que referência ausente. */}
+            {item.codigoPdm && (
+              <PrecoRefItem
+                descricao={item.descricao}
+                valorUnitario={item.valorUnitarioEstimado}
+                uf={opp.uf}
+                unidadeEdital={item.unidadeMedida}
+                codigoPdm={item.codigoPdm}
+                nomePdm={item.nomePdm}
+              />
+            )}
           </div>
         ))}
       </div>
