@@ -61,8 +61,34 @@ const SAUDE = [
   'leito de internaç', 'exame laboratori', 'exames laboratori', 'consultório odonto',
 ]
 
+// Exclusões que precisam de REGEX porque o casamento por substring falha.
+//
+// Motivo medido: 'gênero aliment' (lista acima) NÃO casa com "gêneros alimentícios"
+// — o 's' do plural quebra a substring contígua. Resultado: 626 compras de comida
+// entraram na base de saúde, uma delas classificada como 'uti'. O teste que expôs
+// isso: isSaude('...gênero alimentício...') = false, isSaude('...gêneros
+// alimentícios...') = true.
+//
+// Estes padrões são ANCORADOS em início de palavra de propósito. Sem a âncora,
+// /obras? de/ casa dentro de "manobras de" — medi 1 registro real sendo pego assim
+// ("capacitação presencial em noções de..."), então a âncora não é teórica.
+const EXCLUI_RE = [
+  /(^|[^a-zà-ú])g[êe]neros?\s+aliment/i,
+  /(^|[^a-zà-ú])cestas?\s+b[áa]sicas?/i,
+  /(^|[^a-zà-ú])uniformes?\s+escolar/i,
+  // Obra/construção só exclui em contexto de ENGENHARIA. "Obras de reforma de UBS"
+  // é obra civil (não é venda de produto de saúde), mas o padrão solto pegava
+  // qualquer "…obras de…" — inclusive dentro de outra palavra.
+  /(^|[^a-zà-ú])(obras?|constru[çc][õo]es)\s+de\s+(engenharia|constru|reforma|amplia|adequa|infraestrutura)/i,
+]
+
 // Termos de saúde inequívoca que VENCEM a exclusão (ex.: "locação de veículos
 // ambulância" — é veículo, mas é saúde e deve ser mantido).
+//
+// Medi se isto estava deixando entrar combustível/pneu de ambulância (que não é
+// oportunidade para fornecedor de material médico): NÃO está. Os registros com
+// "ambulância" + "combustível" são compras da própria ambulância que citam o
+// combustível na ESPECIFICAÇÃO do veículo. Por isso a lista fica como está.
 const FORTE_SAUDE = ['ambulânci', 'ambulanci']
 
 export function isSaude(s) {
@@ -70,6 +96,7 @@ export function isSaude(s) {
   if (!l) return false
   if (FORTE_SAUDE.some((k) => l.includes(k))) return true
   if (EXCLUI.some((k) => l.includes(k))) return false
+  if (EXCLUI_RE.some((re) => re.test(l))) return false
   return SAUDE.some((k) => l.includes(k))
 }
 

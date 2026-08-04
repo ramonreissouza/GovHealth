@@ -30,3 +30,6 @@ scripts/radar/.calibra/
 # Vídeos soltos na raiz (gravações de tela para benchmark) — arquivos locais
 /*.mp4
 /*.mov
+
+# Despejo da limpeza de ruído (dado de produção — não versionar)
+.limpeza-ruido-*.json
