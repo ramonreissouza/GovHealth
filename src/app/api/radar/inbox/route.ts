@@ -8,6 +8,7 @@ import { query, queryOne } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
 import { sincronizarSelecao } from '@/lib/radar/selecao'
 import { resolverPortal } from '@/lib/portais'
+import { cofreDisponivel } from '@/lib/radar/crypto'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -167,6 +168,15 @@ export async function GET(req: NextRequest) {
       credencialId: s.credencial_id, conectorId: s.conector_id, cnpj: s.cnpj,
       status: s.status, verificadoEm: s.verificado_em, tentadoEm: s.tentado_em, detalhe: s.detalhe,
     })),
+    // O que este AMBIENTE consegue fazer. Sem isso a tela oferecia "Conectar
+    // portal" onde conectar é impossível: sem RADAR_CRED_KEY o cadastro da
+    // credencial devolve 503 ("cofre indisponível") e sem RADAR_CONNECT_URL o
+    // login do gov.br não abre — o usuário clicava e batia num erro.
+    // O caminho SEM LOGIN (andamento público) não depende de nenhum dos dois.
+    capacidades: {
+      cofre: cofreDisponivel(),
+      hosted: !!(process.env.RADAR_CONNECT_URL && process.env.RADAR_CONNECT_TOKEN),
+    },
     atualizadoEm: new Date().toISOString(),
   })
 }

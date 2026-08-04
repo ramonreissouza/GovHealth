@@ -60,6 +60,8 @@ interface Inbox {
   chaves: string[]
   kpis: { naoLidas: number; processosAtivos: number; conectores: number }
   saude: SaudeItem[]
+  /** O que o ambiente consegue fazer (cofre de credenciais / login hospedado). */
+  capacidades?: { cofre: boolean; hosted: boolean }
   atualizadoEm: string
 }
 
@@ -207,8 +209,12 @@ const FLAGS_KEY = 'radar_flags_v1'
 function lerFlags(): Flags { try { return JSON.parse(localStorage.getItem(FLAGS_KEY) || '{}') } catch { return {} } }
 function salvarFlags(f: Flags) { try { localStorage.setItem(FLAGS_KEY, JSON.stringify(f)) } catch { /* quota */ } }
 
-type Escopo = 'mim' | 'todos'
 type Filtro = 'todos' | 'nao_lidas' | 'importantes' | 'desativados' | 'arquivados'
+
+// Quantos cards a lista desenha por vez. A seleção é automática e rende centenas de
+// pregões (o titular de teste tem 309, outro 547): montar todos de uma vez fazia cada
+// toque em filtro/busca re-renderizar a lista inteira.
+const POR_PAGINA = 60
 
 const FILTRO_LABEL: Record<Filtro, string> = {
   todos: 'Todos os pregões monitorados',
@@ -223,7 +229,6 @@ export default function RadarPage() {
   const [config, setConfig] = useState<ConfigRadar>(CONFIG_PADRAO)
   const [loading, setLoading] = useState(true)
   const [atualizando, setAtualizando] = useState(false)
-  const [escopo, setEscopo] = useState<Escopo>('mim')
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [busca, setBusca] = useState('')
   const [categoria, setCategoria] = useState('')
@@ -233,6 +238,7 @@ export default function RadarPage() {
   const [detalhes, setDetalhes] = useState<Processo | null>(null)
   const [lote, setLote] = useState('')
   const [portalFiltro, setPortalFiltro] = useState('')
+  const [pagina, setPagina] = useState(1)
   const agoraMs = Date.now()
 
   useEffect(() => { setFlags(lerFlags()) }, [])
@@ -242,21 +248,23 @@ export default function RadarPage() {
   // resposta antiga por cima de uma mais nova.
   const emVoo = useRef(false)
 
+  // NÃO recebe filtro: a caixa inteira do tenant vem num GET só e TODOS os filtros
+  // (categoria inclusive) são aplicados aqui no cliente. Antes o filtro de categoria
+  // entrava na querystring, então mudar o combo refazia a chamada — e como a rota
+  // ainda dispara a seleção automática, a lista sumia por segundos a cada troca.
   const carregar = useCallback(async (silencioso = false) => {
     if (emVoo.current) return
     emVoo.current = true
     if (silencioso) setAtualizando(true); else setLoading(true)
     try {
-      const p = new URLSearchParams()
-      if (categoria) p.set('categoria', categoria)
-      const r = await fetch(`/api/radar/inbox?${p}`)
+      const r = await fetch('/api/radar/inbox')
       const d: Inbox = await r.json()
       setData(d)
     } catch { /* mantém o que já está na tela */ } finally {
       emVoo.current = false
       setLoading(false); setAtualizando(false)
     }
-  }, [categoria])
+  }, [])
 
   useEffect(() => { void carregar() }, [carregar])
 
@@ -340,6 +348,23 @@ export default function RadarPage() {
 
   const problemas = data ? comProblema(data.saude, agoraMs) : []
 
+  // Dois estados diferentes, e a tela dizia a mesma coisa nos dois (REQUISITO 4.2):
+  //  • semConectorOk  — nenhuma credencial verificada, então o chat dos portais que
+  //    EXIGEM login (Compras.gov) não está sendo lido. Independe de já ter mensagem:
+  //    o modo público (PCP) captura sem credencial.
+  //  • capturaNuncaLigou — além disso, nunca chegou mensagem nenhuma. Aí "assim que o
+  //    pregoeiro escrever, aparece aqui" é promessa que a instalação não cumpre.
+  const semConectorOk = !!data && !data.saude.some((s) => s.status === 'ok')
+  const capturaNuncaLigou = semConectorOk && data.mensagens.length === 0
+  // Ambiente sem cofre/hosted → o login do gov.br não tem como concluir. Quando a API
+  // é antiga e não manda o campo, assume que dá (não esconde botão que funciona).
+  const capacidades = data?.capacidades ?? { cofre: true, hosted: true }
+
+  // ATENÇÃO à lista de dependências: `portalFiltro` estava FALTANDO aqui, e era esse
+  // o "filtro de portal que demora para aplicar". O React re-renderizava ao escolher o
+  // portal, mas o useMemo devolvia o resultado velho em cache — a lista só mudava
+  // quando outra dependência mexia, ou seja, no tick de atualização automática: até
+  // 2 minutos depois. Não era lentidão de volume, era filtro que não aplicava.
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase()
     return processos.filter((p) => {
@@ -349,7 +374,6 @@ export default function RadarPage() {
       if (filtro === 'desativados') { if (!p.mutado) return false } else if (p.mutado && filtro !== 'todos') return false
       if (filtro === 'nao_lidas' && p.naoLidas === 0) return false
       if (filtro === 'importantes' && !imp) return false
-      if (escopo === 'mim' && !p.meu) return false
       if (portalFiltro && p.portal !== portalFiltro) return false
       if (categoria && !p.mensagens.some((m) => m.categorias.includes(categoria))) return false
       if (q) {
@@ -358,30 +382,33 @@ export default function RadarPage() {
       }
       return true
     })
-  }, [processos, flags, filtro, escopo, categoria, busca])
+  }, [processos, flags, filtro, portalFiltro, categoria, busca])
 
   const contagem = useMemo(() => {
-    const noEscopo = processos.filter((p) => escopo === 'todos' || p.meu)
-    const ativos = noEscopo.filter((p) => !flags[p.id]?.arquivado)
+    const ativos = processos.filter((p) => !flags[p.id]?.arquivado)
     return {
       todos: ativos.length,
       nao_lidas: ativos.filter((p) => p.naoLidas > 0 && !p.mutado).length,
       importantes: ativos.filter((p) => flags[p.id]?.importante).length,
       desativados: ativos.filter((p) => p.mutado).length,
-      arquivados: noEscopo.filter((p) => flags[p.id]?.arquivado).length,
+      arquivados: processos.filter((p) => flags[p.id]?.arquivado).length,
     }
-  }, [processos, flags, escopo])
+  }, [processos, flags])
 
   // Portais efetivamente presentes na base do tenant (com a contagem) — o filtro só
   // oferece o que existe, em vez do catálogo inteiro.
   const portaisPresentes = useMemo(() => {
     const m = new Map<string, number>()
-    for (const p of processos) {
-      if (escopo === 'mim' && !p.meu) continue
-      m.set(p.portal, (m.get(p.portal) ?? 0) + 1)
-    }
+    for (const p of processos) m.set(p.portal, (m.get(p.portal) ?? 0) + 1)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
-  }, [processos, escopo])
+  }, [processos])
+
+  // Volta para a primeira página quando o resultado muda — senão o usuário filtra e
+  // continua olhando a página 4 de uma lista que encurtou.
+  useEffect(() => { setPagina(1) }, [filtro, portalFiltro, categoria, busca])
+
+  const visiveis = useMemo(() => filtrados.slice(0, pagina * POR_PAGINA), [filtrados, pagina])
+  const restantes = filtrados.length - visiveis.length
 
   const selecionado = filtrados.find((p) => p.id === selId) ?? null
 
@@ -435,8 +462,24 @@ export default function RadarPage() {
             </div>
           </div>
 
-          {/* REQUISITO 4.2 — banner de incerteza */}
-          {problemas.length > 0 && (
+          {/* REQUISITO 4.2 — banner de incerteza.
+              Dois textos diferentes de propósito: "nunca ligou" é um estado de
+              instalação (ninguém concluiu o login do portal), não uma falha
+              intermitente de conector — e a saída para cada um é outra. */}
+          {semConectorOk ? (
+            <div className="mb-4 flex items-start gap-2 bg-amber/10 border border-amber/30 rounded-lg px-4 py-3">
+              <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
+              <p className="text-[12px] text-amber">
+                <strong>Nenhum conector conectado.</strong> Os pregões abaixo estão selecionados pelo seu perfil e
+                são acompanhados por data e prazo, mas o <strong>chat dos portais que exigem login</strong>{' '}
+                (Compras.gov.br) <strong>não está sendo lido</strong>
+                {capturaNuncaLigou ? ' — nenhuma mensagem foi capturada até agora' : ''}.{' '}
+                {capacidades.cofre
+                  ? <>Conclua o login em <strong>Conectar portal</strong>.</>
+                  : <>A conexão por login do gov.br não está habilitada neste ambiente; o Portal de Compras Públicas monitora sem login.</>}
+              </p>
+            </div>
+          ) : problemas.length > 0 && (
             <div className="mb-4 flex items-start gap-2 bg-amber/10 border border-amber/30 rounded-lg px-4 py-3">
               <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
               <p className="text-[12px] text-amber">
@@ -489,15 +532,18 @@ export default function RadarPage() {
 
               {/* ── Esquerda: pregões monitorados ───────────────────────────── */}
               <div className="border-r border-subtle flex flex-col min-h-0">
-                {/* Monitorado por mim × por todos */}
-                <div className="p-2.5 border-b border-subtle grid grid-cols-2 gap-2">
-                  {([['mim', 'Monitorado por mim'], ['todos', 'Monitorado por todos']] as const).map(([k, label]) => (
-                    <button key={k} onClick={() => setEscopo(k)}
-                      className={clsx('text-[11.5px] font-semibold px-2 py-2 rounded-lg border transition-colors leading-tight',
-                        escopo === k ? 'bg-accent text-black border-accent' : 'bg-bg3 text-muted border-subtle2 hover:text-strong')}>
-                      {label}
-                    </button>
-                  ))}
+                {/* Aqui existia o alternador "Monitorado por mim × por todos", copiado do
+                    benchmark. Ele NÃO se aplica a este produto e por isso saiu: no
+                    benchmark você adiciona pregão a pregão, então "meu" é uma escolha
+                    sua; aqui a seleção é automática por perfil e vale para a empresa
+                    inteira. O campo `meu` da API só registra sob qual usuário a
+                    sincronização rodou, ou seja, as duas abas mostravam a MESMA lista —
+                    exatamente o que foi reportado. Divisão de trabalho é o que o filtro
+                    abaixo faz (não lidas / importantes / desativados / arquivados). */}
+                <div className="px-2.5 pt-2.5 pb-1">
+                  <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">
+                    Pregões monitorados · seleção automática
+                  </div>
                 </div>
 
                 {/* Filtro (dropdown) */}
@@ -536,16 +582,14 @@ export default function RadarPage() {
                   </select>
                 </div>
 
-                {/* Lista */}
+                {/* Lista (paginada — ver POR_PAGINA) */}
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {filtrados.length === 0 ? (
                     <div className="p-6 text-center text-[12px] text-faint">
                       <InboxIcon size={22} className="mx-auto mb-2 opacity-60" />
-                      {escopo === 'mim' && contagem.todos === 0
-                        ? 'Nada monitorado por você — veja em "Monitorado por todos".'
-                        : 'Nada neste filtro.'}
+                      Nada neste filtro.
                     </div>
-                  ) : filtrados.map((p) => {
+                  ) : visiveis.map((p) => {
                     const ativo = selId === p.id
                     const imp = !!flags[p.id]?.importante
                     const s = selo(p.portal)
@@ -574,12 +618,28 @@ export default function RadarPage() {
                           {p.mutado && <span className="text-[8.5px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1.5 py-0.5 rounded flex-shrink-0">desativado</span>}
                           {p.naoLidas > 0 && <span className="text-[9px] font-mono-custom bg-accent text-black font-bold px-1.5 rounded-full flex-shrink-0">{p.naoLidas}</span>}
                           <span className="text-[10px] text-faint truncate flex-1">
-                            {p.ultima ? `${p.ultima.autor || '—'}: ${p.ultima.texto}` : 'Sem mensagem capturada ainda'}
+                            {p.ultima
+                              ? `${p.ultima.autor || '—'}: ${p.ultima.texto}`
+                              : capturaNuncaLigou ? 'Chat não monitorado — conector não conectado' : 'Sem mensagem capturada ainda'}
                           </span>
                         </div>
                       </button>
                     )
                   })}
+
+                  {restantes > 0 && (
+                    <button onClick={() => setPagina((p) => p + 1)}
+                      className="w-full text-[11.5px] text-accent hover:bg-bg3 py-3 transition-colors">
+                      Mostrar mais {Math.min(POR_PAGINA, restantes)} ({restantes} restantes)
+                    </button>
+                  )}
+                </div>
+
+                {/* Rodapé de contagem: com paginação, o usuário precisa saber que a
+                    lista não acabou — e quanto do total ele está vendo. */}
+                <div className="px-3 py-2 border-t border-subtle text-[10px] font-mono-custom text-faint flex-shrink-0">
+                  {visiveis.length} de {filtrados.length}
+                  {filtrados.length !== contagem.todos && ` (${contagem.todos} monitorados)`}
                 </div>
               </div>
 
@@ -659,8 +719,11 @@ export default function RadarPage() {
                           <div>
                             <MessageSquare size={22} className="text-faint mx-auto mb-2 opacity-50" />
                             <p className="text-[12px] text-muted">Nenhuma mensagem capturada neste pregão ainda</p>
+                            {/* Não afirmar "monitoramento ativo" sem conector conectado. */}
                             <p className="text-[11px] text-faint mt-1 max-w-[380px]">
-                              O monitoramento está ativo — assim que o pregoeiro escrever no chat, aparece aqui.
+                              {capturaNuncaLigou
+                                ? 'O chat deste pregão não está sendo lido: nenhum conector foi conectado ainda. Conecte um portal para começar a captura.'
+                                : 'O monitoramento está ativo — assim que o pregoeiro escrever no chat, aparece aqui.'}
                             </p>
                           </div>
                         </div>
@@ -709,7 +772,7 @@ export default function RadarPage() {
           )}
         </main>
 
-        {conectar && <ConectarModal onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
+        {conectar && <ConectarModal capacidades={capacidades} onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
         {detalhes && <DetalhesModal processo={detalhes} onClose={() => setDetalhes(null)} />}
       </div>
     </div>
@@ -905,7 +968,9 @@ function Kpi({ label, valor, destaque }: { label: string; valor: string; destaqu
 
 type Fase = 'form' | 'live' | 'conectando' | 'ok' | 'erro'
 
-function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function ConectarModal({ capacidades, onClose, onSaved }: {
+  capacidades: { cofre: boolean; hosted: boolean }; onClose: () => void; onSaved: () => void
+}) {
   const [conectorId, setConectorId] = useState('comprasgov')
   const [cnpj, setCnpj] = useState('')
   const [login, setLogin] = useState('')
@@ -1119,6 +1184,16 @@ function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                   o andamento público já avisa convocação, habilitação, recurso, prazo e homologação.
                 </p>
               </>
+            ) : conectorDisponivel(conectorId) && !capacidades.cofre ? (
+              /* Sem RADAR_CRED_KEY no ambiente, POST /api/radar/credenciais devolve 503:
+                 o formulário só levaria a um erro. Diz a verdade em vez de pedir dados. */
+              <div className="bg-amber/10 border border-amber/30 rounded-lg px-3 py-2.5 text-[12px] text-amber leading-snug">
+                A conexão por <strong>login do gov.br</strong> está desligada neste ambiente: o cofre que guarda a
+                sessão cifrada (<span className="font-mono-custom">RADAR_CRED_KEY</span>) não está configurado, e sem
+                ele não temos onde guardar a sua sessão com segurança. O{' '}
+                <strong>Portal de Compras Públicas</strong> monitora <strong>sem login</strong> e já funciona —
+                selecione ele acima.
+              </div>
             ) : conectorDisponivel(conectorId) ? (
               <>
                 <p className="text-[12px] text-muted mb-4">
@@ -1147,7 +1222,7 @@ function ConectarModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                   {salvando && <Loader2 size={13} className="animate-spin" />} Monitorar sem login
                 </button>
               ) : (
-                <button onClick={conectar} disabled={!conectorDisponivel(conectorId) || salvando || !cnpj || !login} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
+                <button onClick={conectar} disabled={!conectorDisponivel(conectorId) || !capacidades.cofre || salvando || !cnpj || !login} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
                   {salvando && <Loader2 size={13} className="animate-spin" />} Continuar para o gov.br
                 </button>
               )}
