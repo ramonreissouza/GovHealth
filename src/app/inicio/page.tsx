@@ -172,9 +172,13 @@ export default async function InicioPage() {
                   <span className="animate-pulse-dot absolute inline-flex h-full w-full rounded-full bg-[#17b8a6]" />
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-teal" />
                 </span>
+                {/* O chip mostrava o mesmo R$ bi que a faixa de provas logo abaixo —
+                    número repetido duas vezes seguidas enfraquece os dois. Aqui
+                    entra a contagem de abertas, que combina com o ponto pulsando e
+                    muda de valor a cada revalidação. */}
                 <div className="leading-tight">
-                  <div className="font-mono-custom font-semibold text-[15px] text-strong tracking-tight">{bilhoes(s.valor)}</div>
-                  <div className="text-[10.5px] text-faint">monitorados agora</div>
+                  <div className="font-mono-custom font-semibold text-[15px] text-strong tracking-tight">{num(s.abertas)}</div>
+                  <div className="text-[10.5px] text-faint">licitações abertas agora</div>
                 </div>
               </div>
             </div>
