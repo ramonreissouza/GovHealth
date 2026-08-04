@@ -290,8 +290,16 @@ export default async function InicioPage() {
           </div>
         </section>
 
-        {/* ── Bloco 5 — Screenshot grande (mapa) ─────────────────────────── */}
+        {/* ── Bloco 5 — Por dentro: três telas reais ─────────────────────── */}
+        {/* Prints tirados da produção, com dado real, não mockup. A conta usada é de
+            apresentação e tem nome de empresa real — scripts/shots/capture.mjs
+            anonimiza a identidade antes de fotografar (ver o comentário lá). */}
         <section className="max-w-[1080px] mx-auto px-6 py-20">
+          <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-3">Por dentro</p>
+          <h2 className="reveal text-center font-heading font-bold text-[28px] mb-10 max-w-[560px] mx-auto leading-tight">
+            As telas que você vai abrir todo dia
+          </h2>
+
           <div className="reveal">
             <Frame>
               <Image src="/shots/mapa.png" alt="Mapa de inteligência: oportunidades de saúde por todo o Brasil"
@@ -305,6 +313,34 @@ export default async function InicioPage() {
             {s.ufs} estados, com {num(s.total)} contratações classificadas em 14 categorias.{' '}
             <span className="text-faint">Atualizado em {s.ult}.</span>
           </p>
+
+          <div className="grid md:grid-cols-2 gap-8 mt-14">
+            <div className="reveal">
+              <Frame>
+                <Image src="/shots/licitacoes.png" alt="Lista de licitações de saúde com score, valor, status e categoria"
+                  width={1440} height={900} className="w-full h-auto" />
+              </Frame>
+              <h3 className="font-heading font-semibold text-[16px] mt-5 mb-1.5">A lista inteira, do seu jeito</h3>
+              <p className="text-[13.5px] text-muted leading-relaxed">
+                As <strong className="text-strong">{num(s.abertas)} abertas</strong> ordenadas por valor ou por
+                score no clique do cabeçalho, separadas nas 14 categorias de saúde — de OPME a odontologia — com
+                filtro por estado, por ano e por aberta/encerrada. Exportável em um clique.
+              </p>
+            </div>
+
+            <div className="reveal" style={{ '--d': '0.08s' } as React.CSSProperties}>
+              <Frame>
+                <Image src="/shots/precos.png" alt="Painel de Preços: preços de referência do Compras.gov por fornecedor, órgão e data"
+                  width={1440} height={900} className="w-full h-auto" />
+              </Frame>
+              <h3 className="font-heading font-semibold text-[16px] mt-5 mb-1.5">Quanto o governo já pagou</h3>
+              <p className="text-[13.5px] text-muted leading-relaxed">
+                Antes de precificar: o preço praticado no mesmo item — fornecedor, órgão, UF, data e código
+                CATMAT — direto do Painel de Preços do Compras.gov. Mínimo, mediana e máximo, para você saber
+                onde seu lance cai.
+              </p>
+            </div>
+          </div>
         </section>
 
         {/* ── Planos ─────────────────────────────────────────────────────── */}
