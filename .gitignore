@@ -36,3 +36,8 @@ scripts/radar/.calibra/
 
 # print do Radar de Chat: mostra CNPJ da conta de apresentacao e conector com falha
 /public/shots/radar-chat.png
+
+# snapshot local do hist:status e log do coletor historico (nao versionar)
+.hist-status.json
+etl-historico.log
+.pncp-municipios.json
