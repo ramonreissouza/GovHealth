@@ -72,6 +72,23 @@ function Checkout() {
     PLANOS.find((p) => p.destaque) ??
     PLANOS[0]
 
+  // ATENÇÃO — estes hooks ficam ANTES de qualquer `return`. Estavam depois do
+  // early-return do plano Empresa, o que quebrava a regra de ordem dos hooks:
+  // renderizar Empresa executava 0 useState e renderizar outro plano executava 7.
+  // Como o plano vem da querystring e a própria tela de Empresa tem links para
+  // `/assinar?plano=…` (navegação de cliente, mesma instância do componente), ir de
+  // Empresa para Essencial mudava a contagem de hooks entre renders — que é
+  // exatamente o "Rendered more hooks than during the previous render" do React.
+  const [f, setF] = useState({ nome: '', email: '', empresa: '', instituicao: '', cpfCnpj: '', telefone: '', endereco: '' })
+  const [metodo, setMetodo] = useState<Metodo>('pix')
+  const [erro, setErro] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const [ok, setOk] = useState(false)
+  const [copiado, setCopiado] = useState(false)
+  // Snapshot dos dados quando parte para o cartão embutido (evita re-montar o
+  // checkout do Stripe a cada tecla no formulário acima).
+  const [cartaoDados, setCartaoDados] = useState<DadosCobranca | null>(null)
+
   // Plano Empresa é "sob consulta": não há checkout self-service — mostramos o
   // caminho de orçamento (Radar de Chat + equipe são exclusivos deste plano).
   if (plano.contato) {
@@ -122,16 +139,6 @@ function Checkout() {
       </div>
     )
   }
-
-  const [f, setF] = useState({ nome: '', email: '', empresa: '', instituicao: '', cpfCnpj: '', telefone: '', endereco: '' })
-  const [metodo, setMetodo] = useState<Metodo>('pix')
-  const [erro, setErro] = useState('')
-  const [enviando, setEnviando] = useState(false)
-  const [ok, setOk] = useState(false)
-  const [copiado, setCopiado] = useState(false)
-  // Snapshot dos dados quando parte para o cartão embutido (evita re-montar o
-  // checkout do Stripe a cada tecla no formulário acima).
-  const [cartaoDados, setCartaoDados] = useState<DadosCobranca | null>(null)
 
   function selecionarMetodo(m: Metodo) { setMetodo(m); setCartaoDados(null); setErro('') }
 

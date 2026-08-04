@@ -273,7 +273,8 @@ export default function RadarPage() {
     fetch('/api/radar/config').then((r) => r.json()).then((j) => { if (j.config) setConfig(j.config) }).catch(() => {})
   }, [])
 
-  const chaves = data?.chaves ?? []
+  // Estável entre renders: `chaves` é dependência do efeito de aviso sonoro/push.
+  const chaves = useMemo(() => data?.chaves ?? [], [data])
 
   const processos = useMemo(() => data ? montarProcessos(data) : [], [data])
 

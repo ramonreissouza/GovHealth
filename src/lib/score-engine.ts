@@ -6,7 +6,6 @@
 import { Convenio, Oportunidade, CategoriaEquipamento, TipoFornecimento } from './types'
 import { stripAccents, normalizeKey } from './text'
 import { diasAteVencimento } from './transferegov'
-import { isSaudeRelated } from './pncp'
 // Type-only: não puxa o runtime (pg) de capacidade-pagamento para o bundle.
 import type { CapacidadePagamento } from './capacidade-pagamento'
 
@@ -285,7 +284,9 @@ function gerarAcao(
 
 function gerarExplicacao(
   input: ScoreInput,
-  scores: { s1: number; s2: number; s3: number; s4: number }
+  // Mantido na assinatura (os chamadores passam posicionalmente) mas a explicação é
+  // montada só a partir do `input` — daí o underscore.
+  _scores: { s1: number; s2: number; s3: number; s4: number }
 ): string[] {
   const ex: string[] = []
 

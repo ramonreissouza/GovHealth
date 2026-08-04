@@ -18,6 +18,31 @@ export function encrypt(keyHex, plain) {
   return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${ct.toString('base64')}`
 }
 
+// Cookies que NÃO provam sessão: analytics, consentimento e balanceador. Medido em
+// 2026-08-04: uma "conexão" foi dada como OK carregando só `_ga` e `_ga_623FPXHZ7K`
+// do serpro.gov.br — nenhum login tinha acontecido. Ver sessaoTemCredencial().
+const COOKIE_IRRELEVANTE = /^(_ga|_gid|_gat|_gcl|_fbp|_hj|__utm|OptanonConsent|OptanonAlertBoxClosed|cookie[-_]?consent|AWSALB|AWSALBCORS|__cf|_pk_)/i
+
+/**
+ * A sessão capturada carrega ALGUMA credencial de verdade?
+ *
+ * O detector `logado` de cada portal olha URL/conteúdo, e isso é frágil em SPA: o
+ * Compras.gov.br é Angular e serve HTTP 200 com um HTML vazio na própria URL da área
+ * logada — o app só decide redirecionar para o gov.br depois de carregar. Resultado:
+ * a URL "parecia" logada e a captura era declarada OK sem sessão nenhuma, deixando o
+ * conector VERDE sem ler nada — exatamente o falso "ok" que o Radar não pode dar.
+ * Este teste é a rede de segurança, e é portal-agnóstico: exige pelo menos um cookie
+ * que não seja de analytics/consentimento, ou qualquer entrada de localStorage
+ * (SPAs guardam o token aí).
+ */
+export function sessaoTemCredencial(storageStateJson) {
+  let s
+  try { s = JSON.parse(storageStateJson) } catch { return false }
+  const cookiesUteis = (s.cookies ?? []).filter((c) => !COOKIE_IRRELEVANTE.test(c.name ?? ''))
+  const temLocal = (s.origins ?? []).some((o) => (o.localStorage ?? []).length > 0)
+  return cookiesUteis.length > 0 || temLocal
+}
+
 /**
  * Captura de sessão PORTAL-AGNÓSTICA: abre a página de login do portal informado e
  * aguarda o login humano; ao detectar `logado`, devolve o storage_state.
@@ -57,6 +82,14 @@ export async function capturarSessaoPortal(conectorId, { waitS = 300, onAbrir } 
     }
     const storageState = JSON.stringify(await context.storageState())
     await browser.close()
+    // Rede de segurança contra falso "ok" (ver sessaoTemCredencial): o detector do
+    // portal pode acertar a URL e ainda assim não haver sessão nenhuma.
+    if (!sessaoTemCredencial(storageState)) {
+      return {
+        status: 'sessao_expirada',
+        detalhe: `A janela do ${meta.nome} não terminou com uma sessão válida (nenhum cookie/token de login) — refaça a conexão e conclua o login`,
+      }
+    }
     return { status: 'ok', detalhe: `sessão capturada via login no ${meta.nome}`, storageState }
   } catch (e) {
     try { if (browser) await browser.close() } catch { /* ignore */ }

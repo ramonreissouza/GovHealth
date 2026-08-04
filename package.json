@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src",
     "type-check": "tsc --noEmit",
     "db:setup": "node scripts/db-setup.mjs",
     "etl": "node scripts/etl-pncp.mjs",
@@ -53,7 +53,9 @@
     "ruido:limpar": "node scripts/limpar-ruido.mjs",
     "catmat:migrate": "node scripts/migrate-catmat.mjs",
     "catmat:ingest": "node scripts/ingest-catmat.mjs",
-    "catmat:casar": "node scripts/casar-pdm.mjs"
+    "catmat:casar": "node scripts/casar-pdm.mjs",
+    "lint:fix": "eslint src --fix",
+    "lint:strict": "eslint src --max-warnings 0"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",
@@ -93,8 +95,8 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.5",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.6",
     "jimp": "^1.6.1",
     "playwright": "^1.61.1",
     "postcss": "^8",

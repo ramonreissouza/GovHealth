@@ -123,7 +123,8 @@ export default function ConcorrentesEstadoPage() {
   useEffect(() => { const t = setTimeout(() => setBuscaQuery(busca.trim()), 350); return () => clearTimeout(t) }, [busca])
 
   const ufsComDados = new Set(data?.ufsComDados ?? [])
-  const dist = data?.distribuicaoItens ?? []
+  // Estável entre renders: `dist` é dependência do useMemo do donut logo abaixo.
+  const dist = useMemo(() => data?.distribuicaoItens ?? [], [data])
   const concorrentes = data?.concorrentes ?? data?.top3 ?? []
   const top3 = concorrentes.slice(0, 3)
   const restantes = concorrentes.slice(3)

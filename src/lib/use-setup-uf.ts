@@ -25,8 +25,12 @@ export function useSetupUFDefault(
   opts: { pular?: boolean; apenasSeUnica?: boolean } = {},
 ): { marcarTocado: () => void } {
   const tocadoRef = useRef(false)
-  const pularRef = useRef(false)
-  pularRef.current = !!opts.pular
+  // Inicializa com o valor do primeiro render (o `run()` do mount precisa dele já
+  // correto) e sincroniza depois DENTRO de um efeito. Escrever `.current` durante o
+  // render, como era antes, é o que a regra react-hooks/refs acusa: em render
+  // interrompido/refeito o valor gravado pode não corresponder ao render aplicado.
+  const pularRef = useRef(!!opts.pular)
+  useEffect(() => { pularRef.current = !!opts.pular }, [opts.pular])
   const apenasSeUnica = !!opts.apenasSeUnica
 
   useEffect(() => {

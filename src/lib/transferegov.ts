@@ -10,11 +10,6 @@ import { normalizeKey } from './text'
 
 const BASE_URL = 'https://api.portaldatransparencia.gov.br/api-de-dados'
 
-// UFs para varrer quando se quer cobertura nacional
-const TODAS_UFS = [
-  'AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA',
-  'PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO',
-]
 
 function buildHeaders() {
   const key = process.env.PORTAL_TRANSPARENCIA_API_KEY

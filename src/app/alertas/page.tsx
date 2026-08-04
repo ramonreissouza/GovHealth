@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import {
   getAlertaConfigs, createAlertaConfig, updateAlertaConfig, deleteAlertaConfig,
-  getNotificacoes, sincronizarNotificacoes, marcarLida, marcarTodasLidas, contarNaoLidas,
+  getNotificacoes, sincronizarNotificacoes, marcarLida, marcarTodasLidas,
   gerarNotificacoesDosMatches,
   type AlertaConfig, type AlertaNotificacao, type AlertaCategoria,
 } from '@/lib/alertas'
@@ -40,13 +40,6 @@ const URGENCIA_CLASS: Record<string, string> = {
   normal: 'bg-bg4 text-faint border border-subtle2',
 }
 
-const TIPO_LABEL: Record<string, string> = {
-  edital:       'Edital',
-  concorrente:  'Concorrente',
-  emenda:       'Emenda',
-  vencimento:   'Vencimento',
-  oportunidade: 'Oportunidade',
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

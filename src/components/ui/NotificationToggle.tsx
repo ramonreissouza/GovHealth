@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { Bell, BellOff, BellRing } from 'lucide-react'
 import { clsx } from 'clsx'
 import {
-  notificationsSupported, notificationPermission, requestNotificationPermission,
+  notificationPermission, requestNotificationPermission,
   getNotifyEnabled, setNotifyEnabled,
 } from '@/lib/notifications'
 

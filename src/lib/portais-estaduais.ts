@@ -14,7 +14,6 @@ import {
   buscarComprasSaude,
   buscarLicitacoesAbertas,
   normalizarLicitacao,
-  isSaudeRelated,
   type PNCPSearchParams,
 } from './pncp'
 import { inferirCategoria } from './score-engine'

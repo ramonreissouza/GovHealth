@@ -91,19 +91,26 @@ export default function ChatInterface() {
 
           try {
             const parsed = JSON.parse(data)
+            // O texto de cada passo é copiado para um const ANTES de entrar no
+            // updater do setMessages. Antes o closure capturava `accumulated`, que
+            // continua sendo mutado no laço — o React (e a regra de imutabilidade do
+            // compilador) trata variável capturada como congelada, e ler um valor que
+            // muda depois é justamente a receita de render com texto errado.
             if (parsed.delta) {
               accumulated += parsed.delta
+              const conteudo = accumulated
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.id === assistantId ? { ...m, content: accumulated } : m
+                  m.id === assistantId ? { ...m, content: conteudo } : m
                 )
               )
             }
             if (parsed.error) {
               accumulated = `Erro: ${parsed.error}`
+              const conteudo = accumulated
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.id === assistantId ? { ...m, content: accumulated } : m
+                  m.id === assistantId ? { ...m, content: conteudo } : m
                 )
               )
             }

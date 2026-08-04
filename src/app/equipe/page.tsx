@@ -6,7 +6,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
-import { clsx } from 'clsx'
 import { Users, Mail, Loader2, Clock, Crown, ShieldCheck, Copy, Check, Trash2, X } from 'lucide-react'
 
 interface Membro { id: string; email: string; nome: string | null; criado_em: string }

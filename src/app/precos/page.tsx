@@ -6,7 +6,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
-  Search, TrendingDown, TrendingUp, BarChart2, Users, Building2,
+  Search, TrendingDown, TrendingUp, BarChart2, Users,
   Tag, ExternalLink, RefreshCw, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'

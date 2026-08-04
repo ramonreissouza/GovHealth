@@ -1,13 +1,13 @@
 'use client'
 // src/app/crm/page.tsx — Pipeline CRM (Kanban)
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { clsx } from 'clsx'
 import {
-  Plus, Trash2, Edit2, X, TrendingUp, DollarSign, CheckCircle2,
+  Plus, Trash2, X, TrendingUp, DollarSign, CheckCircle2,
   Percent, Clock, ChevronRight, GripVertical, ExternalLink, Save, FileSearch,
 } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'

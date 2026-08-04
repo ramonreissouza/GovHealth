@@ -62,6 +62,9 @@ export default function DocumentosPage() {
 }
 
 // Implementação original preservada (inativa). Reativar = tornar esta o export default.
+// O lint reclama que não é usada — é de propósito: o Cofre foi DESATIVADO a pedido e
+// esta função é o caminho de volta. Não apagar.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DocumentosPageOriginal() {
   const [docs, setDocs] = useState<Documento[]>([])
   const [loading, setLoading] = useState(true)

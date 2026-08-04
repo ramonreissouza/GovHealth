@@ -8,7 +8,7 @@ import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import { signOut } from 'next-auth/react'
 import { clsx } from 'clsx'
-import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, ShieldCheck, Copy, CreditCard, MessageCircle } from 'lucide-react'
+import { Users, LayoutDashboard, ScrollText, Map as MapIcon, LogOut, Plus, X, Ban, CheckCircle2, Trash2, Loader2, Copy, CreditCard, MessageCircle } from 'lucide-react'
 import { formatarPreco, planoPorId } from '@/lib/planos'
 
 const AdminMapa = dynamic(() => import('@/components/admin/AdminMapa'), { ssr: false, loading: () => <div className="h-[560px] rounded-xl border border-subtle flex items-center justify-center text-faint text-[13px]">Carregando mapa…</div> })

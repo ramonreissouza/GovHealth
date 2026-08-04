@@ -52,7 +52,6 @@ export async function GET(req: NextRequest) {
   const where = [...whereBase]
   const params = [...baseParams]
   if (categoria) { params.push(categoria); where.push(`(${CAT_SQL}) = $${params.length}`) }
-  const whereSql = `WHERE ${where.join(' AND ')}`
 
   // WHERE do ranking de concorrentes: escopo + busca por nome (não afeta o foco).
   const rankWhere = [...where]

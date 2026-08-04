@@ -17,7 +17,17 @@ export const PORTAIS = {
     // Área autenticada de acompanhamento (destino após o login).
     areaUrl: 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento',
     emLogin: ({ url }) => /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url),
-    logado: ({ url }) => /comprasnet-web\/seguro/.test(url) && !/acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url),
+    // ATENÇÃO: URL NÃO basta aqui. O Compras.gov.br é uma SPA Angular e responde
+    // HTTP 200 com o HTML de bootstrap na própria URL da área logada — só depois de
+    // carregar o app é que ele manda para o gov.br. Checando só a URL, a captura
+    // declarava "conectado" 6 s depois de abrir, sem login (medido em 2026-08-04:
+    // sessão resultante só tinha cookies do Google Analytics). Então exige também
+    // sinal de sessão no conteúdo já renderizado, e o `capture.mjs` ainda confere se
+    // o storage_state tem cookie/token de verdade.
+    logado: ({ url, conteudo }) =>
+      /comprasnet-web\/seguro/.test(url) &&
+      !/acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url) &&
+      /(sair|encerrar\s*sess|meus?\s*dados|minhas?\s*(compras|licita)|cpf|cnpj)/i.test(conteudo || ''),
   },
   pcp: {
     id: 'pcp',

@@ -1,7 +1,7 @@
 'use client'
 // src/app/analise/page.tsx — Maior Atuação (referencia2)
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -90,7 +90,11 @@ export default function AnalisePage() {
 
   useEffect(() => { load() }, [load])
 
-  const all = data?.licitacoes ?? []
+  // `data?.licitacoes ?? []` direto criava um array NOVO a cada render, e `all` é
+  // dependência do efeito que reseta a paginação — ou seja, qualquer re-render (uma
+  // tecla num filtro, por exemplo) jogava a lista de volta para a 1ª página depois
+  // de o usuário ter clicado em "carregar mais".
+  const all = useMemo(() => data?.licitacoes ?? [], [data])
   const anosDisponiveis = [...new Set(all.map((l) => l.ano).filter((a) => a && a !== '—'))].sort()
 
   // Client-side filtering

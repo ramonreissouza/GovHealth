@@ -410,7 +410,6 @@ function OportunidadesInner() {
     }, 220)
     const t2 = setTimeout(() => setHighlightId(null), 2800)
     return () => { clearTimeout(t); clearTimeout(t2) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRealId, loading, focusIndex])
 
   return (
