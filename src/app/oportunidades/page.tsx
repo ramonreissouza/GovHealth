@@ -17,6 +17,7 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 // distoantes p/ itens sem CATMAT — a ref cai em texto e desalinha). Ver PrecoRefItem.
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
 import AcoesLicitacao from './components/AcoesLicitacao'
+import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
 // Dossiê de edital DESATIVADO nas Licitações (a pedido). Reativar: descomentar.
 // import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
@@ -224,6 +225,7 @@ function OportunidadesInner() {
   // uma vez (abertas ~1,4 mil). Reinicia quando os filtros mudam.
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_PADRAO)
+  const { ordem, alternar } = useOrdenacao<'proponente' | 'status' | 'item' | 'valor' | 'ano' | 'score'>()
   // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
   // as linhas carregadas. porTipo alimenta as contagens das abas.
   const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number } | null>(null)
@@ -350,8 +352,21 @@ function OportunidadesInner() {
   const estados = usarTotais ? totais!.estados : new Set(filtered.map((o) => o.uf)).size
   const ticketMedio = totalLic ? valorTotal / totalLic : 0
 
+  // Ordenação do cabeçalho ANTES do corte do lote. Se fosse depois, o clique
+  // reordenaria só as linhas já visíveis: quem ordena por "maior valor" veria o
+  // maior DAQUELE lote, não o da base filtrada — e concluiria, com razão, que a
+  // ordenação está errada.
+  const ordenadas = ordenarPor(filtered, ordem, {
+    proponente: (o) => o.hospital ?? o.municipio,
+    status: (o) => (estaAberta(o) ? 0 : 1),
+    item: (o) => o.descricao,
+    valor: (o) => o.valorEstimado,
+    ano: (o) => o.licitacaoRelacionada?.dataPublicacaoPncp?.substring(0, 4),
+    score: (o) => o.score,
+  })
+
   // Lote visível (reinicia ao mudar filtros/dados).
-  const visible = filtered.slice(0, visibleCount)
+  const visible = ordenadas.slice(0, visibleCount)
 
   // Deep-link (?opp=): posição do lead focado na lista filtrada. Declarado APÓS o efeito
   // que reinicia o lote (para o bump de visibleCount não ser sobrescrito) — garante que
@@ -607,13 +622,13 @@ function OportunidadesInner() {
                 <thead>
                   <tr className="border-b border-subtle bg-bg3/30">
                     <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5 w-7">#</th>
-                    <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Proponente</th>
+                    <ThSort chave="proponente" ordem={ordem} onOrdenar={alternar} className="px-4 py-2.5">Proponente</ThSort>
                     <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Convênio / PNCP</th>
-                    <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Status</th>
-                    <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Item</th>
-                    <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Valor</th>
-                    <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Ano</th>
-                    <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Score</th>
+                    <ThSort chave="status" ordem={ordem} onOrdenar={alternar} className="px-3 py-2.5">Status</ThSort>
+                    <ThSort chave="item" ordem={ordem} onOrdenar={alternar} className="px-4 py-2.5">Item</ThSort>
+                    <ThSort chave="valor" ordem={ordem} onOrdenar={alternar} align="right" className="px-4 py-2.5">Valor</ThSort>
+                    <ThSort chave="ano" ordem={ordem} onOrdenar={alternar} align="center" className="px-3 py-2.5">Ano</ThSort>
+                    <ThSort chave="score" ordem={ordem} onOrdenar={alternar} align="center" className="px-3 py-2.5">Score</ThSort>
                   </tr>
                 </thead>
                 <tbody>

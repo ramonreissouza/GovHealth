@@ -16,6 +16,7 @@ import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
+import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 
@@ -85,6 +86,9 @@ export default function VencedoresPage() {
   const [ano, setAno] = useState('2026')
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
   const [expandida, setExpandida] = useState<string | null>(null) // linha aberta (chave única)
+  // Ordenação é do CLIENTE, sobre a página já carregada — a API devolve por valor
+  // desc e paginada; reordenar no servidor exigiria refetch a cada clique.
+  const { ordem, alternar } = useOrdenacao<'proponente' | 'vencedor' | 'item' | 'uf' | 'qtd' | 'valor'>()
 
   // debounce do campo empresa
   useEffect(() => { const t = setTimeout(() => setEmpresaQuery(empresa), 400); return () => clearTimeout(t) }, [empresa])
@@ -114,7 +118,15 @@ export default function VencedoresPage() {
   useEffect(() => { const t = setTimeout(() => { load() }, 250); return () => clearTimeout(t) }, [load])
 
   const kpis = data?.kpis
-  const vencedores = data?.vencedores ?? []
+  const vencedoresBrutos = data?.vencedores ?? []
+  const vencedores = ordenarPor(vencedoresBrutos, ordem, {
+    proponente: (v) => v.proponente,
+    vencedor: (v) => v.vencedor,
+    item: (v) => v.nome_catmat ?? v.codigo_catmat,
+    uf: (v) => v.uf,
+    qtd: (v) => v.qtd,
+    valor: (v) => v.valor,
+  })
   const catMap = new Map((data?.categorias ?? []).map((c) => [c.categoria, c.n]))
 
   const KPI_CARDS = [
@@ -236,13 +248,13 @@ export default function VencedoresPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-subtle bg-bg3/30">
-                    <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Proponente</th>
+                    <ThSort chave="proponente" ordem={ordem} onOrdenar={alternar} className="px-4 py-2.5">Proponente</ThSort>
                     <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Convênio</th>
-                    <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Vencedor</th>
-                    <th className="text-left text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Item</th>
-                    <th className="text-center text-[9px] font-mono-custom text-faint uppercase tracking-wider px-2 py-2.5 w-10">UF</th>
-                    <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">Qtd</th>
-                    <th className="text-right text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Valor vencedor</th>
+                    <ThSort chave="vencedor" ordem={ordem} onOrdenar={alternar} className="px-4 py-2.5">Vencedor</ThSort>
+                    <ThSort chave="item" ordem={ordem} onOrdenar={alternar} className="px-4 py-2.5">Item</ThSort>
+                    <ThSort chave="uf" ordem={ordem} onOrdenar={alternar} align="center" className="px-2 py-2.5 w-10">UF</ThSort>
+                    <ThSort chave="qtd" ordem={ordem} onOrdenar={alternar} align="right" className="px-3 py-2.5">Qtd</ThSort>
+                    <ThSort chave="valor" ordem={ordem} onOrdenar={alternar} align="right" className="px-4 py-2.5">Valor vencedor</ThSort>
                   </tr>
                 </thead>
                 <tbody>

@@ -2,6 +2,7 @@
 // src/app/contratos/page.tsx — Contratos.gov.br (radar de vencimento + incumbentes + valores)
 
 import React, { useState, useCallback } from 'react'
+import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -31,6 +32,7 @@ export default function ContratosPage() {
   const [contratos, setContratos] = useState<ContratoGov[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [fonte, setFonte] = useState<string>('')
+  const { ordem, alternar } = useOrdenacao<'objeto' | 'vigencia' | 'valor'>()
 
   const buscar = useCallback(async () => {
     const q = valor.trim()
@@ -51,11 +53,19 @@ export default function ContratosPage() {
     }
   }, [valor, modo])
 
-  // Ordena por vencimento mais próximo (vigentes primeiro)
-  const ordenados = [...contratos].sort((a, b) => {
+  // Ordem PADRÃO: vencimento mais próximo primeiro. É a ordem útil desta tela (um
+  // contrato que vence em 60 dias é uma oportunidade; um que vence em 3 anos não),
+  // então ela continua valendo enquanto o usuário não clicar em nenhum cabeçalho —
+  // e volta a valer no terceiro clique, que desliga a ordenação manual.
+  const porVencimento = [...contratos].sort((a, b) => {
     const fa = a.vigenciaFim ? new Date(a.vigenciaFim).getTime() : Infinity
     const fb = b.vigenciaFim ? new Date(b.vigenciaFim).getTime() : Infinity
     return fa - fb
+  })
+  const ordenados = ordenarPor(porVencimento, ordem, {
+    objeto: (c) => c.objeto,
+    vigencia: (c) => (c.vigenciaFim ? new Date(c.vigenciaFim).getTime() : null),
+    valor: (c) => c.valorGlobal,
   })
 
   return (
@@ -172,10 +182,10 @@ export default function ContratosPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-subtle bg-bg3/40 text-left">
-                        <th className="text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5">Objeto / Nº</th>
+                        <ThSort chave="objeto" ordem={ordem} onOrdenar={alternar} className="px-4 py-2.5">Objeto / Nº</ThSort>
                         <th className="text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5">{modo === 'cnpj' ? 'Órgão (cliente)' : 'Fornecedor (incumbente)'}</th>
-                        <th className="text-[9px] font-mono-custom text-faint uppercase tracking-wider px-3 py-2.5 text-center">Vigência</th>
-                        <th className="text-[9px] font-mono-custom text-faint uppercase tracking-wider px-4 py-2.5 text-right">Valor global</th>
+                        <ThSort chave="vigencia" ordem={ordem} onOrdenar={alternar} align="center" className="px-3 py-2.5">Vigência</ThSort>
+                        <ThSort chave="valor" ordem={ordem} onOrdenar={alternar} align="right" className="px-4 py-2.5">Valor global</ThSort>
                       </tr>
                     </thead>
                     <tbody>
