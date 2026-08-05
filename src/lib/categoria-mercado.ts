@@ -51,18 +51,65 @@ export function categoriasMercadoDoSetup(clinicas: string[]): CategoriaKey[] {
   return [...set]
 }
 
-// Expressão SQL (Postgres) que classifica a coluna `col` numa CategoriaKey.
-// Ordem importa (primeiro match vence). `~*` é regex case-insensitive.
+// Regras de classificação, na ordem em que são testadas (primeiro match vence).
+// Cada entrada é [categoria, alternativas de regex].
+const REGRAS: Array<[CategoriaKey, string]> = [
+  // APARELHOS INCONFUNDÍVEIS — vêm antes de tudo porque nenhum deles é serviço,
+  // OPME ou medicamento, e a ficha técnica deles cita justamente esses termos. Sem
+  // esta faixa, "CENTRAL, de monitorização" virava serviço (a spec fala em "serviços
+  // de"), "SISTEMA, de cápsula endoscópica" virava medicamento (por "cápsula") e o
+  // monitor virava OPME (por "marca-passo" na especificação do ECG).
+  ['equip_medico', 'central de monitor(iza|a)|sistema de monitora|m[óo]dulo de (capnografia|d[ée]bito card)|endosc[óo]p|colonosc[óo]p|broncosc[óo]p|videolaparosc|tom[óo]graf|resson[âa]nc magn|mam[óo]graf|ventilador pulmonar|desfibrilador|cardioversor|autoclave|incubadora|monitor multiparam'],
+  // `diálise` e `esterilização` eram palavras soltas aqui e engoliam PRODUTO:
+  // "KIT, cateter, para hemodiálise" virava serviço, e uma malha de curativo também
+  // — a ficha dela diz "registro, validade e esterilização", que é ATRIBUTO do
+  // produto, não o serviço de esterilizar instrumental. Ambas passam a exigir
+  // contexto de serviço.
+  ['servico_saude', 'presta[çc][ãa]o de servi|servi[çc]os? de|loca[çc][ãa]o|manuten[çc][ãa]o|m[ãa]o de obra|plant[ãa]o|gerenciamento|amb[uû]l[âa]nci|servi[çc]o.{0,20}(di[áa]lise|esteriliza)|esteriliza[çc][ãa]o de (material|instrumental|artigo)|sess[õo]es de (hemo)?di[áa]lise|tratamento (hemo)?dial[íi]tic'],
+  ['odontologico', 'odontol[óo]g|broca (de )?(alta|baixa) rota|resina composta|cimento odontol|lima (uso )?odontol|am[áa]lgama|guta.?percha|endod[ôo]ntic|ion[ôo]mero|brackets?'],
+  ['opme', 'pr[óo]tese|[óo]rtese|implant|stent|marca[ -]?passo|lente intraocular|enxerto [óo]sse|cimento [óo]sse|fixador extern|placa (de tit[âa]nio|ortop)|parafuso (pedicular|ortop|cir[úu]rg)|haste (femoral|umeral|intramedular)|prego intramedular|pequenos e grandes fragmentos|opme'],
+  ['medicamento', 'medicament|f[áa]rmac|comprimido|ampola|injet[áa]vel|c[áa]psula|dr[áa]gea|xarope|vacina|soro fisiol|antibi[óo]tic|insulina|medicinal|cloridrato|cloreto de s[óo]dio|digluconato|s[óo]dic|glicose|lidoca[íi]na|amoxicilina|dexametasona|dipirona|clorexidina|escopolamina|bromet|dieta enteral|nutri[çc][ãa]o enteral|solu[çc][ãa]o (fisiol|glicos|de ringer)'],
+  ['laboratorio', 'reagente|kit (diagn|para teste|de teste)|teste r[áa]pido|anal[íi]ses cl[íi]nic|analisador|l[âa]mina (para|de) micros|tubo (de coleta|a v[áa]cuo|para coleta)|amostra biol[óo]gic|sorolog|hemogr|gasometr|bioqu[íi]mic|antibiograma|meio de cultura|corante|anticorpo'],
+  // `ventilador` sem qualificador: o nome do produto vem como "VENTILADOR PULMONAR",
+  // mas também como "Ventilador Artificial Eletrônico" e "VENTILADOR DE TRANSPORTE".
+  // Só é seguro porque o 1º passo é ANCORADO — "circuito para ventilador" não casa.
+  ['equip_medico', 'equipamento|aparelho|monitor (multi|card|de sinais|de paciente)|ventilador|respirador|desfibrilador|autoclave|foco cir[úu]rg|mesa cir[úu]rg|cama hospitalar|bisturi el[ée]tr|tom[óo]graf|resson[âa]nc|ultrassom|raio-?x|eletrocardi[óo]graf|ox[íi]metr|bomba de infus|cadeira de rodas|nebuliz|microsc[óo]pio|centr[íi]fuga|incubadora|ber[çc]o aquec|carro de emerg[êe]nc|aspirador (cir[úu]rg|hospitalar)|laring[óo]sc[óo]pio|capn[óo]graf|eletroencefal|dermat[óo]sc[óo]pio|otosc[óo]pio|esfigmoman[ôo]metr'],
+  ['acessorio', 'seringa|agulha|cateter|sonda|gaze|atadura|luva|m[áa]scara|compressa|equipo|scalp|esparadr|algod[ãa]o|curativo|fralda|[áa]lcool|descart[áa]v|material penso|abaixador|lanceta|coletor|c[âa]nula|tubo endotraqueal|dreno|l[âa]mina (de )?bisturi|fita (hospitalar|cir[úu]rg)|traqueostomia|sutura|fio (cir[úu]rg|de sutura)|pin[çc]a'],
+]
+
+/**
+ * Expressão SQL (Postgres) que classifica a coluna `col` numa CategoriaKey.
+ *
+ * DOIS PASSOS, e a razão é um erro real: a descrição do CATMAT é "NOME DO PRODUTO,
+ * <especificação técnica longa>", e a especificação cita materiais de outras
+ * categorias. A ficha de um monitor multiparâmetro diz "detecção de MARCA-PASSO" no
+ * item de ECG, e a de um ventilador pulmonar cita "AR COMPRIMIDO" e "oxigênio
+ * MEDICINAL". Varrendo o texto inteiro numa passada só, e com OPME/medicamento
+ * testados antes de equipamento, o monitor era vendido como OPME e o ventilador como
+ * medicamento — uma menção acessória ganhava do produto de verdade.
+ *
+ * Passo 1: aplica as regras ANCORADAS ao NOME do produto (o trecho antes da primeira
+ * vírgula/dois-pontos/ponto). É o que o comprador escreveu como identidade do item, e
+ * a âncora impede que "CIRCUITO PARA VENTILADOR" vire equipamento.
+ * Passo 2: só quando o nome não decide, cai para as mesmas regras no texto inteiro
+ * (comportamento antigo) — descrições que não seguem o padrão continuam classificadas.
+ */
 export function categoriaCaseSql(col: string): string {
   const c = `coalesce(${col}, '')`
+  // Antes de recortar o nome, tira o que vem ANTES dele: rótulo ("Descrição:",
+  // "Objeto:") e código CATMAT ("(2808552) - ", "0702050032 "). Sem isso o recorte
+  // parava no primeiro `:` e o nome do produto virava a palavra "Descrição" — foi o
+  // que jogou "Descrição: CENTRAL, de monitorização" para o passo do texto inteiro.
+  const semRotulo = `regexp_replace(${c}, '^\\s*((descri[çc][ãa]o|objeto|item|produto)\\s*:\\s*|\\(?[0-9]{6,}\\)?\\s*[-–]?\\s*)+', '', 'i')`
+  // O nome do produto: até o primeiro separador, limitado para não engolir a spec de
+  // descrições sem pontuação.
+  const nome = `substring(${semRotulo} from '^[^,:;.]{0,80}')`
+  const passo = (alvo: string, ancora: boolean) => REGRAS
+    .map(([k, re]) => `WHEN ${alvo} ~* '${ancora ? '^ *(' : '('}${re})' THEN '${k}'`)
+    .join('\n    ')
   return `CASE
-    WHEN ${c} ~* '(presta[çc][ãa]o de servi|servi[çc]os? de|loca[çc][ãa]o|manuten[çc][ãa]o|m[ãa]o de obra|plant[ãa]o|gerenciamento|esteriliza[çc][ãa]o|amb[uû]l[âa]nci|hemodi[áa]lise|di[áa]lise)' THEN 'servico_saude'
-    WHEN ${c} ~* '(odontol[óo]g|broca (de )?(alta|baixa) rota|resina composta|cimento odontol|lima (uso )?odontol|am[áa]lgama|guta.?percha|endod[ôo]ntic|ion[ôo]mero|brackets?)' THEN 'odontologico'
-    WHEN ${c} ~* '(pr[óo]tese|[óo]rtese|implant|stent|marca[ -]?passo|lente intraocular|enxerto [óo]sse|cimento [óo]sse|fixador extern|placa (de tit[âa]nio|ortop)|parafuso (pedicular|ortop|cir[úu]rg)|haste (femoral|umeral|intramedular)|prego intramedular|pequenos e grandes fragmentos|opme)' THEN 'opme'
-    WHEN ${c} ~* '(medicament|f[áa]rmac|comprimido|ampola|injet[áa]vel|c[áa]psula|dr[áa]gea|xarope|vacina|soro fisiol|antibi[óo]tic|insulina|medicinal|cloridrato|cloreto de s[óo]dio|digluconato|s[óo]dic|glicose|lidoca[íi]na|amoxicilina|dexametasona|dipirona|clorexidina|escopolamina|bromet|dieta enteral|nutri[çc][ãa]o enteral|solu[çc][ãa]o (fisiol|glicos|de ringer))' THEN 'medicamento'
-    WHEN ${c} ~* '(reagente|kit (diagn|para teste|de teste)|teste r[áa]pido|anal[íi]ses cl[íi]nic|analisador|l[âa]mina (para|de) micros|tubo (de coleta|a v[áa]cuo|para coleta)|amostra biol[óo]gic|sorolog|hemogr|gasometr|bioqu[íi]mic|antibiograma|meio de cultura|corante|anticorpo)' THEN 'laboratorio'
-    WHEN ${c} ~* '(equipamento|aparelho|monitor (multi|card|de sinais|de paciente)|ventilador pulmonar|respirador|desfibrilador|autoclave|foco cir[úu]rg|mesa cir[úu]rg|cama hospitalar|bisturi el[ée]tr|tom[óo]graf|resson[âa]nc|ultrassom|raio-?x|eletrocardi[óo]graf|ox[íi]metr|bomba de infus|cadeira de rodas|nebuliz|microsc[óo]pio|centr[íi]fuga|incubadora|ber[çc]o aquec)' THEN 'equip_medico'
-    WHEN ${c} ~* '(seringa|agulha|cateter|sonda|gaze|atadura|luva|m[áa]scara|compressa|equipo|scalp|esparadr|algod[ãa]o|curativo|fralda|[áa]lcool|descart[áa]v|material penso|abaixador|lanceta|coletor|c[âa]nula|tubo endotraqueal|dreno|l[âa]mina (de )?bisturi|fita (hospitalar|cir[úu]rg)|traqueostomia|sutura|fio (cir[úu]rg|de sutura)|pin[çc]a)' THEN 'acessorio'
+    ${passo(nome, true)}
+    ${passo(c, false)}
     ELSE 'outros'
   END`
 }
