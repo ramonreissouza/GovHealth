@@ -34,6 +34,7 @@ import { nomePortal } from '@/lib/portais'
 import { CONFIG_PADRAO, type ConfigRadar } from '@/lib/radar/config'
 import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
+import { Paginacao } from '@/components/ui/Paginacao'
 
 const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'cnpj']
 
@@ -425,8 +426,10 @@ export default function RadarPage() {
   // continua olhando a página 4 de uma lista que encurtou.
   useEffect(() => { setPagina(1) }, [filtro, portalFiltro, categoria, busca])
 
-  const visiveis = useMemo(() => filtrados.slice(0, pagina * POR_PAGINA), [filtrados, pagina])
-  const restantes = filtrados.length - visiveis.length
+  const visiveis = useMemo(
+    () => filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA),
+    [filtrados, pagina],
+  )
 
   const selecionado = filtrados.find((p) => p.id === selId) ?? null
 
@@ -655,19 +658,19 @@ export default function RadarPage() {
                     )
                   })}
 
-                  {restantes > 0 && (
-                    <button onClick={() => setPagina((p) => p + 1)}
-                      className="w-full text-[11.5px] text-accent hover:bg-bg3 py-3 transition-colors">
-                      Mostrar mais {Math.min(POR_PAGINA, restantes)} ({restantes} restantes)
-                    </button>
-                  )}
                 </div>
 
-                {/* Rodapé de contagem: com paginação, o usuário precisa saber que a
-                    lista não acabou — e quanto do total ele está vendo. */}
-                <div className="px-3 py-2 border-t border-subtle text-[10px] font-mono-custom text-faint flex-shrink-0">
-                  {visiveis.length} de {filtrados.length}
-                  {filtrados.length !== contagem.todos && ` (${contagem.todos} monitorados)`}
+                {/* Rodapé: paginação numerada + quanto do total monitorado está no filtro */}
+                <div className="border-t border-subtle flex-shrink-0">
+                  <Paginacao
+                    pagina={pagina} totalItens={filtrados.length} porPagina={POR_PAGINA}
+                    onPagina={setPagina} rotuloItens="pregões"
+                  />
+                  {filtrados.length !== contagem.todos && (
+                    <div className="px-3 pb-2 text-[10px] font-mono-custom text-faint">
+                      {contagem.todos} monitorados no total
+                    </div>
+                  )}
                 </div>
               </div>
 

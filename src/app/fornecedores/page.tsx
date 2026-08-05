@@ -14,6 +14,7 @@ import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
+import { Paginacao } from '@/components/ui/Paginacao'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
 import { useSetupFiltro } from '@/lib/use-setup-filtro'
@@ -90,6 +91,7 @@ export default function FornecedoresPage() {
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // fornecedores por página (50 padrão)
+  const [pagina, setPagina] = useState(1)
   const [expItens, setExpItens] = useState(false) // baixando breakdown de itens
 
   const [selecionado, setSelecionado] = useState<Ranking | null>(null)
@@ -97,12 +99,15 @@ export default function FornecedoresPage() {
   const [detLoading, setDetLoading] = useState(false)
 
   const filtrosParams = useCallback(() => {
-    const params = new URLSearchParams({ limit: String(pageSize) })
+    const params = new URLSearchParams({ limit: String(pageSize), offset: String((pagina - 1) * pageSize) })
     if (ufsAtivos.size > 0) params.set('uf', [...ufsAtivos].join(','))
     if (ano !== 'todos') params.set('ano', ano)
     if (catsAtivas.size > 0) params.set('categoria', [...catsAtivas].join(','))
     return params
-  }, [ufsAtivos, ano, catsAtivas, pageSize])
+  }, [ufsAtivos, ano, catsAtivas, pageSize, pagina])
+
+  // Filtro novo, página 1: manter a 7 numa lista que encolheu mostraria vazio.
+  useEffect(() => { setPagina(1) }, [ufsAtivos, ano, catsAtivas, pageSize, buscaQuery])
 
   const toggleCat = (key: string) => { marcarCatTocado(); setCatsAtivas((p) => { const s = new Set(p); s.has(key) ? s.delete(key) : s.add(key); return s }) }
 
@@ -111,7 +116,7 @@ export default function FornecedoresPage() {
     setExpItens(true)
     try {
       const params = filtrosParams()
-      params.delete('limit')
+      params.delete('limit'); params.delete('offset') // o export leva tudo, não a página
       params.set('formato', 'itens')
       if (buscaQuery) params.set('q', buscaQuery)
       const res = await fetch(`/api/resultados/fornecedores?${params}`)
@@ -309,17 +314,20 @@ export default function FornecedoresPage() {
                     {ranking.map((r, i) => {
                       const ativo = selecionado?.chave === r.chave && !!r.chave
                       const pct = maxValor > 0 ? (r.valor / maxValor) * 100 : 0
+                      const posicao = (pagina - 1) * pageSize + i + 1
                       return (
                         <button key={`${r.chave ?? r.fornecedor}-${i}`}
                           onClick={() => setSelecionado(ativo ? null : r)}
                           className={clsx('w-full text-left px-4 py-2.5 transition-colors relative', ativo ? 'bg-bg3' : 'hover:bg-bg3')}>
                           <span className="absolute left-0 top-0 bottom-0 bg-accent/5" style={{ width: `${pct}%` }} />
                           <div className="relative flex items-center gap-3">
+                            {/* Posição GLOBAL no ranking: com paginação, `i + 1` faria a
+                                página 2 recomeçar do 1º lugar. */}
                             <span className={clsx('w-6 text-center text-[11px] font-mono-custom font-bold flex-shrink-0',
-                              i === 0 ? 'text-amber' : i < 3 ? 'text-strong' : 'text-faint')}>{i + 1}</span>
+                              posicao === 1 ? 'text-amber' : posicao <= 3 ? 'text-strong' : 'text-faint')}>{posicao}</span>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-1.5 text-[12px] text-strong truncate">
-                                {i === 0 && <Trophy size={11} className="text-amber flex-shrink-0" />}
+                                {posicao === 1 && <Trophy size={11} className="text-amber flex-shrink-0" />}
                                 {r.fornecedor ?? '—'}
                               </div>
                               <div className="text-[9px] font-mono-custom text-faint mt-0.5">
@@ -332,6 +340,13 @@ export default function FornecedoresPage() {
                       )
                     })}
                   </div>
+                )}
+                {!loading && !erro && (
+                  <Paginacao
+                    pagina={pagina} totalItens={kpis?.fornecedores ?? 0} porPagina={pageSize}
+                    onPagina={setPagina} rotuloItens="fornecedores"
+                    className="border-t border-subtle"
+                  />
                 )}
               </div>
 

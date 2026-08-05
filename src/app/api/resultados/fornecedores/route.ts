@@ -61,9 +61,13 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get('q')?.trim() || undefined // busca por nome (ILIKE) no ranking
   const formato = searchParams.get('formato')?.trim().toLowerCase() || undefined // 'itens' = breakdown p/ export
   const limit = Math.min(Number(searchParams.get('limit') ?? 50), 500)
+  // Paginação de verdade: o ranking passou a ter páginas, e o total para montar a
+  // régua já existia — é o n_fornecedores do bloco de KPIs, calculado sobre o mesmo
+  // filtro. Sem OFFSET a tela só sabia mostrar o topo da lista.
+  const offset = Math.max(0, Number(searchParams.get('offset') ?? 0))
 
   // Cache por assinatura de parâmetros (repetir o mesmo filtro fica instantâneo).
-  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categorias.join('+')}:${tipo ?? ''}:${fornecedor ?? ''}:${chave ?? ''}:${q ?? ''}:${formato ?? ''}:${limit}`
+  const cacheKey = `forn:${ufParam ?? ''}:${ano ?? ''}:${categorias.join('+')}:${tipo ?? ''}:${fornecedor ?? ''}:${chave ?? ''}:${q ?? ''}:${formato ?? ''}:${limit}:${offset}`
   const cachedResp = getCached<object>(cacheKey)
   if (cachedResp) return NextResponse.json(cachedResp)
 
@@ -130,8 +134,8 @@ export async function GET(req: NextRequest) {
          FROM resultados r ${rankWhereSql}
          GROUP BY ${FKEY}
          ORDER BY valor DESC NULLS LAST
-         LIMIT $${rankParams.length + 1}`,
-        [...rankParams, limit],
+         LIMIT $${rankParams.length + 1} OFFSET $${rankParams.length + 2}`,
+        [...rankParams, limit, offset],
       ),
       query<KpiRow>(
         `SELECT COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor_total,

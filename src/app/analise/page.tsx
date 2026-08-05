@@ -11,6 +11,7 @@ import type { ItemPNCP } from '@/lib/pncp'
 import { PrecosReferencia } from '@/components/ui/PrecosReferencia'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
+import { Paginacao } from '@/components/ui/Paginacao'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { CATEGORIA_LABEL as CAT_LABEL, CATEGORIA_COLOR as CAT_COLOR, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
@@ -85,7 +86,7 @@ export default function AnalisePage() {
 
   // Paginação — 50 por página (padrão), com seletor p/ mostrar mais (igual Licitações).
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO)
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_PADRAO)
+  const [pagina, setPagina] = useState(1)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -120,8 +121,10 @@ export default function AnalisePage() {
   const valorTotal = filtered.reduce((s, l) => s + l.valor, 0)
 
   // Ao trocar filtros/dados, volta a mostrar só a 1ª página.
-  useEffect(() => { setVisibleCount(pageSize) }, [pageSize, all, anosAtivos, tiposAtivos, categoriasAtivas, ufsAtivos, situacao, queryProponente])
-  const visible = filtered.slice(0, visibleCount)
+  // Trocar filtro ou tamanho de página joga de volta para a 1: manter a página 7 de
+  // uma lista que agora tem 3 mostraria vazio sem explicar por quê.
+  useEffect(() => { setPagina(1) }, [pageSize, all, anosAtivos, tiposAtivos, categoriasAtivas, ufsAtivos, situacao, queryProponente])
+  const visible = filtered.slice((pagina - 1) * pageSize, pagina * pageSize)
 
   // Active filter chips
   const chips = [
@@ -314,7 +317,7 @@ export default function AnalisePage() {
                 />
                 <PageSizeSelector value={pageSize} onChange={setPageSize} className="bg-bg2 border border-subtle2 rounded-lg px-2 py-1.5" />
                 <span className="ml-auto text-[11px] font-mono-custom text-faint">
-                  {loading ? '' : `Mostrando ${Math.min(visible.length, filtered.length)} de ${filtered.length}`}
+                  {loading ? '' : `${filtered.length.toLocaleString('pt-BR')} no filtro · página ${pagina} de ${Math.max(1, Math.ceil(filtered.length / pageSize))}`}
                 </span>
               </div>
 
@@ -443,18 +446,12 @@ export default function AnalisePage() {
                 )}
               </div>
 
-              {/* Mostrar mais */}
-              {!loading && filtered.length > visible.length && (
-                <div className="flex items-center justify-center gap-3 mt-1">
-                  <span className="text-[11px] font-mono-custom text-faint">
-                    Mostrando {visible.length} de {filtered.length}
-                  </span>
-                  <button
-                    onClick={() => setVisibleCount((n) => n + pageSize)}
-                    className="text-[12px] font-mono-custom px-4 py-2 rounded-lg bg-bg2 border border-subtle2 text-strong hover:border-accent hover:text-accent transition-all">
-                    Mostrar mais {pageSize}
-                  </button>
-                </div>
+              {!loading && (
+                <Paginacao
+                  pagina={pagina} totalItens={filtered.length} porPagina={pageSize}
+                  onPagina={setPagina} rotuloItens="licitações"
+                  className="mt-1 bg-bg2 border border-subtle2 rounded-lg"
+                />
               )}
             </div>
           </div>

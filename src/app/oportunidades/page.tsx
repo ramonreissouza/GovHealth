@@ -11,6 +11,7 @@ import { clsx } from 'clsx'
 import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target, MapPin, X } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
+import { Paginacao } from '@/components/ui/Paginacao'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 // Preço de referência Compras.gov RELIGADO no breakdown por item, agora só onde há
@@ -250,7 +251,7 @@ function OportunidadesInner() {
   // Renderização em lotes ("mostrar mais") — evita pintar milhares de linhas de
   // uma vez (abertas ~1,4 mil). Reinicia quando os filtros mudam.
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_PADRAO)
+  const [pagina, setPagina] = useState(1)
   const { ordem, alternar } = useOrdenacao<'proponente' | 'status' | 'item' | 'valor' | 'ano' | 'score'>()
   // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
   // as linhas carregadas. porTipo alimenta as contagens das abas.
@@ -261,9 +262,9 @@ function OportunidadesInner() {
   useEffect(() => { setProdutos(getProdutos()) }, [])
   const temPortfolio = produtos.some((p) => p.ativo)
 
-  // Deep-link vindo do dashboard (?opp=<id>): a licitação clicada é expandida, paginada
-  // para o lote visível, rolada até o centro e destacada. (O efeito que faz isso fica
-  // mais abaixo, depois de `filtered`/`visibleCount`, para paginar corretamente.)
+  // Deep-link vindo do dashboard (?opp=<id>): a licitação clicada é expandida, a lista
+  // salta para a PÁGINA em que ela está, rola até o centro e destaca. (O efeito que faz
+  // isso fica mais abaixo, depois de `filtered`/`ordenadas`, para achar a página certa.)
   const focusId = searchParams.get('opp')
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
@@ -342,7 +343,9 @@ function OportunidadesInner() {
   useEffect(() => { setTipo(searchParams.get('tipo') ?? 'todos') }, [searchParams])
 
   // Reinicia o lote visível sempre que os filtros/dados mudam.
-  useEffect(() => { setVisibleCount(pageSize) }, [pageSize, opps, tipo, statusFiltro, anoFiltro, categoria, query, queryProponente, queryConvenio, minScore, soPortfolio, ufsAtivos])
+  // Trocar filtro ou tamanho de página volta para a 1: continuar na página 7 de uma
+  // lista que encolheu para 3 mostraria vazio sem dizer por quê.
+  useEffect(() => { setPagina(1) }, [pageSize, opps, tipo, statusFiltro, anoFiltro, categoria, query, queryProponente, queryConvenio, minScore, soPortfolio, ufsAtivos])
 
   // Client-side filtering
   const filtered = opps.filter((o) => {
@@ -392,25 +395,27 @@ function OportunidadesInner() {
   })
 
   // Lote visível (reinicia ao mudar filtros/dados).
-  const visible = ordenadas.slice(0, visibleCount)
+  const visible = ordenadas.slice((pagina - 1) * pageSize, pagina * pageSize)
 
-  // Deep-link (?opp=): posição do lead focado na lista filtrada. Declarado APÓS o efeito
-  // que reinicia o lote (para o bump de visibleCount não ser sobrescrito) — garante que
-  // a linha exista no DOM antes de rolar até ela.
+  // Deep-link (?opp=): posição do lead focado. Declarado APÓS o efeito que reinicia a
+  // paginação (para o salto de página não ser sobrescrito) — garante que a linha exista
+  // no DOM antes de rolar até ela. O índice é medido em `ordenadas`, que é a lista
+  // realmente exibida: medir em `filtered` levava à página errada sempre que a
+  // ordenação diferia da ordem do filtro.
   // Aceita tanto o id da oportunidade (`pncp-<nºcontrole>`) quanto o nº de controle
   // PNCP "cru" — Portais Estaduais e outros linkadores mandam o controle sem prefixo.
   const focusOpp = focusId
-    ? filtered.find((o) =>
+    ? ordenadas.find((o) =>
         o.id === focusId ||
         o.id === `pncp-${focusId}` ||
         o.licitacaoRelacionada?.numeroControlePNCP === focusId,
       )
     : undefined
   const focusRealId = focusOpp?.id ?? null
-  const focusIndex = focusOpp ? filtered.indexOf(focusOpp) : -1
+  const focusIndex = focusOpp ? ordenadas.indexOf(focusOpp) : -1
   useEffect(() => {
     if (!focusRealId || loading || focusIndex < 0) return
-    setVisibleCount((n) => (focusIndex >= n ? focusIndex + 1 : n)) // renderiza a linha do lead
+    setPagina(Math.floor(focusIndex / pageSize) + 1) // vai para a página onde o lead está
     setExpanded((p) => new Set(p).add(focusRealId))
     setHighlightId(focusRealId)
     const t = setTimeout(() => {
@@ -418,7 +423,7 @@ function OportunidadesInner() {
     }, 220)
     const t2 = setTimeout(() => setHighlightId(null), 2800)
     return () => { clearTimeout(t); clearTimeout(t2) }
-  }, [focusRealId, loading, focusIndex])
+  }, [focusRealId, loading, focusIndex, pageSize])
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -980,19 +985,12 @@ function OportunidadesInner() {
             </div>
           )}
 
-          {/* Mostrar mais — renderização em lotes p/ não pesar com milhares de linhas */}
-          {!loading && filtered.length > visible.length && (
-            <div className="flex items-center justify-center gap-3 mt-4">
-              <span className="text-[11px] font-mono-custom text-faint">
-                Mostrando {visible.length} de {filtered.length}
-              </span>
-              <button
-                onClick={() => setVisibleCount((n) => n + pageSize)}
-                className="text-[12px] font-mono-custom px-4 py-2 rounded-lg bg-bg2 border border-subtle2 text-strong hover:border-accent hover:text-accent transition-all"
-              >
-                Mostrar mais {pageSize}
-              </button>
-            </div>
+          {!loading && (
+            <Paginacao
+              pagina={pagina} totalItens={filtered.length} porPagina={pageSize}
+              onPagina={setPagina} rotuloItens="licitações"
+              className="mt-4 bg-bg2 border border-subtle2 rounded-lg"
+            />
           )}
         </main>
       </div>

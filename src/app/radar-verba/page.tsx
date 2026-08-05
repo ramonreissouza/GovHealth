@@ -12,6 +12,8 @@ import { Loader2, AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Bu
 import { formatBRL } from '@/lib/format'
 import { createDeal, dealExists } from '@/lib/crm'
 import { parseValorBR, type EmendaDetalhe } from '@/lib/emendas'
+import { Paginacao } from '@/components/ui/Paginacao'
+import { PAGE_SIZE_PADRAO as POR_PAGINA } from '@/components/ui/PageSizeSelector'
 import type { EmendaRadar, Temperatura } from '@/lib/radar-verba'
 import { getTerritorio } from '@/lib/territorio'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
@@ -63,6 +65,10 @@ function RadarVerbaConteudo() {
   const [detalhe, setDetalhe] = useState<EmendaDetalhe | null>(null)
   const [detalheLoading, setDetalheLoading] = useState(false)
   const [highlightId, setHighlightId] = useState<string | null>(null)
+  // A rota devolve TODAS as emendas do filtro (vinham do cache, sem recorte), e a
+  // tabela imprimia as centenas de uma vez. A paginação aqui e client-side por isso:
+  // os dados ja estao na mao, so faltava a regua.
+  const [pagina, setPagina] = useState(1)
   const focadoRef = useRef(false)
 
   function abrirDetalhe(e: EmendaRadar) {
@@ -93,14 +99,18 @@ function RadarVerbaConteudo() {
   }, [uf, ano, subfuncao, soQuentes, usandoTerritorio, terr])
 
   useEffect(() => { carregar() }, [carregar])
+  // Filtro novo, pagina 1.
+  useEffect(() => { setPagina(1) }, [uf, ano, subfuncao, soQuentes, usandoTerritorio])
 
   // Deep-link ?emenda=<codigo>: quando os dados chegam, abre o detalhe e destaca/rola
   // até a emenda que o usuário clicou nos Alertas. Roda uma única vez (focadoRef).
   useEffect(() => {
     if (!focoEmenda || focadoRef.current || !data?.emendas?.length) return
-    const alvo = data.emendas.find((e) => e.codigoEmenda === focoEmenda)
-    if (!alvo) return
+    const idx = data.emendas.findIndex((e) => e.codigoEmenda === focoEmenda)
+    if (idx < 0) return
+    const alvo = data.emendas[idx]
     focadoRef.current = true
+    setPagina(Math.floor(idx / POR_PAGINA) + 1) // sem isto o deep-link caía numa página que não mostra a emenda
     abrirDetalhe(alvo)
     setHighlightId(alvo.codigoEmenda)
     setTimeout(() => document.getElementById(`emenda-row-${alvo.codigoEmenda}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120)
@@ -222,7 +232,7 @@ function RadarVerbaConteudo() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.emendas.map((e) => {
+                    {data.emendas.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA).map((e) => {
                       const tm = TEMP_META[e.temperatura]
                       const added = addedCrm.has(e.codigoEmenda)
                       return (
@@ -296,6 +306,11 @@ function RadarVerbaConteudo() {
                   </tbody>
                 </table>
               </div>
+              <Paginacao
+                pagina={pagina} totalItens={data.emendas.length} porPagina={POR_PAGINA}
+                onPagina={setPagina} rotuloItens="emendas"
+                className="border-t border-subtle"
+              />
             </div>
           )}
 

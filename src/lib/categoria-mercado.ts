@@ -73,7 +73,7 @@ const REGRAS: Array<[CategoriaKey, string]> = [
   // `ventilador` sem qualificador: o nome do produto vem como "VENTILADOR PULMONAR",
   // mas também como "Ventilador Artificial Eletrônico" e "VENTILADOR DE TRANSPORTE".
   // Só é seguro porque o 1º passo é ANCORADO — "circuito para ventilador" não casa.
-  ['equip_medico', 'equipamento|aparelho|monitor (multi|card|de sinais|de paciente)|ventilador|respirador|desfibrilador|autoclave|foco cir[úu]rg|mesa cir[úu]rg|cama hospitalar|bisturi el[ée]tr|tom[óo]graf|resson[âa]nc|ultrassom|raio-?x|eletrocardi[óo]graf|ox[íi]metr|bomba de infus|cadeira de rodas|nebuliz|microsc[óo]pio|centr[íi]fuga|incubadora|ber[çc]o aquec|carro de emerg[êe]nc|aspirador (cir[úu]rg|hospitalar)|laring[óo]sc[óo]pio|capn[óo]graf|eletroencefal|dermat[óo]sc[óo]pio|otosc[óo]pio|esfigmoman[ôo]metr'],
+  ['equip_medico', 'equipamento|aparelho|monitor (multi|card|de sinais|de paciente)|ventilador|respirador|desfibrilador|autoclave|foco cir[úu]rg|mesa cir[úu]rg|cama hospitalar|bisturi[,;: ]+(el[ée]tr|de alta frequ)|tom[óo]graf|resson[âa]nc|ultrassom|raio-?x|eletrocardi[óo]graf|ox[íi]metr|bomba de infus|cadeira de rodas|nebuliz|microsc[óo]pio|centr[íi]fuga|incubadora|ber[çc]o aquec|carro de emerg[êe]nc|aspirador (cir[úu]rg|hospitalar)|laring[óo]sc[óo]pio|capn[óo]graf|eletroencefal|dermat[óo]sc[óo]pio|otosc[óo]pio|esfigmoman[ôo]metr'],
   ['acessorio', 'seringa|agulha|cateter|sonda|gaze|atadura|luva|m[áa]scara|compressa|equipo|scalp|esparadr|algod[ãa]o|curativo|fralda|[áa]lcool|descart[áa]v|material penso|abaixador|lanceta|coletor|c[âa]nula|tubo endotraqueal|dreno|l[âa]mina (de )?bisturi|fita (hospitalar|cir[úu]rg)|traqueostomia|sutura|fio (cir[úu]rg|de sutura)|pin[çc]a'],
 ]
 
