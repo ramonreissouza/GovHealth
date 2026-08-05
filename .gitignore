@@ -40,4 +40,5 @@ scripts/radar/.calibra/
 # snapshot local do hist:status e log do coletor historico (nao versionar)
 .hist-status.json
 etl-historico.log
+*.err
 .pncp-municipios.json

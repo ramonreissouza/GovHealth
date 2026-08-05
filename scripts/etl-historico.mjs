@@ -211,14 +211,31 @@ const t0 = Date.now()
 // subdivisão não cobriu tudo, e isso tem que aparecer no log em vez de passar como
 // "coleta concluída".
 const lidoPorPai = new Map()
+let totPaginasFuradas = 0
 
+// Uma página que esgota as 7 tentativas do `buscar` NÃO pode abortar o recorte inteiro.
+// Foi o que aconteceu na 1ª coleta: 287 `fetch failed` (0,014% dos pedidos) derrubaram
+// 18 dos 54 recortes subdivididos, um deles em 31% do total — o prejuízo não foi a
+// página perdida, foi tudo que vinha DEPOIS dela.
+//
+// Como as páginas são offsets independentes, dá para pular a que falhou e seguir. O
+// cuidado é com o checkpoint: ele é uma marca d'água única, então se avançasse por
+// cima do furo a página perdida nunca mais seria retentada. Por isso ele congela na
+// última página contígua boa — a varredura continua até o fim, e uma reexecução
+// retoma a partir do furo (o UPSERT torna a sobreposição inofensiva).
 async function varrer(recorte, rotulo, pai) {
   const chave = `hist:${rotulo}`
   const de = await lerCp(chave)
   if (de >= MAX_PAG) return
+  let contiguo = de
   for (let pagina = de + 1; pagina <= MAX_PAG; pagina++) {
     const j = await buscar({ ...recorte, pagina: String(pagina), tam_pagina: String(TAM) })
-    if (j.teto || j.erro) { if (j.erro) console.warn(`  [erro] ${rotulo} pág ${pagina}: ${j.erro}`); break }
+    if (j.teto) break
+    if (j.erro) {
+      console.warn(`  [erro] ${rotulo} pág ${pagina}: ${j.erro} — pula a página e segue`)
+      totPaginasFuradas++
+      continue
+    }
     const itens = j.items ?? []
     if (itens.length === 0) break
     totVistos += itens.length
@@ -226,7 +243,7 @@ async function varrer(recorte, rotulo, pai) {
     const saude = itens.filter((r) => isSaude(r.description))
     totSaude += saude.length
     for (const r of saude) { await upsert(r); totGravados++ }
-    await salvarCp(chave, pagina)
+    if (pagina === contiguo + 1) { contiguo = pagina; await salvarCp(chave, pagina) }
     if (itens.length < TAM) break
   }
 }
@@ -298,6 +315,7 @@ clearInterval(progresso)
 
 const min = ((Date.now() - t0) / 60000).toFixed(1)
 console.log(`\n[hist] concluído em ${min}min · ${totVistos.toLocaleString('pt-BR')} registros lidos · ${totSaude.toLocaleString('pt-BR')} de saúde · ${totGravados.toLocaleString('pt-BR')} gravados`)
+if (totPaginasFuradas) console.warn(`[hist] ${totPaginasFuradas} páginas furaram após 7 tentativas; o checkpoint parou antes de cada furo — rode de novo para retomá-las`)
 
 // Reconciliação: um recorte subdividido tem que somar ~o total do pai. Se ficar
 // abaixo, a subdivisão deixou município de fora e o log precisa dizer isso.
