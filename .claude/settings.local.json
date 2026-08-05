@@ -152,7 +152,9 @@
       "PowerShell(Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId, CreationDate, @{n='cmd';e={$_.CommandLine}} | Format-List)",
       "PowerShell(\"agora: $\\(Get-Date -Format 'HH:mm:ss'\\)\"; $c = Get-NetTCPConnection -OwningProcess 33256 -ErrorAction SilentlyContinue; \"conexoes TCP do PID 33256: $\\($c.Count\\)\"; $p = Get-Process -Id 33256 -ErrorAction SilentlyContinue; if \\($p\\) { \"CPU total: $\\([math]::Round\\($p.CPU,1\\)\\)s · memoria: $\\([math]::Round\\($p.WorkingSet64/1MB,1\\)\\)MB\" })",
       "PowerShell(\"agora: $\\(Get-Date -Format 'HH:mm:ss'\\)\"; Get-Content 'etl-historico.log' -Tail 6; if \\(Test-Path '.pncp-municipios.json'\\) { \"CACHE PRONTO: $\\(\\(Get-Item '.pncp-municipios.json'\\).Length\\) bytes\" } else { 'cache ainda nao gravado \\(mapa em andamento\\)' })",
-      "PowerShell(\"=== .claude/settings.local.json ===\"; git diff .claude/settings.local.json; \"=== next-env.d.ts ===\"; git diff next-env.d.ts; \"=== .gitignore \\(etl/log\\) ===\"; Select-String -Path '.gitignore' -Pattern 'log|hist|pncp|err' | ForEach-Object { $_.Line })"
+      "PowerShell(\"=== .claude/settings.local.json ===\"; git diff .claude/settings.local.json; \"=== next-env.d.ts ===\"; git diff next-env.d.ts; \"=== .gitignore \\(etl/log\\) ===\"; Select-String -Path '.gitignore' -Pattern 'log|hist|pncp|err' | ForEach-Object { $_.Line })",
+      "PowerShell(git log --oneline origin/main..HEAD | Measure-Object -Line | ForEach-Object { \"commits a enviar: $\\($_.Lines\\)\" }; git push origin main 2>&1 | Select-Object -Last 8)",
+      "PowerShell($f = '.next\\\\static\\\\W2tDwbuJHFHR0U0ArRq3-'; if \\(Test-Path $f\\) { \"existe: $\\(\\(Get-Item $f\\).GetType\\(\\).Name\\)\"; try { Remove-Item $f -Recurse -Force -ErrorAction Stop; 'removido' } catch { \"trava: $\\($_.Exception.Message.Substring\\(0,80\\)\\)\" } } else { 'nao existe' })"
     ]
   }
 }

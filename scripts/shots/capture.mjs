@@ -127,7 +127,16 @@ await shot('licitacoes', '/oportunidades', { delay: 4500 })
 // Equipamento e não medicamento de propósito: em "Dipirona" o cartão PREÇO MÉDIO
 // vem R$ 194K contra mediana R$ 1,00 — a média é comida por linha com valor
 // unitário preenchido como total, e o print anunciaria a estatística quebrada.
-await shot('precos', '/precos', { delay: 2000, clique: 'button:text-is("Ultrassom")', apos: 6000 })
+//
+// DESFIBRILADOR e não "Ultrassom": o print é uma peça de venda, e os três cartões
+// precisam contar a mesma história. Medido nos atalhos da tela (50 registros, o
+// maior volume de todos):
+//   Ultrassom      min R$ 7,50   médio R$ 65K   máx R$ 360K   → 48.000x
+//   Desfibrilador  min R$ 326,70 médio R$ 11K   máx R$ 45K    →    138x
+// Com o ultrassom o visitante lia "mínimo R$ 7,50, máximo R$ 360K" e concluía que a
+// referência não serve para nada — a faixa é larga porque o termo mistura doppler de
+// bolso com aparelho de carrinho, não porque o dado esteja errado.
+await shot('precos', '/precos', { delay: 2000, clique: 'button:text-is("Desfibrilador")', apos: 8000 })
 // Não vai para a landing hoje: nesta conta o Radar de Chat tem 0 mensagem
 // capturada e 1 conector com falha — o print mostraria a função sem funcionar.
 await shot('radar-chat', '/radar', { delay: 4500 })
