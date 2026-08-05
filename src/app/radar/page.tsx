@@ -33,6 +33,7 @@ import { destacar, temChave } from '@/lib/radar/destaque'
 import { nomePortal } from '@/lib/portais'
 import { CONFIG_PADRAO, type ConfigRadar } from '@/lib/radar/config'
 import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 
 const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'cnpj']
 
@@ -62,6 +63,8 @@ interface Inbox {
   saude: SaudeItem[]
   /** O que o ambiente consegue fazer (cofre de credenciais / login hospedado). */
   capacidades?: { cofre: boolean; hosted: boolean }
+  /** Recorte do Setup da Empresa aplicado pelo servidor nesta resposta. */
+  setupFiltro?: { aplicado: boolean; ufs: string[]; categorias: string[] }
   atualizadoEm: string
 }
 
@@ -239,6 +242,10 @@ export default function RadarPage() {
   const [lote, setLote] = useState('')
   const [portalFiltro, setPortalFiltro] = useState('')
   const [pagina, setPagina] = useState(1)
+  // "Tirar todos os filtros" da caixa. O ref espelha o estado porque `carregar` é
+  // estável (roda no polling silencioso) e precisa do valor atual sem se recriar.
+  const [semSetup, setSemSetup] = useState(false)
+  const semSetupRef = useRef(false)
   const agoraMs = Date.now()
 
   useEffect(() => { setFlags(lerFlags()) }, [])
@@ -252,12 +259,16 @@ export default function RadarPage() {
   // (categoria inclusive) são aplicados aqui no cliente. Antes o filtro de categoria
   // entrava na querystring, então mudar o combo refazia a chamada — e como a rota
   // ainda dispara a seleção automática, a lista sumia por segundos a cada troca.
-  const carregar = useCallback(async (silencioso = false) => {
+  // O recorte do Setup (estados + categorias do cliente) é aplicado no SERVIDOR —
+  // sem ele a caixa mostrava os processos que a conta acumulou sob setups antigos e
+  // os de outros usuários do tenant. `?setup=0` é o "ver tudo".
+  const carregar = useCallback(async (silencioso = false, semSetupAgora?: boolean) => {
     if (emVoo.current) return
     emVoo.current = true
     if (silencioso) setAtualizando(true); else setLoading(true)
     try {
-      const r = await fetch('/api/radar/inbox')
+      const sem = semSetupAgora ?? semSetupRef.current
+      const r = await fetch(`/api/radar/inbox${sem ? '?setup=0' : ''}`)
       const d: Inbox = await r.json()
       setData(d)
     } catch { /* mantém o que já está na tela */ } finally {
@@ -265,6 +276,12 @@ export default function RadarPage() {
       setLoading(false); setAtualizando(false)
     }
   }, [])
+
+  const trocarSetup = useCallback((sem: boolean) => {
+    semSetupRef.current = sem
+    setSemSetup(sem)
+    void carregar(false, sem)
+  }, [carregar])
 
   useEffect(() => { void carregar() }, [carregar])
 
@@ -581,6 +598,16 @@ export default function RadarPage() {
                     <option value="">Todas as categorias</option>
                     {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
+                </div>
+
+                {/* Recorte do Setup (estados + categorias do cliente) — aplicado no servidor */}
+                <div className="px-2.5 py-2 border-b border-subtle">
+                  <SetupFilterHint
+                    estados categorias
+                    onLimpar={() => trocarSetup(true)}
+                    onRestaurar={() => trocarSetup(false)}
+                    limpo={semSetup}
+                  />
                 </div>
 
                 {/* Lista (paginada — ver POR_PAGINA) */}

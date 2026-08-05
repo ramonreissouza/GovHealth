@@ -11,6 +11,7 @@ import { formatBRL } from '@/lib/format'
 import { CATEGORIAS } from '@/lib/categoria-mercado'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -103,6 +104,12 @@ export default function BreakdownPage() {
   // Filtro por categoria (múltiplo) — pré-marcado pelas categorias do Setup (item 12).
   const [catsAtivas, setCatsAtivas] = useState<Set<string>>(new Set())
   const { marcarTocado: marcarCatTocado } = useSetupCategoriasDefault((cats) => setCatsAtivas(new Set(cats)))
+  // "Tirar todos os filtros": desliga o recorte do Setup (UF + categoria) de uma vez.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    aplicarCats: (c) => setCatsAtivas(new Set(c)),
+    marcarTocado: () => { marcarUFTocado(); marcarCatTocado() },
+  })
 
   // Sequenciador de requisições: descarta respostas fora de ordem (o filtro do Setup
   // aplica logo após o mount; sem isto a resposta sem filtro podia sobrescrever).
@@ -202,7 +209,7 @@ export default function BreakdownPage() {
             </div>
           </div>
 
-          <SetupFilterHint estados categorias className="mb-3" />
+          <SetupFilterHint estados categorias className="mb-3" onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
 
           {/* Breadcrumb de seleção */}
           {(item || empresa) && (

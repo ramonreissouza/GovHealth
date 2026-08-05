@@ -32,6 +32,8 @@ import { getProdutos, type ProdutoPortfolio } from '@/lib/portfolio'
 import { HYDRATED_EVENT, foiHidratado } from '@/lib/synced'
 import { isOnboarded } from '@/lib/onboarding'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 
 export interface OpportunitiesData {
   oportunidades: Oportunidade[]
@@ -63,6 +65,13 @@ export default function DashboardView() {
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
   const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [tipo, setTipo] = useState<string>('todos')
+  // "Tirar todos os filtros": solta os estados do Setup e o tipo de fornecimento, que
+  // juntos comandam todos os widgets do dashboard.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    marcarTocado: marcarUFTocado,
+    aoTrocar: () => setTipo('todos'),
+  })
   const [views, setViews] = useState<SavedView[]>([])
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([]) // portfólio → prioriza leads
 
@@ -151,6 +160,7 @@ export default function DashboardView() {
 
   return (
     <>
+      <SetupFilterHint estados className="mb-3" onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
       {/* Barra de ESTADOS (multi) — pré-selecionada pelo Setup; comanda todos os widgets */}
       <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">
         <div className="flex items-center justify-between mb-2">

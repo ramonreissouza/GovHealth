@@ -15,6 +15,7 @@ import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { CATEGORIA_LABEL as CAT_LABEL, CATEGORIA_COLOR as CAT_COLOR, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -73,6 +74,13 @@ export default function AnalisePage() {
   // Pré-filtra pelos estados do Setup da Empresa (item 4).
   const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
   const [situacao, setSituacao] = useState('todos')
+  // "Tirar todos os filtros": aqui o Setup recorta só por UF, mas o botão zera junto os
+  // demais filtros da tela — é o que "ver tudo" significa para quem clica.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    marcarTocado: marcarUFTocado,
+    aoTrocar: () => { setTiposAtivos(new Set()); setCategoriasAtivas(new Set()); setSituacao('todos') },
+  })
   const [queryProponente, setQueryProponente] = useState('')
 
   // Paginação — 50 por página (padrão), com seletor p/ mostrar mais (igual Licitações).
@@ -282,7 +290,7 @@ export default function AnalisePage() {
                 </div>
               </div>
 
-              <SetupFilterHint estados />
+              <SetupFilterHint estados onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
 
               {/* Toolbar — exportar + itens por página (igual Licitações) */}
               <div className="flex items-center gap-2 flex-wrap">

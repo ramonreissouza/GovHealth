@@ -26,6 +26,7 @@ import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/portfolio'
 import { getTerritorio } from '@/lib/territorio'
 import { getPreferences } from '@/lib/preferences'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
 import { HYDRATED_EVENT } from '@/lib/synced'
 import { publishDataStatus } from '@/lib/data-status'
 import { matchesTermo } from '@/lib/text'
@@ -234,6 +235,13 @@ function OportunidadesInner() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([])
   const [soPortfolio, setSoPortfolio] = useState(false)
+  // "Tirar todos os filtros": além das UFs do Setup, solta os recortes que também
+  // nascem dele (portfólio, categoria, município) — é o que "ver tudo" quer dizer aqui.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    marcarTocado: marcarUFTocado,
+    aoTrocar: () => { setSoPortfolio(false); setCategoria('todos'); setMunicipioFiltro('') },
+  })
   // Itens (equipamentos/acessórios) pré-carregados em lote, por nº de controle
   // PNCP — habilita a busca por item e alimenta a pré-análise de cada licitação.
   const [itensMap, setItensMap] = useState<Record<string, ItemPNCP[]>>({})
@@ -567,7 +575,7 @@ function OportunidadesInner() {
             </div>
           </div>
 
-          <SetupFilterHint estados className="mb-3" />
+          <SetupFilterHint estados className="mb-3" onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
 
           {/* ── UF bar (multi-select) ─────────────────────────────────────── */}
           <div className="bg-bg2 border border-subtle2 rounded-xl px-3 py-2.5 mb-3">

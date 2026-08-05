@@ -18,6 +18,7 @@ import { ExportButton } from '@/components/ui/ExportButton'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
@@ -79,6 +80,12 @@ export default function ConcorrentesEstadoPage() {
   const [mostrarTodos, setMostrarTodos] = useState(false)
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → servidor
+  // "Tirar todos os filtros": zera o recorte do Setup e a seleção de item derivada dele.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    marcarTocado: marcarUFTocado,
+    aoTrocar: () => { setItemFiltro(null); setCatAtiva(null) },
+  })
 
   // Empresa em foco: filtra gráfico/itens/entidades/breakdown por ela (item 11).
   const [fornecedorSel, setFornecedorSel] = useState<{ nome: string; chave: string | null } | null>(null)
@@ -219,7 +226,7 @@ export default function ConcorrentesEstadoPage() {
             </div>
           </div>
 
-          <SetupFilterHint estados className="mb-4" />
+          <SetupFilterHint estados className="mb-4" onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
 
           {/* Banner de foco por empresa (item 11) */}
           {fornecedorSel && (

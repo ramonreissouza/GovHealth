@@ -15,6 +15,7 @@ import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSele
 import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
 
@@ -82,6 +83,12 @@ export default function VencedoresPage() {
   // Categorias (múltiplas) — pré-marcadas pelas categorias de interesse do Setup (item 9).
   const [catsAtivas, setCatsAtivas] = useState<Set<string>>(new Set())
   const { marcarTocado: marcarCatTocado } = useSetupCategoriasDefault((cats) => setCatsAtivas(new Set(cats)))
+  // "Tirar todos os filtros": desliga o recorte do Setup (UF + categoria) de uma vez.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    aplicarCats: (c) => setCatsAtivas(new Set(c)),
+    marcarTocado: () => { marcarUFTocado(); marcarCatTocado() },
+  })
   // Ano padrão 2026 (recente) — carrega rápido; 'todos' varre todos os anos (muito mais lento).
   const [ano, setAno] = useState('2026')
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
@@ -217,7 +224,7 @@ export default function VencedoresPage() {
             </div>
           </div>
 
-          <SetupFilterHint estados categorias className="mb-3" />
+          <SetupFilterHint estados categorias className="mb-3" onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
 
           <div className="flex items-center gap-2 mb-4">
             <div className="flex items-center gap-2 bg-bg2 border border-subtle2 rounded-lg px-3 py-2 max-w-md flex-1">

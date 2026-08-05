@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { query, queryOne } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
-import { sincronizarSelecao } from '@/lib/radar/selecao'
+import { sincronizarSelecao, filtrosDoSetup } from '@/lib/radar/selecao'
 import { resolverPortal } from '@/lib/portais'
 import { cofreDisponivel } from '@/lib/radar/crypto'
 
@@ -64,6 +64,31 @@ export async function GET(req: NextRequest) {
   await talvezSincronizar(t.titularId, t.userId)
 
   const sp = req.nextUrl.searchParams
+
+  // ── recorte pelo SETUP DA EMPRESA ──────────────────────────────────────────
+  // A caixa mostrava TODOS os processos ativos do tenant. Como radar_processos
+  // acumula (seleção antiga + de outros usuários da conta), um cliente que atua em
+  // 2 estados via chat de pregão do país inteiro. Aqui a caixa passa a devolver só
+  // o que casa com os estados/categorias do setup — `?setup=0` desliga o recorte
+  // (é o "tirar todos os filtros" da tela).
+  //
+  // Processo de origem MANUAL nunca é escondido: o usuário o adicionou de propósito,
+  // e sumir com ele por não casar com o setup seria perder trabalho dele.
+  const usarSetup = sp.get('setup') !== '0'
+  const setup = usarSetup ? await filtrosDoSetup(t.userId) : { ufs: [], categorias: [] }
+
+  /**
+   * Monta a condição do setup para um par de aliases (processo, contratação),
+   * empurrando os valores no array de params do chamador.
+   */
+  const condSetup = (alvo: unknown[], aliasP: string, aliasC: string): string | null => {
+    const partes: string[] = []
+    if (setup.ufs.length) { alvo.push(setup.ufs); partes.push(`COALESCE(${aliasP}.uf, ${aliasC}.uf) = ANY($${alvo.length})`) }
+    if (setup.categorias.length) { alvo.push(setup.categorias); partes.push(`${aliasC}.categoria_saude = ANY($${alvo.length})`) }
+    if (partes.length === 0) return null
+    return `(${aliasP}.origem = 'manual' OR (${partes.join(' AND ')}))`
+  }
+
   const cond: string[] = ['m.titular_id = $1']
   const params: unknown[] = [t.titularId]
   const add = (frag: string, val: unknown) => { params.push(val); cond.push(frag.replace('$?', `$${params.length}`)) }
@@ -73,6 +98,14 @@ export async function GET(req: NextRequest) {
   if (sp.get('categoria')) add('$? = ANY(m.categorias)', sp.get('categoria'))
   if (sp.get('lida') === '0') cond.push('m.lida = false')
   if (sp.get('lida') === '1') cond.push('m.lida = true')
+  {
+    const c = condSetup(params, 'ps', 'cs')
+    if (c) {
+      cond.push(`EXISTS (SELECT 1 FROM radar_processos ps
+                           LEFT JOIN contratacoes cs ON cs.numero_controle_pncp = ps.licitacao_id
+                          WHERE ps.id = m.processo_id AND ${c})`)
+    }
+  }
 
   const mensagens = await query(
     `SELECT m.id, m.processo_id, m.conector_id, m.cnpj, m.licitacao_id, m.autor, m.texto,
@@ -89,6 +122,9 @@ export async function GET(req: NextRequest) {
       LIMIT 300`,
     params,
   )
+
+  const paramsProc: unknown[] = [t.titularId]
+  const condProc = condSetup(paramsProc, 'p', 'c')
 
   // Lista dos pregões MONITORADOS — independente de já ter mensagem capturada.
   // (Antes a caixa era montada só a partir de radar_mensagens, então um processo
@@ -111,17 +147,31 @@ export async function GET(req: NextRequest) {
             EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = p.licitacao_id) AS encerrada
        FROM radar_processos p
        LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
-      WHERE p.titular_id = $1 AND p.status = 'ativo'
+      WHERE p.titular_id = $1 AND p.status = 'ativo'${condProc ? ` AND ${condProc}` : ''}
       ORDER BY p.atualizado_em DESC
       LIMIT 500`,
-    [t.titularId],
+    paramsProc,
   )
 
+  // KPIs seguem o MESMO recorte da lista. Contar sem filtro faria o cabeçalho
+  // anunciar não-lidas que a caixa não mostra — o usuário procuraria a mensagem
+  // que sumiu.
+  const paramsKpi: unknown[] = [t.titularId]
+  const condKpiMsg = condSetup(paramsKpi, 'pk', 'ck')
+  const condKpiProc = condSetup(paramsKpi, 'p', 'c')
   const [kpi] = await query<{ nao_lidas: string; processos_ativos: string }>(
     `SELECT
-       (SELECT count(*) FROM radar_mensagens WHERE titular_id = $1 AND lida = false) AS nao_lidas,
-       (SELECT count(*) FROM radar_processos WHERE titular_id = $1 AND status = 'ativo') AS processos_ativos`,
-    [t.titularId],
+       (SELECT count(*) FROM radar_mensagens m WHERE m.titular_id = $1 AND m.lida = false${
+         condKpiMsg
+           ? ` AND EXISTS (SELECT 1 FROM radar_processos pk
+                             LEFT JOIN contratacoes ck ON ck.numero_controle_pncp = pk.licitacao_id
+                            WHERE pk.id = m.processo_id AND ${condKpiMsg})`
+           : ''
+       }) AS nao_lidas,
+       (SELECT count(*) FROM radar_processos p
+           LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
+          WHERE p.titular_id = $1 AND p.status = 'ativo'${condKpiProc ? ` AND ${condKpiProc}` : ''}) AS processos_ativos`,
+    paramsKpi,
   )
 
   const saude = await query<{
@@ -176,6 +226,13 @@ export async function GET(req: NextRequest) {
     capacidades: {
       cofre: cofreDisponivel(),
       hosted: !!(process.env.RADAR_CONNECT_URL && process.env.RADAR_CONNECT_TOKEN),
+    },
+    // Recorte do Setup efetivamente aplicado nesta resposta — a tela usa para dizer
+    // ao usuário POR QUE está vendo menos, em vez de ele achar que o Radar perdeu chats.
+    setupFiltro: {
+      aplicado: setup.ufs.length > 0 || setup.categorias.length > 0,
+      ufs: setup.ufs,
+      categorias: setup.categorias,
     },
     atualizadoEm: new Date().toISOString(),
   })

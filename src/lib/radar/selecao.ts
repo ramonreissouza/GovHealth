@@ -36,6 +36,25 @@ async function lerUserData<T>(userId: string, chave: string, fallback: T): Promi
   return (row?.valor ?? fallback) as T
 }
 
+/**
+ * Estados e categorias do Setup da Empresa, com o mesmo fallback para as chaves
+ * legadas que a seleção usa. A CAIXA do Radar precisa deste recorte além da seleção:
+ * `sincronizarSelecao` filtra o que ENTRA em radar_processos, mas o que já entrou
+ * fica — então, quando o cliente estreita o setup, a caixa continuava mostrando os
+ * processos escolhidos sob o setup antigo (e os de outros usuários do mesmo tenant).
+ */
+export async function filtrosDoSetup(
+  userId: string,
+): Promise<{ ufs: string[]; categorias: string[] }> {
+  const empresa = await lerUserData<Perfil | null>(userId, 'empresa', null)
+  const temEmpresa = !!empresa && (empresa.ufs != null || empresa.categorias != null)
+  const perfil: Perfil = temEmpresa ? empresa! : await lerUserData<Perfil>(userId, 'perfil', {})
+  return {
+    ufs: (perfil.ufs ?? []).map((u) => u.toUpperCase()),
+    categorias: perfil.categorias ?? [],
+  }
+}
+
 /** Frases-alvo (normalizadas) de um produto do portfólio. */
 function needlesDoProduto(p: ProdutoLike): string[] {
   const fontes = [...(p.palavrasChave ?? []), p.nome ?? '', p.marca ?? '', p.modelo ?? '']

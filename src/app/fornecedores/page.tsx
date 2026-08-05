@@ -16,6 +16,7 @@ import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
+import { useSetupFiltro } from '@/lib/use-setup-filtro'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { exportToXLSX, type ExportColumn } from '@/lib/export'
 
@@ -80,6 +81,12 @@ export default function FornecedoresPage() {
   // Categorias (múltiplas) — pré-marcadas pelas categorias de interesse do Setup (item 9).
   const [catsAtivas, setCatsAtivas] = useState<Set<string>>(new Set())
   const { marcarTocado: marcarCatTocado } = useSetupCategoriasDefault((cats) => setCatsAtivas(new Set(cats)))
+  // "Tirar todos os filtros": desliga o recorte do Setup (UF + categoria) de uma vez.
+  const { semSetup, limpar, restaurar } = useSetupFiltro({
+    aplicarUfs: (u) => setUfsAtivos(new Set(u)),
+    aplicarCats: (c) => setCatsAtivas(new Set(c)),
+    marcarTocado: () => { marcarUFTocado(); marcarCatTocado() },
+  })
   const [busca, setBusca] = useState('')
   const [buscaQuery, setBuscaQuery] = useState('') // debounced → enviado ao servidor
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // fornecedores por página (50 padrão)
@@ -243,7 +250,7 @@ export default function FornecedoresPage() {
             </div>
           </div>
 
-          <SetupFilterHint estados categorias className="mb-3" />
+          <SetupFilterHint estados categorias className="mb-3" onLimpar={limpar} onRestaurar={restaurar} limpo={semSetup} />
 
           {/* Ano + busca */}
           <div className="flex items-center gap-3 mb-4 flex-wrap">
