@@ -35,6 +35,14 @@ function overlap(a, b) {
   return inter / Math.min(A.size, B.size)
 }
 
+/**
+ * Tira o carimbo de portal que o PNCP põe na frente do objeto — "[Portal de Compras
+ * Públicas] - ", "[LICITANET] - ". É metadado de origem, não faz parte do objeto.
+ */
+export function semCarimboDePortal(s) {
+  return String(s ?? '').replace(/^\s*\[[^\]]{3,60}\]\s*[-–—]\s*/, '').trim()
+}
+
 /** Extrai o ano de textos como "010/2024", "PE 39/2026", "2024-297860". */
 function anoDe(...ss) {
   for (const s of ss) { const m = String(s ?? '').match(/\b(20\d{2})\b/); if (m) return m[1] }
@@ -86,10 +94,18 @@ function pontuar(cand, alvo) {
  * @returns {Promise<{url:string, confianca:number, candidato:object}|null>}
  */
 export async function resolverUrlPublicaPCP(alvo, { limiar = 0.6 } = {}) {
+  // O PNCP carimba o portal de origem no começo do objeto ("[Portal de Compras
+  // Públicas] - Aquisição de…"). Esse carimbo NÃO existe no objeto do lado do PCP,
+  // e mandá-lo na busca fazia a API devolver zero candidato — todo processo do PCP
+  // caía em "sem match confiável" e o monitoramento público nunca saía do lugar.
+  // Medido nos 4 primeiros processos reais: com o prefixo, null nos quatro; sem ele,
+  // confiança 0,90 nos quatro.
+  const titulo = semCarimboDePortal(alvo?.titulo)
   // Precisa de ao menos um termo específico: 2+ tokens OU um único token forte (≥6).
-  const toks = tokens(alvo?.titulo)
-  if (!alvo?.titulo || (toks.length < 2 && !(toks.length === 1 && toks[0].length >= 6))) return null
-  const cands = await buscar(alvo.titulo)
+  const toks = tokens(titulo)
+  if (!titulo || (toks.length < 2 && !(toks.length === 1 && toks[0].length >= 6))) return null
+  alvo = { ...alvo, titulo }
+  const cands = await buscar(titulo)
   if (!cands.length) return null
   let melhor = null
   for (const c of cands) {
