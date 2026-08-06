@@ -7,7 +7,7 @@
 
 import { query, queryOne } from '@/lib/db'
 import { normalizeText } from '@/lib/text'
-import { CONECTORES } from '@/lib/radar/conectores'
+import { CONECTORES, licitacaoDoPortal } from '@/lib/radar/conectores'
 
 const CONECTOR_PADRAO = 'comprasgov'
 const PORTAL_PNCP = 'https://pncp.gov.br/app/editais'
@@ -175,7 +175,7 @@ export async function sincronizarSelecao(
   // Sem credencial alguma, o Compras.gov.br continua entrando: os processos ficam
   // selecionados e acompanhados por prazo desde já, e passam a ter chat assim que o
   // cliente conclui o login.
-  const conectoresAlvo = [...new Set([...(conectados.length ? conectados : [CONECTOR_PADRAO]), ...publicos])]
+  const conectoresBase = [...new Set(conectados.length ? conectados : [CONECTOR_PADRAO])]
 
   let novos = 0
   let total = 0
@@ -201,6 +201,9 @@ export async function sincronizarSelecao(
     // seu). RETURNING (xmax=0) detecta o INÉDITO para alertar sem duplicar.
     let inseriuNovo = false
     let processoRef = ''
+    // O portal público só entra para as licitações que realmente correm nele — do
+    // contrário o worker sai procurando no PCP a página de um pregão do BB.
+    const conectoresAlvo = [...conectoresBase, ...publicos.filter((id) => licitacaoDoPortal(id, c))]
     for (const conectorId of conectoresAlvo) {
       const id = `${conectorId}:${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
       const link = linkDoProcesso(conectorId, c.numero_controle_pncp)

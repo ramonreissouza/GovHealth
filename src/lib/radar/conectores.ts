@@ -17,6 +17,10 @@ export interface Conector {
   disponivel: boolean
   /** Monitora pela página pública, sem exigir login. */
   modoPublico?: boolean
+  /** Trecho do host do `link_externo` quando a licitação corre neste portal. */
+  dominio?: string
+  /** Prefixo que o PNCP põe no objeto quando a licitação corre neste portal. */
+  marcaObjeto?: string
 }
 
 export const CONECTORES: Conector[] = [
@@ -32,6 +36,11 @@ export const CONECTORES: Conector[] = [
     descricao: 'Prefeituras, consórcios e órgãos estaduais. Monitoramento público — sem login.',
     disponivel: true,
     modoPublico: true,
+    dominio: 'portaldecompraspublicas',
+    // O PNCP preserva o prefixo do portal no objeto ("[Portal de Compras Públicas] - …").
+    // Medido na base: 19.023 licitações trazem essa marca contra só 530 com o link —
+    // é de longe o sinal mais presente de que o pregão corre no PCP.
+    marcaObjeto: '[portal de compras públicas]',
   },
   {
     id: 'licitacoes-e',
@@ -61,4 +70,25 @@ export function conectorDisponivel(id: string): boolean {
 /** Portal monitorado pela página pública (sem login/credencial). */
 export function conectorPublico(id: string): boolean {
   return POR_ID.get(id)?.modoPublico ?? false
+}
+
+/**
+ * A licitação corre NESTE portal?
+ *
+ * Vale só para os conectores de modo público, e existe para não atribuir a eles
+ * pregão que não é deles. Um conector com login enxerga os processos do próprio
+ * cliente; um conector público precisa achar a PÁGINA do processo — se o pregão
+ * corre no BB ou no Comprasnet, essa página não existe no PCP e a busca só devolve
+ * "sem match confiável", batendo na API do portal para nada.
+ */
+export function licitacaoDoPortal(
+  conectorId: string,
+  lic: { objeto_compra?: string | null; link_externo?: string | null },
+): boolean {
+  const c = POR_ID.get(conectorId)
+  if (!c) return false
+  const link = (lic.link_externo ?? '').toLowerCase()
+  if (c.dominio && link.includes(c.dominio)) return true
+  const objeto = (lic.objeto_compra ?? '').trim().toLowerCase()
+  return !!c.marcaObjeto && objeto.startsWith(c.marcaObjeto)
 }
