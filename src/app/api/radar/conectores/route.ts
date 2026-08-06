@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   if (!t) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
   const rows = await query(
     `SELECT s.credencial_id, s.conector_id, c.cnpj, s.status, s.verificado_em, s.tentado_em, s.detalhe, s.duracao_ms
-       FROM radar_saude s JOIN radar_credenciais c ON c.id = s.credencial_id
+       FROM radar_saude s LEFT JOIN radar_credenciais c ON c.id = s.credencial_id
       WHERE s.titular_id = $1
       ORDER BY c.cnpj`,
     [t.titularId],

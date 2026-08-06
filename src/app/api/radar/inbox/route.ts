@@ -175,11 +175,12 @@ export async function GET(req: NextRequest) {
   )
 
   const saude = await query<{
-    credencial_id: string; conector_id: string; cnpj: string; status: string
+    // credencial_id/cnpj vêm NULL no monitor público (portal lido sem login).
+    credencial_id: string | null; conector_id: string; cnpj: string | null; status: string
     verificado_em: string | null; tentado_em: string | null; detalhe: string | null
   }>(
     `SELECT s.credencial_id, s.conector_id, c.cnpj, s.status, s.verificado_em, s.tentado_em, s.detalhe
-       FROM radar_saude s JOIN radar_credenciais c ON c.id = s.credencial_id
+       FROM radar_saude s LEFT JOIN radar_credenciais c ON c.id = s.credencial_id
       WHERE s.titular_id = $1`,
     [t.titularId],
   )

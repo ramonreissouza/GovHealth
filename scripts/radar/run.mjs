@@ -281,6 +281,20 @@ try {
 
       const g = await gravarMensagens(client, { titularId, conectorId: 'pcp', cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
       totalMsgs += g.total; novasMsgs += g.novas
+
+      // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
+      // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
+      // configurado" — se contradizendo na cara do usuário.
+      const okPub = resultado.status === 'ok'
+      await client.query(
+        `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
+         VALUES (NULL,$1,'pcp',$2, ${okPub ? 'now()' : 'NULL'}, now(), $3, now())
+         ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
+           status = EXCLUDED.status,
+           verificado_em = ${okPub ? 'now()' : 'radar_saude.verificado_em'},
+           tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
+        [titularId, resultado.status, resultado.detalhe ?? null],
+      )
     }
   }
 
