@@ -4,11 +4,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
+import { CATEGORIA_KEYS, categoriaSql } from '@/lib/categoria-mercado'
 
 export const runtime = 'nodejs'
 
-const CAT_SQL = categoriaCaseSql('r.nome_catmat')
+const CAT_SQL = categoriaSql('r')
 
 interface RankRow { chave: string | null; valor: number; qtd: number }
 interface DetalheRow {

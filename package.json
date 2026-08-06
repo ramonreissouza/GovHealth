@@ -57,7 +57,8 @@
     "lint:fix": "eslint src --fix",
     "lint:strict": "eslint src --max-warnings 0",
     "etl:historico": "node scripts/etl-historico.mjs",
-    "hist:status": "node scripts/hist-status.mjs"
+    "hist:status": "node scripts/hist-status.mjs",
+    "categoria:migrate": "node --experimental-strip-types scripts/migrate-categoria-mercado.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",

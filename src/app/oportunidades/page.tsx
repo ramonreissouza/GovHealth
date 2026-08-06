@@ -266,7 +266,7 @@ function OportunidadesInner() {
   const { ordem, alternar } = useOrdenacao<'proponente' | 'status' | 'item' | 'valor' | 'ano' | 'score'>()
   // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
   // as linhas carregadas. porTipo alimenta as contagens das abas.
-  const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number } | null>(null)
+  const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number; universo?: number } | null>(null)
   const [porTipo, setPorTipo] = useState<Record<string, number> | null>(null)
 
   // Carrega o portfólio do fornecedor (localStorage) para o filtro "Meu Portfólio".
@@ -400,6 +400,7 @@ function OportunidadesInner() {
   const totalLic = usarTotais ? totais!.total : filtered.length
   const valorTotal = usarTotais ? totais!.valorTotal : filtered.reduce((s, o) => s + o.valorEstimado, 0)
   const abertos = usarTotais ? totais!.abertas : filtered.filter(estaAberta).length
+  const universoLic = usarTotais ? (totais!.universo ?? totais!.total) : filtered.length
   const estados = usarTotais ? totais!.estados : new Set(filtered.map((o) => o.uf)).size
   const ticketMedio = totalLic ? valorTotal / totalLic : 0
 
@@ -502,7 +503,9 @@ function OportunidadesInner() {
             {[
               { label: 'Valor total', value: formatBRL(valorTotal), sub: 'estimado' },
               { label: 'Ticket médio', value: formatBRL(ticketMedio), sub: 'por licitação' },
-              { label: 'Em aberto', value: String(abertos), sub: `de ${totalLic} total` },
+              // Denominador = o mesmo recorte SEM o filtro de aberto/encerrado. Com o
+              // `totalLic` (que já é filtrado) a linha lia "50.241 de 50.241 total".
+              { label: 'Em aberto', value: String(abertos), sub: `de ${universoLic} no recorte` },
               { label: 'Estados', value: String(estados), sub: 'com resultados' },
             ].map(({ label, value, sub }) => (
               <div key={label} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">

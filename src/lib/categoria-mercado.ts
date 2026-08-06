@@ -94,6 +94,25 @@ const REGRAS: Array<[CategoriaKey, string]> = [
  * Passo 2: só quando o nome não decide, cai para as mesmas regras no texto inteiro
  * (comportamento antigo) — descrições que não seguem o padrão continuam classificadas.
  */
+/**
+ * Expressão SQL da categoria de mercado para usar nas consultas de `resultados`.
+ *
+ * Lê a COLUNA MATERIALIZADA (`resultados.categoria_mercado`) em vez de recalcular o
+ * CASE linha a linha. O CASE abaixo são ~16 regexes por linha, sem índice possível,
+ * sobre 288 mil resultados; medido em produção, um ranking que leva 0,4 s filtrando
+ * só por UF passava a 23,6 s ao somar o filtro de categoria — e a tela de Breakdown,
+ * que dispara 6 consultas dessas de uma vez, simplesmente nunca terminava de abrir.
+ *
+ * A coluna é GENERATED ALWAYS: linha nova do ETL já nasce classificada, sem mudança
+ * no ETL. Em compensação a expressão fica CONGELADA no banco — mexeu em `REGRAS`,
+ * rode `npm run categoria:migrate` (a migração compara a impressão digital da
+ * expressão e recria a coluna quando ela muda).
+ */
+export function categoriaSql(alias = 'r'): string {
+  return `${alias}.categoria_mercado`
+}
+
+/** O CASE cru. Hoje só a migração usa — as consultas leem a coluna (ver acima). */
 export function categoriaCaseSql(col: string): string {
   const c = `coalesce(${col}, '')`
   // Antes de recortar o nome, tira o que vem ANTES dele: rótulo ("Descrição:",

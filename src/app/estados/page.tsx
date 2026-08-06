@@ -1,7 +1,7 @@
 'use client'
 // src/app/estados/page.tsx — Portais Estaduais (SP, RJ, MG, BA)
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
@@ -769,11 +769,6 @@ export default function EstadosPage() {
   const [resumoLoading, setResumoLoading] = useState(true)
   const [selectedUF, setSelectedUF]   = useState<UFEstadual | null>(null)
   const [statusFiltro, setStatusFiltro] = useState<StatusFiltro>('todas')
-  // Contagens REAIS por UF (busca profunda ao vivo, igual ao detalhe) — preenchidas
-  // progressivamente sobre a amostra nacional inicial.
-  const [realKpis, setRealKpis] = useState<Partial<Record<UFEstadual, KPIsEstado>>>({})
-  const [carregandoReais, setCarregandoReais] = useState(false)
-
   useEffect(() => {
     fetch('/api/portais-estaduais?all=1')
       .then((r) => r.json())
@@ -782,48 +777,17 @@ export default function EstadosPage() {
       .finally(() => setResumoLoading(false))
   }, [])
 
-  // Progressivo: após a amostra, busca o número real de cada UF (cacheado no
-  // servidor), com concorrência limitada (2) para não estourar o rate-limit do PNCP.
-  useEffect(() => {
-    if (!resumo) return
-    let cancelled = false
-    setCarregandoReais(true)
-    const fila = [...TODAS_UFS]
-    const CONCORRENCIA = 2
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-    // Busca a contagem real da UF. SÓ adota o valor quando vier com dados (total>0):
-    // se o PNCP falhar/rate-limitar na rajada, mantém a amostra (nunca zera).
-    async function fetchUF(uf: UFEstadual, tentativa = 0): Promise<void> {
-      try {
-        const r = await fetch(`/api/portais-estaduais?uf=${uf}`)
-        const d = await r.json()
-        const k = d?.kpis as KPIsEstado | undefined
-        if (!cancelled && k && k.total > 0) { setRealKpis((prev) => ({ ...prev, [uf]: k })); return }
-      } catch { /* cai no retry */ }
-      if (!cancelled && tentativa < 2) { await sleep(2000 * (tentativa + 1)); return fetchUF(uf, tentativa + 1) }
-    }
-    async function worker() {
-      while (!cancelled) {
-        const uf = fila.shift()
-        if (!uf) break
-        await fetchUF(uf)
-        await sleep(400) // respiro entre UFs para não disparar o rate-limit do PNCP
-      }
-    }
-    Promise.all(Array.from({ length: CONCORRENCIA }, worker)).finally(() => { if (!cancelled) setCarregandoReais(false) })
-    return () => { cancelled = true }
-  }, [resumo])
-
-  // Resumo efetivo: usa a contagem real da UF quando já chegou; senão, a amostra.
-  const resumoEfetivo = useMemo<ResumoPayload | null>(() => {
-    if (!resumo) return null
-    const estados = { ...resumo.estados }
-    for (const uf of TODAS_UFS) {
-      const real = realKpis[uf]
-      if (real) estados[uf] = { kpis: real, fontesAtivas: resumo.estados[uf]?.fontesAtivas ?? { pncp: true, portalProprio: false } }
-    }
-    return { ...resumo, estados }
-  }, [resumo, realKpis])
+  // Havia aqui um 2º passo "progressivo" que, depois do resumo, refazia a contagem de
+  // cada UF chamando /api/portais-estaduais?uf=XX — 27 requisições, 2 por vez, com
+  // 400 ms de pausa entre elas. A tela levava 71 s para ficar pronta, com os 27 cards
+  // escritos "Carregando…" durante mais de um minuto.
+  //
+  // O passo era herança de quando o resumo era uma AMOSTRA do PNCP ao vivo. Hoje
+  // `buscarResumoEstadosDB` já devolve a contagem real das 27 UFs numa consulta só, e
+  // o KPI por UF do detalhe é literalmente a MESMA agregação com `WHERE uf = $1` no
+  // lugar do `GROUP BY uf`. Ou seja: 27 requisições para recalcular, uma a uma, número
+  // idêntico ao que a primeira já trouxe. Removido.
+  const resumoEfetivo = resumo
 
   const totalLicitacoes = resumoEfetivo
     ? UFS.reduce((s, uf) => s + (resumoEfetivo.estados[uf]?.kpis.total ?? 0), 0)
@@ -842,7 +806,7 @@ export default function EstadosPage() {
           subtitle={
             resumoLoading
               ? 'Carregando…'
-              : `${totalLicitacoes} licitações · ${formatBRL(totalValor)} · 27 UFs (via PNCP)${carregandoReais ? ' · atualizando contagens reais…' : ''}`
+              : `${totalLicitacoes} licitações · ${formatBRL(totalValor)} · 27 UFs (via PNCP)`
           }
         />
 

@@ -7,6 +7,7 @@
 
 import { query, queryOne } from '@/lib/db'
 import { normalizeText } from '@/lib/text'
+import { CONECTORES } from '@/lib/radar/conectores'
 
 const CONECTOR_PADRAO = 'comprasgov'
 const PORTAL_PNCP = 'https://pncp.gov.br/app/editais'
@@ -156,14 +157,25 @@ export async function sincronizarSelecao(
     params,
   )
 
-  // Portais-alvo da seleção: os que o tenant tem CONECTADOS (credencial ativa). Sem
-  // nenhuma credencial, mantém o comportamento legado (Compras.gov.br) para o Radar
-  // já selecionar processos antes mesmo de o cliente conectar um portal.
+  // Portais-alvo da seleção: os CONECTADOS (credencial ativa) MAIS os de modo
+  // público, que não pedem credencial nenhuma.
+  //
+  // O PCP é lido pela página pública (conectores.ts) e o worker já tem um passo
+  // "público" para tenants SEM credencial de PCP (scripts/radar/run.mjs). Só que a
+  // seleção só olhava para credenciais, então nenhum processo era criado com
+  // conector_id='pcp' e esse passo nunca tinha o que capturar. Resultado: uma conta
+  // recém-criada via o Radar inteiro como "nenhum conector conectado / 0 mensagens",
+  // com o monitoramento que já funciona de graça parado por falta de trabalho.
   const credConectores = await query<{ conector_id: string }>(
     `SELECT DISTINCT conector_id FROM radar_credenciais WHERE titular_id = $1 AND ativo = true`,
     [titularId],
   )
-  const conectoresAlvo = credConectores.length ? credConectores.map((r) => r.conector_id) : [CONECTOR_PADRAO]
+  const publicos = CONECTORES.filter((c) => c.disponivel && c.modoPublico).map((c) => c.id)
+  const conectados = credConectores.map((r) => r.conector_id)
+  // Sem credencial alguma, o Compras.gov.br continua entrando: os processos ficam
+  // selecionados e acompanhados por prazo desde já, e passam a ter chat assim que o
+  // cliente conclui o login.
+  const conectoresAlvo = [...new Set([...(conectados.length ? conectados : [CONECTOR_PADRAO]), ...publicos])]
 
   let novos = 0
   let total = 0

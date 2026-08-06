@@ -171,21 +171,31 @@ function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {
 
 // Totais REAIS do filtro (não da página carregada) — para os KPIs refletirem todo
 // o universo selecionado, não só as N linhas renderizadas.
-export interface TotaisBanco { total: number; valorTotal: number; abertas: number; estados: number }
+export interface TotaisBanco { total: number; valorTotal: number; abertas: number; estados: number; universo: number }
 async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
   const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
   const cached = getCached<TotaisBanco>(cacheKey)
   if (cached) return cached
-  const { whereSql, args } = construirWhere(params)
+  // O WHERE sai SEM o filtro de status; o status vira um FILTER. Assim `total` segue
+  // respeitando o filtro (o cabeçalho diz "N no filtro") e ganhamos `universo`, o
+  // mesmo recorte ignorando aberto/encerrado. Antes o KPI mostrava "Em aberto: 50.241
+  // de 50.241 total" — numerador e denominador saíam do mesmo WHERE com status=aberto,
+  // então a razão era 100% por construção e não informava nada.
+  const { whereSql, args } = construirWhere({ ...params, status: 'todos' })
+  const statusSql =
+    params.status === 'aberto' ? abertoExpr('contratacoes')
+    : params.status === 'encerrado' ? `NOT ${abertoExpr('contratacoes')}`
+    : 'TRUE'
   const [row] = await query<TotaisBanco>(
-    `SELECT count(*)::int AS total,
-            COALESCE(sum(valor_total_estimado), 0)::float8 AS "valorTotal",
+    `SELECT count(*) FILTER (WHERE ${statusSql})::int AS total,
+            COALESCE(sum(valor_total_estimado) FILTER (WHERE ${statusSql}), 0)::float8 AS "valorTotal",
             count(*) FILTER (WHERE ${abertoExpr('contratacoes')})::int AS abertas,
-            count(DISTINCT uf)::int AS estados
+            count(DISTINCT uf) FILTER (WHERE ${statusSql})::int AS estados,
+            count(*)::int AS universo
        FROM contratacoes WHERE ${whereSql}`,
     args,
   )
-  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0 }, TTL.SHORT)
+  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0, universo: 0 }, TTL.SHORT)
 }
 
 // Contagem por tipo de fornecimento (para as abas), SEM o filtro de tipo — assim
@@ -469,6 +479,7 @@ export async function GET(req: NextRequest) {
       valorTotal: resultado.reduce((s, o) => s + o.valorEstimado, 0),
       abertas: resultado.filter((o) => o.licitacaoRelacionada?.situacaoCompraId === 1).length,
       estados: new Set(resultado.map((o) => o.uf)).size,
+      universo: resultado.length,
     }
 
     return NextResponse.json({

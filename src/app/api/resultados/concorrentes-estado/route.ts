@@ -3,13 +3,13 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { CATEGORIA_KEYS, categoriaCaseSql } from '@/lib/categoria-mercado'
+import { CATEGORIA_KEYS, categoriaSql } from '@/lib/categoria-mercado'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 import { fornecedorKeySql, fornecedorNomeSql } from '@/lib/fornecedor-dedup'
 
 export const runtime = 'nodejs'
 
-const CAT_SQL = categoriaCaseSql('r.nome_catmat')
+const CAT_SQL = categoriaSql('r')
 const FKEY = fornecedorKeySql()
 const FNOME = fornecedorNomeSql()
 
