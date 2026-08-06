@@ -266,7 +266,7 @@ function OportunidadesInner() {
   const { ordem, alternar } = useOrdenacao<'proponente' | 'status' | 'item' | 'valor' | 'ano' | 'score'>()
   // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
   // as linhas carregadas. porTipo alimenta as contagens das abas.
-  const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number; universo?: number } | null>(null)
+  const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number; universo?: number; comValor?: number } | null>(null)
   const [porTipo, setPorTipo] = useState<Record<string, number> | null>(null)
 
   // Carrega o portfólio do fornecedor (localStorage) para o filtro "Meu Portfólio".
@@ -402,7 +402,13 @@ function OportunidadesInner() {
   const abertos = usarTotais ? totais!.abertas : filtered.filter(estaAberta).length
   const universoLic = usarTotais ? (totais!.universo ?? totais!.total) : filtered.length
   const estados = usarTotais ? totais!.estados : new Set(filtered.map((o) => o.uf)).size
-  const ticketMedio = totalLic ? valorTotal / totalLic : 0
+  // Divide pelas que TÊM valor, não por todas: 72% da base não traz valor (a busca do
+  // PNCP não devolve o campo) e essas entram somando zero. Usar `totalLic` diluiria o
+  // ticket médio a um terço do real.
+  const comValor = usarTotais
+    ? (totais!.comValor ?? totais!.total)
+    : filtered.filter((o) => o.valorEstimado > 0).length
+  const ticketMedio = comValor ? valorTotal / comValor : 0
 
   // Ordenação do cabeçalho ANTES do corte do lote. Se fosse depois, o clique
   // reordenaria só as linhas já visíveis: quem ordena por "maior valor" veria o
@@ -502,7 +508,8 @@ function OportunidadesInner() {
           <div className="grid grid-cols-4 gap-3 mb-4">
             {[
               { label: 'Valor total', value: formatBRL(valorTotal), sub: 'estimado' },
-              { label: 'Ticket médio', value: formatBRL(ticketMedio), sub: 'por licitação' },
+              { label: 'Ticket médio', value: formatBRL(ticketMedio),
+                sub: comValor < totalLic ? `entre as ${comValor.toLocaleString('pt-BR')} com valor` : 'por licitação' },
               // Denominador = o mesmo recorte SEM o filtro de aberto/encerrado. Com o
               // `totalLic` (que já é filtrado) a linha lia "50.241 de 50.241 total".
               { label: 'Em aberto', value: String(abertos), sub: `de ${universoLic} no recorte` },
@@ -582,7 +589,10 @@ function OportunidadesInner() {
                 { key: 'uf', label: 'UF' },
                 { key: 'municipio', label: 'Município' },
                 { key: 'score', label: 'Score' },
-                { key: 'valorEstimado', label: 'Valor Estimado', format: (v) => `R$ ${Number(v).toLocaleString('pt-BR')}` },
+                // "não informado" e não "R$ 0": 72% da base não traz valor, e exportar
+                // zero faria a planilha do cliente somar como se fossem gratuitas.
+                { key: 'valorEstimado', label: 'Valor Estimado',
+                  format: (v) => Number(v) > 0 ? `R$ ${Number(v).toLocaleString('pt-BR')}` : 'não informado' },
                 { key: 'status', label: 'Status' },
                 { key: 'urgencia', label: 'Urgência' },
               ]}

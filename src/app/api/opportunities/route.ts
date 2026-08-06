@@ -156,7 +156,13 @@ function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {
   // Ao filtrar por CIDADE específica (deep-link do mapa) o piso é dispensado: o usuário
   // quer ver TODAS as licitações daquela cidade e a contagem bate com o mapa.
   const where: string[] = ["objeto_compra IS NOT NULL"]
-  if (!params.municipio) where.unshift("(valor_total_estimado >= 10000 OR fonte <> 'pncp')")
+  // O piso corta o que SABIDAMENTE é pequeno — não o que está sem valor informado.
+  // Medido na base: das 331.177 contratações, 238.036 (72%) não têm valor porque a
+  // API de busca do PNCP não devolve o campo; só 29.274 são de fato < R$ 10 mil. Com
+  // o NULL caindo no piso, Licitações escondia 72% da base e contradizia o Mapa
+  // (306.975 abertas lá contra 50.241 aqui) — e uma licitação relevante ficava
+  // invisível por um dado que faltou na coleta, não por ser irrelevante.
+  if (!params.municipio) where.unshift("(valor_total_estimado IS NULL OR valor_total_estimado >= 10000 OR fonte <> 'pncp')")
   const args: unknown[] = []
   if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
   else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
@@ -171,7 +177,11 @@ function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {
 
 // Totais REAIS do filtro (não da página carregada) — para os KPIs refletirem todo
 // o universo selecionado, não só as N linhas renderizadas.
-export interface TotaisBanco { total: number; valorTotal: number; abertas: number; estados: number; universo: number }
+export interface TotaisBanco {
+  total: number; valorTotal: number; abertas: number; estados: number; universo: number
+  /** Quantas do filtro têm valor informado — denominador honesto do ticket médio. */
+  comValor: number
+}
 async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
   const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
   const cached = getCached<TotaisBanco>(cacheKey)
@@ -191,11 +201,12 @@ async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
             COALESCE(sum(valor_total_estimado) FILTER (WHERE ${statusSql}), 0)::float8 AS "valorTotal",
             count(*) FILTER (WHERE ${abertoExpr('contratacoes')})::int AS abertas,
             count(DISTINCT uf) FILTER (WHERE ${statusSql})::int AS estados,
-            count(*)::int AS universo
+            count(*)::int AS universo,
+            count(*) FILTER (WHERE ${statusSql} AND valor_total_estimado IS NOT NULL)::int AS "comValor"
        FROM contratacoes WHERE ${whereSql}`,
     args,
   )
-  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0, universo: 0 }, TTL.SHORT)
+  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0, universo: 0, comValor: 0 }, TTL.SHORT)
 }
 
 // Contagem por tipo de fornecimento (para as abas), SEM o filtro de tipo — assim
@@ -480,6 +491,7 @@ export async function GET(req: NextRequest) {
       abertas: resultado.filter((o) => o.licitacaoRelacionada?.situacaoCompraId === 1).length,
       estados: new Set(resultado.map((o) => o.uf)).size,
       universo: resultado.length,
+      comValor: resultado.filter((o) => o.valorEstimado > 0).length,
     }
 
     return NextResponse.json({
