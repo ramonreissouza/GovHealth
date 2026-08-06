@@ -278,6 +278,9 @@ export async function resolverTitular(userId: string): Promise<string> {
   return u?.titular_id ?? norm(userId)
 }
 
+/** Assentos mínimos garantidos pelo plano (a coluna `assentos` só serve para subir). */
+const PISO_ASSENTOS: Record<string, number> = { empresa: 5 }
+
 export interface EquipeInfo {
   titularId: string
   souTitular: boolean
@@ -290,8 +293,14 @@ export interface EquipeInfo {
 export async function equipeInfo(userId: string): Promise<EquipeInfo> {
   const id = norm(userId)
   const titularId = await resolverTitular(id)
-  const tit = await queryOne<{ assentos: number | null }>(`SELECT assentos FROM usuarios WHERE id=$1`, [titularId])
-  const assentos = tit?.assentos ?? 1
+  const tit = await queryOne<{ assentos: number | null; plano: string | null }>(
+    `SELECT assentos, plano FROM usuarios WHERE id=$1`, [titularId])
+  // `assentos` é preenchido à mão por conta, e nasce em 1. Uma conta Empresa criada
+  // sem esse ajuste mostrava "1 assento · 0 vagas · sem vagas disponíveis no plano" —
+  // contradizendo o próprio plano, que vende "Equipe: vários usuários / assentos"
+  // (lib/planos.ts), e travando o convite. O piso por plano evita depender da memória
+  // de quem cria a conta; para vender mais assentos, basta subir a coluna.
+  const assentos = Math.max(tit?.assentos ?? 1, PISO_ASSENTOS[tit?.plano ?? ''] ?? 1)
   const membros = await query<Usuario>(
     `SELECT ${COLS_USER} FROM usuarios WHERE (id=$1 OR titular_id=$1) AND deleted_at IS NULL ORDER BY criado_em`, [titularId])
   const convitesPendentes = await query<{ id: string; email: string; expira_em: string; token: string }>(

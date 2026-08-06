@@ -4,6 +4,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { clsx } from 'clsx'
 import { Send, Bot } from 'lucide-react'
+import { getEmpresa } from '@/lib/empresa'
+import { HYDRATED_EVENT } from '@/lib/synced'
 
 interface Message {
   id: string
@@ -12,13 +14,41 @@ interface Message {
   createdAt: Date
 }
 
-const SUGGESTIONS = [
-  'Quais municípios do Nordeste têm maior chance de abrir edital para tomografia nos próximos 90 dias?',
-  'Onde a Siemens Healthineers está dominando e como posso competir?',
-  'Quais hospitais receberam emendas parlamentares recentemente e ainda não licitaram?',
-  'Mostre oportunidades com score acima de 80 e baixa concorrência',
-  'Qual é o preço médio de contratos de ultrassom nos últimos 12 meses?',
-]
+// Sugestões derivadas do Setup da Empresa. Eram fixas, e uma delas citava pelo nome
+// uma empresa real ("Onde a Siemens Healthineers está dominando…") — que aparecia
+// dentro da conta de QUALQUER outro cliente. Agora as perguntas falam do território
+// e do produto de quem está logado; sem setup, caem num texto genérico.
+const REGIOES: Record<string, string[]> = {
+  Norte: ['AC', 'AM', 'AP', 'PA', 'RO', 'RR', 'TO'],
+  Nordeste: ['AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE'],
+  'Centro-Oeste': ['DF', 'GO', 'MS', 'MT'],
+  Sudeste: ['ES', 'MG', 'RJ', 'SP'],
+  Sul: ['PR', 'RS', 'SC'],
+}
+
+/** "BA, CE e mais 3 estados" / "no Nordeste" / "no Brasil" — como citar o território. */
+function rotuloTerritorio(ufs: string[]): string {
+  if (ufs.length === 0) return 'no Brasil'
+  const regiao = Object.entries(REGIOES).find(([, lista]) => ufs.every((u) => lista.includes(u)))
+  if (regiao && ufs.length >= 3) return `no ${regiao[0]}`
+  if (ufs.length <= 3) return `em ${ufs.join(', ')}`
+  return `em ${ufs.slice(0, 3).join(', ')} e mais ${ufs.length - 3}`
+}
+
+function montarSugestoes(): string[] {
+  const e = getEmpresa()
+  const onde = rotuloTerritorio(e.ufs)
+  const produto = e.produtos.find((p) => p.ativo)?.nome ?? e.termosBusca[0] ?? ''
+  return [
+    `Quais municípios ${onde} têm maior chance de abrir edital ${produto ? `para ${produto}` : 'de saúde'} nos próximos 90 dias?`,
+    `Quem são meus maiores concorrentes ${onde} e onde eles estão ganhando?`,
+    `Quais hospitais receberam emendas parlamentares recentemente e ainda não licitaram?`,
+    'Mostre oportunidades com score acima de 80 e baixa concorrência',
+    produto
+      ? `Qual é o preço médio de contratos de ${produto} nos últimos 12 meses?`
+      : 'Qual é o preço médio praticado nos contratos do meu segmento?',
+  ]
+}
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
@@ -34,6 +64,15 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Setup só existe no cliente (localStorage) e chega assíncrono logo após o login.
+  const [sugestoes, setSugestoes] = useState<string[]>([])
+  useEffect(() => {
+    const montar = () => setSugestoes(montarSugestoes())
+    montar()
+    window.addEventListener(HYDRATED_EVENT, montar)
+    return () => window.removeEventListener(HYDRATED_EVENT, montar)
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -199,7 +238,7 @@ export default function ChatInterface() {
         {/* Suggestions — só mostra na mensagem inicial */}
         {messages.length === 1 && (
           <div className="flex flex-wrap gap-2 pl-9">
-            {SUGGESTIONS.map((s) => (
+            {sugestoes.map((s) => (
               <button
                 key={s}
                 onClick={() => sendMessage(s)}

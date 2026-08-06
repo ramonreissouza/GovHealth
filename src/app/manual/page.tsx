@@ -165,7 +165,10 @@ const MODULOS: Modulo[] = [
     label: 'Meu Portfólio', icon: Boxes, pro: true,
     desc: 'Cadastre o que você vende; a plataforma prioriza as oportunidades que casam com o catálogo.',
     passos: [
-      'Cadastre seus produtos (nome, categoria, palavras-chave) — ou clique em "Carregar portfólio Siemens" para o catálogo demo.',
+      // Citava o botão "Carregar portfólio Siemens", que só existe na conta de
+      // demonstração da Siemens — os demais clientes liam o nome de outra empresa
+      // e procuravam um botão inexistente.
+      'Cadastre seus produtos (nome, categoria, palavras-chave).',
       'Vincule códigos CATMAT quando quiser precificação automática.',
       'Volte às Licitações: as que casam com o seu catálogo passam a ser destacadas.',
     ],

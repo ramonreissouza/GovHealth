@@ -16,7 +16,10 @@ import {
   gerarNotificacoesDosMatches,
   type AlertaConfig, type AlertaNotificacao, type AlertaCategoria,
 } from '@/lib/alertas'
-import { alertaDoSetup } from '@/lib/empresa'
+import { alertaDoSetup, getEmpresa, categoriasDoSetup } from '@/lib/empresa'
+import { categoriasMercadoDoSetup } from '@/lib/categoria-mercado'
+import { HYDRATED_EVENT } from '@/lib/synced'
+import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import type { Alert } from '@/lib/types'
 import { formatBRL } from '@/lib/format'
 import NotificationToggle from '@/components/ui/NotificationToggle'
@@ -324,10 +327,33 @@ export default function AlertasPage() {
     reload()
   }, [reload]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // O feed vinha do país inteiro: a tela prometia (no Setup) que "alertas puxam tudo
+  // daqui" e entregava editais de MG/PI/RS para quem atua em BA/CE/AL/PE/PB. Agora o
+  // recorte do Setup vai ao SERVIDOR; `semSetup` é a saída para ver tudo.
+  const [semSetup, setSemSetup] = useState(false)
+  const [setupFeed, setSetupFeed] = useState<{ ufs: string[]; tipo: string | null }>({ ufs: [], tipo: null })
+  useEffect(() => {
+    const ler = () => {
+      const e = getEmpresa()
+      const mercado = categoriasMercadoDoSetup(categoriasDoSetup(e))
+      // A API aceita UMA categoria (tipo_fornecimento). Com o setup caindo em mais de
+      // uma, filtrar por só uma delas esconderia alertas legítimos — então só por UF.
+      setSetupFeed({ ufs: e.ufs.map((u) => u.toUpperCase()), tipo: mercado.length === 1 ? mercado[0] : null })
+    }
+    ler()
+    window.addEventListener(HYDRATED_EVENT, ler)
+    return () => window.removeEventListener(HYDRATED_EVENT, ler)
+  }, [])
+
   const fetchFeed = useCallback(async () => {
     setLoadingFeed(true)
     try {
-      const res = await fetch('/api/alerts')
+      const p = new URLSearchParams()
+      if (!semSetup) {
+        if (setupFeed.ufs.length) p.set('ufs', setupFeed.ufs.join(','))
+        if (setupFeed.tipo) p.set('tipo', setupFeed.tipo)
+      }
+      const res = await fetch(`/api/alerts${p.size ? `?${p}` : ''}`)
       const data = await res.json()
       const apiAlerts: Alert[] = data.alerts ?? []
       const allConfigs = getAlertaConfigs()
@@ -361,7 +387,7 @@ export default function AlertasPage() {
       setNotifs(getNotificacoes())
     } catch { /* silent */ }
     finally { setLoadingFeed(false) }
-  }, [])
+  }, [semSetup, setupFeed])
 
   useEffect(() => {
     reload()
@@ -480,13 +506,23 @@ export default function AlertasPage() {
           {/* ── Notificações ─────────────────────────────────────────────────── */}
           {tab === 'notificacoes' && (
             <div>
+              {(setupFeed.ufs.length > 0 || setupFeed.tipo) && (
+                <SetupFilterHint
+                  estados={setupFeed.ufs.length > 0}
+                  categorias={!!setupFeed.tipo}
+                  className="mb-3"
+                  limpo={semSetup}
+                  onLimpar={() => setSemSetup(true)}
+                  onRestaurar={() => setSemSetup(false)}
+                />
+              )}
               {/* Toolbar */}
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <p className="text-[12px] text-faint font-mono-custom">
                     {loadingFeed
                       ? 'Atualizando feed…'
-                      : `${notifsFiltradas.length} notificação${notifsFiltradas.length !== 1 ? 'ões' : ''} · ${naoLidas} não lida${naoLidas !== 1 ? 's' : ''}`}
+                      : `${notifsFiltradas.length} ${notifsFiltradas.length !== 1 ? 'notificações' : 'notificação'} · ${naoLidas} não lida${naoLidas !== 1 ? 's' : ''}`}
                   </p>
                   {/* Filtro por estado */}
                   <div className="flex items-center gap-1">

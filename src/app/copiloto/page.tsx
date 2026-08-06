@@ -11,7 +11,9 @@ export default function CopilotoPage() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Topbar title="Copiloto IA" subtitle="GPT-4 · dados PNCP + TransfereGov" />
+        {/* Dizia "GPT-4", que não é o motor (ver lib/llm.ts). Anunciar um modelo que
+            não está rodando é o tipo de detalhe que o cliente confere. */}
+        <Topbar title="Copiloto IA" subtitle="dados PNCP + TransfereGov" />
         <main className="flex-1 overflow-hidden p-6 bg-bg">
           <div className="h-full max-w-3xl mx-auto flex flex-col">
             <ChatInterface />

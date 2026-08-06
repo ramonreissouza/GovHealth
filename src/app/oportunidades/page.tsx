@@ -201,6 +201,10 @@ function OportunidadesInner() {
   // sem deep-link de UF e sem o usuário ter mexido no filtro, aplica as UFs de
   // atuação salvas no Setup. Re-tenta quando a conta termina de hidratar do servidor
   // (as prefs chegam de forma assíncrona logo após o login).
+  // `setupResolvido` libera a 1a busca só quando já se sabe QUAIS UFs pedir — senão
+  // a tela dispara uma busca nacional que é jogada fora (e que, por ser mais lenta,
+  // ainda voltava por cima dos KPIs filtrados).
+  const [setupResolvido, setSetupResolvido] = useState(false)
   useEffect(() => {
     const aplicarSetup = () => {
       if (ufTocadoRef.current) return
@@ -211,8 +215,15 @@ function OportunidadesInner() {
       setTerrUFs(getTerritorio())
     }
     aplicarSetup()
-    window.addEventListener(HYDRATED_EVENT, aplicarSetup)
-    return () => window.removeEventListener(HYDRATED_EVENT, aplicarSetup)
+    const liberar = () => setSetupResolvido(true)
+    // Já dá para buscar: veio deep-link, ou o Setup desta conta já está no cache.
+    if (searchParams.get('uf') || getPreferences().ufs.length > 0) liberar()
+    // Senão espera a conta hidratar do servidor (as prefs chegam logo após o login).
+    // O timer é a rede de segurança: conta sem UFs salvas não pode ficar presa.
+    const backstop = setTimeout(liberar, 2500)
+    const aoHidratar = () => { aplicarSetup(); liberar() }
+    window.addEventListener(HYDRATED_EVENT, aoHidratar)
+    return () => { clearTimeout(backstop); window.removeEventListener(HYDRATED_EVENT, aoHidratar) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // Território ativo = ufsAtivos exatamente igual ao conjunto do território.
@@ -276,7 +287,15 @@ function OportunidadesInner() {
     setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })
   }
 
+  // Só a ÚLTIMA busca disparada pode escrever no estado. Ao entrar na tela sai uma
+  // busca sem o filtro do Setup (antes de as UFs hidratarem) e outra com; a sem
+  // filtro varre o país inteiro, demora ~3x mais e chegava DEPOIS — sobrescrevendo
+  // os KPIs. A tela dizia "R$ 221 bi · 50.241 · 27 estados" com o chip do Setup
+  // marcando 5 estados, quando o certo era "R$ 31,5 bi · 9.282 · 5 estados".
+  const reqSeq = useRef(0)
+
   const load = useCallback(async () => {
+    const seq = ++reqSeq.current
     setLoading(true)
     try {
       // Status/ano/tipo vão ao servidor para conter o volume (encerradas são ~10 mil)
@@ -300,15 +319,18 @@ function OportunidadesInner() {
       }
       const res = await fetch(`/api/opportunities?${params}`)
       const data = await res.json()
+      if (seq !== reqSeq.current) return          // resposta atrasada de um filtro velho
       publishDataStatus(data)
       setOpps(data.oportunidades ?? [])
       setTotais(data.totais ?? null)
       setPorTipo(data.porTipo ?? null)
-    } catch (e) { console.error(e) }
-    finally { setLoading(false) }
+    } catch (e) { if (seq === reqSeq.current) console.error(e) }
+    finally { if (seq === reqSeq.current) setLoading(false) }
   }, [categoria, minScore, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams])
 
-  useEffect(() => { load() }, [load])
+  // Espera o Setup ser resolvido antes da 1a busca. Sem isto, além da corrida acima,
+  // toda entrada em Licitações puxava 1.500 linhas do país inteiro para jogar fora.
+  useEffect(() => { if (setupResolvido) load() }, [load, setupResolvido])
 
   // Pré-carrega os itens de TODAS as licitações em lote (banco), em blocos, para
   // permitir buscar por equipamento/insumo — ex.: "luvas cirúrgicas" — e mostrar

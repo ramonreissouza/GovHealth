@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
-import { tocarSessao } from '@/lib/seguranca'
+import { FLAG_SESSAO_UNICA, tocarSessao } from '@/lib/seguranca'
 
 export const runtime = 'nodejs'
 
@@ -14,5 +14,11 @@ export async function POST(req: NextRequest) {
   const sid = token?.sessaoId as string | undefined
   if (!id || !sid) return NextResponse.json({ ok: false }, { status: 401 })
   const atual = await tocarSessao(id, sid)
-  return NextResponse.json({ ok: atual })
+  // `iniciarSessao` roda em TODO login, mesmo com a trava desligada — então o
+  // sessao_id do banco passa a ser o da máquina mais recente e o token das outras
+  // deixa de bater. Sem checar a flag aqui, o 2o login derrubava o 1o ("sua sessão
+  // foi encerrada") mesmo com AUTH_SESSAO_UNICA off — o que quebra justamente o
+  // plano Empresa, onde vários usuários dividem a conta. Com a trava off o
+  // heartbeat só mantém o "último visto" vivo; nunca desloga.
+  return NextResponse.json({ ok: FLAG_SESSAO_UNICA ? atual : true })
 }
