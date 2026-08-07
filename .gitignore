@@ -42,3 +42,4 @@ scripts/radar/.calibra/
 etl-historico.log
 *.err
 .pncp-municipios.json
+etl-enriquecer.log
