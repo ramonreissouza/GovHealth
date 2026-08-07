@@ -1,7 +1,9 @@
 'use client'
 // src/app/contratos/page.tsx — Contratos.gov.br (radar de vencimento + incumbentes + valores)
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
+import { Paginacao } from '@/components/ui/Paginacao'
+import { PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
@@ -33,6 +35,10 @@ export default function ContratosPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [fonte, setFonte] = useState<string>('')
   const { ordem, alternar } = useOrdenacao<'objeto' | 'vigencia' | 'valor'>()
+  // Filtro por ano de VENCIMENTO (não de assinatura): a tela existe para achar a
+  // janela de venda, e ela abre quando o contrato do concorrente termina.
+  const [anoVenc, setAnoVenc] = useState<string>('todos')
+  const [pagina, setPagina] = useState(1)
 
   const buscar = useCallback(async () => {
     const q = valor.trim()
@@ -62,11 +68,20 @@ export default function ContratosPage() {
     const fb = b.vigenciaFim ? new Date(b.vigenciaFim).getTime() : Infinity
     return fa - fb
   })
-  const ordenados = ordenarPor(porVencimento, ordem, {
+  const anoDe = (d: string | null | undefined) => (d ? String(d).slice(0, 4) : null)
+  // Anos presentes na resposta — o filtro só oferece o que existe, sem lista fixa.
+  const anosDisponiveis = [...new Set(contratos.map((c) => anoDe(c.vigenciaFim)).filter(Boolean) as string[])].sort()
+  const filtrados = anoVenc === 'todos' ? porVencimento : porVencimento.filter((c) => anoDe(c.vigenciaFim) === anoVenc)
+
+  const ordenados = ordenarPor(filtrados, ordem, {
     objeto: (c) => c.objeto,
     vigencia: (c) => (c.vigenciaFim ? new Date(c.vigenciaFim).getTime() : null),
     valor: (c) => c.valorGlobal,
   })
+  // Nova busca ou troca de ano volta para a página 1 — senão a página 5 de uma lista
+  // que encolheu para 2 mostraria vazio sem dizer por quê.
+  useEffect(() => { setPagina(1) }, [contratos, anoVenc, ordem])
+  const visiveis = ordenados.slice((pagina - 1) * PAGE_SIZE_PADRAO, pagina * PAGE_SIZE_PADRAO)
 
   return (
     <div className="flex h-screen bg-bg overflow-hidden">
@@ -160,8 +175,27 @@ export default function ContratosPage() {
                 </div>
               ) : (
                 <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
+                  {anosDisponiveis.length > 1 && (
+                    <div className="flex items-center gap-2 flex-wrap px-4 py-2.5 border-b border-subtle">
+                      <span className="text-[9px] font-mono-custom text-faint uppercase tracking-wider mr-1">Vence em</span>
+                      {['todos', ...anosDisponiveis].map((a) => (
+                        <button key={a} onClick={() => setAnoVenc(a)}
+                          className={clsx('text-[11px] font-mono-custom px-2.5 py-1 rounded-lg transition-all',
+                            anoVenc === a ? 'bg-accent text-black font-bold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                          {a === 'todos' ? 'Todos' : a}
+                          {a !== 'todos' && (
+                            <span className="ml-1 opacity-60">
+                              {porVencimento.filter((c) => anoDe(c.vigenciaFim) === a).length}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between px-4 py-2.5 border-b border-subtle bg-bg3/40">
-                    <span className="text-[11px] font-mono-custom text-faint">{ordenados.length} contratos · ordenados por vencimento</span>
+                    <span className="text-[11px] font-mono-custom text-faint">
+                      {ordenados.length} contratos{anoVenc !== 'todos' ? ` vencendo em ${anoVenc}` : ''} · ordenados por vencimento
+                    </span>
                     <ExportButton
                       data={ordenados}
                       filename="contratos-gov"
@@ -189,7 +223,7 @@ export default function ContratosPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {ordenados.map((c) => {
+                      {visiveis.map((c) => {
                         const dias = c.vigenciaFim ? diasRestantes(c.vigenciaFim) : null
                         const vencido = dias !== null && dias < 0
                         const urgente = dias !== null && dias >= 0 && dias <= 180
@@ -232,6 +266,14 @@ export default function ContratosPage() {
                       })}
                     </tbody>
                   </table>
+                  <Paginacao
+                    pagina={pagina}
+                    totalItens={ordenados.length}
+                    porPagina={PAGE_SIZE_PADRAO}
+                    onPagina={setPagina}
+                    rotuloItens="contratos"
+                    className="px-4 py-3 border-t border-subtle"
+                  />
                   <div className="px-4 py-3 border-t border-subtle flex items-center justify-between">
                     <span className="text-[10px] font-mono-custom text-faint flex items-center gap-1.5"><Users size={11} /> Fonte: {fonte || (modo === 'cnpj' ? 'PNCP' : 'Contratos.gov.br')}</span>
                     <a href={modo === 'cnpj' ? 'https://pncp.gov.br' : 'https://contratos.comprasnet.gov.br'} target="_blank" rel="noopener noreferrer"

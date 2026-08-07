@@ -19,12 +19,20 @@ import { clearLocalData } from '@/lib/synced'
 // Rotas que dependem de IA — ocultadas da navegação quando IA_HABILITADA é false.
 const IA_HREFS = new Set(['/copiloto', '/edital'])
 
+// "Principal" = o que se usa para TRABALHAR uma disputa (achar, ser avisado,
+// acompanhar, não perder prazo). "Inteligência" = o que se consulta para DECIDIR
+// (histórico, concorrência, preço). Radar de Chat, Alertas, Pipeline e Agenda
+// estavam em Inteligência, mas nenhum deles é análise: são a operação do dia.
 const NAV_STATIC = [
   {
     label: 'Principal',
     items: [
       { href: '/', label: 'Dashboard', icon: LayoutDashboard, badge: null as string | null },
       { href: '/oportunidades', label: 'Licitações', icon: Zap, badge: null as string | null },
+      { href: '/radar', label: 'Radar de Chat', icon: Radar, badge: 'novo' as string | null },
+      { href: '/alertas', label: 'Alertas', icon: Bell, badge: null as string | null },
+      { href: '/crm', label: 'Pipeline CRM', icon: Kanban, badge: null as string | null },
+      { href: '/agenda', label: 'Agenda de Prazos', icon: CalendarClock, badge: null as string | null },
       { href: '/analise', label: 'Maior Atuação', icon: BarChart3, badge: null as string | null },
       { href: '/mapa', label: 'Mapa', icon: Map, badge: null as string | null },
       { href: '/copiloto', label: 'Copiloto IA', icon: Bot, badge: 'IA' as string | null },
@@ -44,15 +52,11 @@ const NAV_STATIC = [
       // { href: '/concorrentes', label: 'Concorrentes', icon: Users, badge: null as string | null },
       // { href: '/timeline', label: 'Timeline', icon: GitBranch, badge: '3' as string | null },
       { href: '/precos', label: 'Preços Ref.', icon: TrendingDown, badge: null as string | null },
-      { href: '/crm', label: 'Pipeline CRM', icon: Kanban, badge: null as string | null },
-      { href: '/agenda', label: 'Agenda de Prazos', icon: CalendarClock, badge: null as string | null },
       // Dossiês de Edital desativado (a pedido). Reativar: descomentar a linha abaixo.
       // { href: '/editais', label: 'Dossiês de Edital', icon: FolderKanban, badge: null as string | null },
       { href: '/contratos', label: 'Contratos.gov', icon: FileSignature, badge: null as string | null },
       { href: '/estados', label: 'Portais Estaduais', icon: Globe2, badge: '27' as string | null },
       { href: '/radar-verba', label: 'Radar de Verba', icon: Flame, badge: 'novo' as string | null },
-      { href: '/radar', label: 'Radar de Chat', icon: Radar, badge: 'novo' as string | null },
-      { href: '/alertas', label: 'Alertas', icon: Bell, badge: null as string | null },
     ],
   },
   {

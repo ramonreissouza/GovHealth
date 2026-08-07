@@ -14,6 +14,7 @@ import { getProdutos } from '@/lib/portfolio'
 import type { AnaliseEdital } from '@/lib/types'
 import { IA_HABILITADA } from '@/lib/features'
 import { IADesativada } from '@/components/ui/IADesativada'
+import HistoricoConversas, { useHistorico } from '@/components/ia/HistoricoConversas'
 
 const SEV_STYLE: Record<string, string> = {
   alta:  'bg-red-500/15 text-red-400 border-red-500/30',
@@ -102,14 +103,42 @@ export default function EditalPage() {
   const [fileName, setFileName] = useState<string | null>(null)
   const [produtos, setProdutos] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
+  // Histórico: cada análise vira uma "conversa" salva na CONTA. Antes só a ÚLTIMA
+  // sobrevivia (localStorage), e mesmo assim presa àquele navegador — analisar um
+  // segundo edital apagava o primeiro, e não havia como voltar nele.
+  const [conversaId, setConversaId] = useState<string | null>(null)
+  const { conversas, recarregar } = useHistorico('edital')
 
   useEffect(() => {
     setProdutos(getProdutos().filter((p) => p.ativo).map((p) => p.nome))
     // Restaura a última análise — não perder ao sair da tela e voltar.
     try {
       const raw = localStorage.getItem(LS_EDITAL)
-      if (raw) { const o = JSON.parse(raw); if (o?.analise) { setAnalise(o.analise); if (o.fileName) setFileName(o.fileName) } }
+      if (raw) {
+        const o = JSON.parse(raw)
+        if (o?.analise) { setAnalise(o.analise); if (o.fileName) setFileName(o.fileName); if (o.conversaId) setConversaId(o.conversaId) }
+      }
     } catch { /* noop */ }
+  }, [])
+
+  const abrirConversa = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/ia/conversas/${id}`)
+      if (!r.ok) return
+      const j = await r.json()
+      const comDados = (j.mensagens ?? []).find((m: { dados: unknown }) => m.dados)
+      if (!comDados?.dados) return
+      setConversaId(id)
+      setAnalise(comDados.dados as AnaliseEdital)
+      setFileName(j.conversa?.titulo ?? null)
+      setTexto(''); setErro(null); setPdfStatus(null)
+    } catch { /* mantém a análise atual */ }
+  }, [])
+
+  const novaAnalise = useCallback(() => {
+    setConversaId(null)
+    setTexto(''); setAnalise(null); setErro(null); setPdfStatus(null); setFileName(null)
+    try { localStorage.removeItem(LS_EDITAL) } catch { /* noop */ }
   }, [])
 
   const handleFile = useCallback(async (file: File) => {
@@ -154,8 +183,31 @@ export default function EditalPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? 'Erro')
       setAnalise(data.analise)
+      // Salva no histórico da conta (uma conversa por análise). O título é o nome do
+      // arquivo quando veio PDF; senão o objeto que a IA extraiu — é o que faz o
+      // usuário reconhecer a análise na lista meses depois.
+      const titulo = fileName || data.analise?.objeto || 'Análise de edital'
+      let id = conversaId
+      try {
+        const r = await fetch('/api/ia/conversas', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tipo: 'edital', titulo,
+            mensagens: [
+              // Guardamos só um trecho do edital: o texto inteiro pode ter centenas de
+              // milhares de caracteres e não é lido de volta — quem redesenha a tela
+              // é a análise em `dados`.
+              { papel: 'user', conteudo: texto.slice(0, 2000) },
+              { papel: 'assistant', conteudo: data.analise?.resumo ?? '', dados: data.analise },
+            ],
+          }),
+        })
+        const j = await r.json()
+        if (j?.id) { id = j.id; setConversaId(j.id) }
+        await recarregar()
+      } catch { /* a análise segue na tela mesmo se o histórico falhar */ }
       // Persiste para não perder ao navegar para outra tela e voltar.
-      try { localStorage.setItem(LS_EDITAL, JSON.stringify({ analise: data.analise, fileName, criadoEm: Date.now() })) } catch { /* noop */ }
+      try { localStorage.setItem(LS_EDITAL, JSON.stringify({ analise: data.analise, fileName, conversaId: id, criadoEm: Date.now() })) } catch { /* noop */ }
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao analisar o edital.')
     } finally {
@@ -163,10 +215,7 @@ export default function EditalPage() {
     }
   }
 
-  function limpar() {
-    setTexto(''); setAnalise(null); setErro(null); setPdfStatus(null); setFileName(null)
-    try { localStorage.removeItem(LS_EDITAL) } catch { /* noop */ }
-  }
+  function limpar() { novaAnalise() }
 
   if (!IA_HABILITADA) return <IADesativada title="Copiloto de Edital" />
 
@@ -175,6 +224,17 @@ export default function EditalPage() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar title="Copiloto de Edital" subtitle="Análise de edital/TR com IA" />
+        <div className="flex-1 flex overflow-hidden">
+        <HistoricoConversas
+          tipo="edital"
+          conversas={conversas}
+          ativaId={conversaId}
+          onAbrir={abrirConversa}
+          onNova={novaAnalise}
+          onApagada={() => { void recarregar(); novaAnalise() }}
+          rotuloNovo="Novo edital"
+          vazio="Cada edital analisado fica salvo aqui — dá para reabrir a análise depois sem colar o texto de novo."
+        />
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-[920px] mx-auto">
 
@@ -266,6 +326,7 @@ export default function EditalPage() {
               </>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

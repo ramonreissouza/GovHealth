@@ -1,11 +1,18 @@
 'use client'
 // src/components/copiloto/ChatInterface.tsx
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { clsx } from 'clsx'
 import { Send, Bot } from 'lucide-react'
 import { getEmpresa } from '@/lib/empresa'
 import { HYDRATED_EVENT } from '@/lib/synced'
+import HistoricoConversas, { useHistorico } from '@/components/ia/HistoricoConversas'
+
+const SAUDACAO =
+  'Olá! Sou o **GovHealth AI**, seu copiloto de inteligência comercial para saúde pública.\n\n' +
+  'Tenho acesso em tempo real a dados do **PNCP**, **TransfereGov** e **Portal da Transparência**. Posso ajudar você a:\n\n' +
+  '• Identificar oportunidades antes do edital\n• Analisar concorrentes por região\n' +
+  '• Prever editais baseado em convênios ativos\n• Priorizar sua carteira comercial\n\nO que você quer descobrir?'
 
 interface Message {
   id: string
@@ -52,18 +59,65 @@ function montarSugestoes(): string[] {
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'init',
-      role: 'assistant',
-      content:
-        'Olá! Sou o **GovHealth AI**, seu copiloto de inteligência comercial para saúde pública.\n\nTenho acesso em tempo real a dados do **PNCP**, **TransfereGov** e **Portal da Transparência**. Posso ajudar você a:\n\n• Identificar oportunidades antes do edital\n• Analisar concorrentes por região\n• Prever editais baseado em convênios ativos\n• Priorizar sua carteira comercial\n\nO que você quer descobrir?',
-      createdAt: new Date(),
-    },
+    { id: 'init', role: 'assistant', content: SAUDACAO, createdAt: new Date() },
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Histórico: a conversa vive na CONTA. `conversaId` null = ainda não salva (a tela
+  // abriu no "Olá!" e ninguém perguntou nada). A saudação NÃO é gravada — é texto
+  // fixo da tela, não conteúdo do usuário; salvá-la encheria o histórico de conversas
+  // idênticas e vazias.
+  const [conversaId, setConversaId] = useState<string | null>(null)
+  const { conversas, recarregar } = useHistorico('copiloto')
+
+  const novaConversa = useCallback(() => {
+    setConversaId(null)
+    setMessages([{ id: 'init', role: 'assistant', content: SAUDACAO, createdAt: new Date() }])
+    setInput('')
+    inputRef.current?.focus()
+  }, [])
+
+  const abrirConversa = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/ia/conversas/${id}`)
+      if (!r.ok) return
+      const j = await r.json()
+      setConversaId(id)
+      setMessages((j.mensagens ?? []).map((m: { id: number; papel: string; conteudo: string; criado_em: string }) => ({
+        id: String(m.id),
+        role: m.papel === 'assistant' ? 'assistant' as const : 'user' as const,
+        content: m.conteudo,
+        createdAt: new Date(m.criado_em),
+      })))
+    } catch { /* deixa a conversa atual na tela */ }
+  }, [])
+
+  /** Grava o par pergunta+resposta. Cria a conversa no primeiro par. */
+  const persistir = useCallback(async (pergunta: string, resposta: string) => {
+    const mensagens = [
+      { papel: 'user', conteudo: pergunta },
+      { papel: 'assistant', conteudo: resposta },
+    ]
+    try {
+      if (conversaId) {
+        await fetch(`/api/ia/conversas/${conversaId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mensagens }),
+        })
+      } else {
+        const r = await fetch('/api/ia/conversas', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tipo: 'copiloto', mensagens }),
+        })
+        const j = await r.json()
+        if (j?.id) setConversaId(j.id)
+      }
+      await recarregar()
+    } catch { /* a conversa segue na tela mesmo se o histórico falhar */ }
+  }, [conversaId, recarregar])
 
   // Setup só existe no cliente (localStorage) e chega assíncrono logo após o login.
   const [sugestoes, setSugestoes] = useState<string[]>([])
@@ -98,6 +152,8 @@ export default function ChatInterface() {
       { id: assistantId, role: 'assistant', content: '', createdAt: new Date() },
     ])
 
+    // Fora do try porque o `finally` precisa ler o texto acumulado para gravar.
+    let accumulated = ''
     try {
       const res = await fetch('/api/copiloto', {
         method: 'POST',
@@ -114,7 +170,6 @@ export default function ChatInterface() {
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let accumulated = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -173,6 +228,9 @@ export default function ChatInterface() {
     } finally {
       setLoading(false)
       inputRef.current?.focus()
+      // Só grava se a resposta veio. Salvar um turno com resposta vazia deixaria no
+      // histórico uma conversa que não dá para retomar.
+      if (accumulated.trim()) void persistir(userMsg.content, accumulated)
     }
   }
 
@@ -192,7 +250,18 @@ export default function ChatInterface() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full overflow-hidden">
+      <HistoricoConversas
+        tipo="copiloto"
+        conversas={conversas}
+        ativaId={conversaId}
+        onAbrir={abrirConversa}
+        onNova={novaConversa}
+        // Apagar a conversa ABERTA tem de limpar a tela também — senão ela continua
+        // ali, parecendo salva, e a próxima pergunta ressuscitaria um id que já não existe.
+        onApagada={() => { void recarregar(); novaConversa() }}
+      />
+      <div className="flex-1 flex flex-col h-full min-w-0 pl-5">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
         {messages.map((msg) => (
@@ -272,6 +341,7 @@ export default function ChatInterface() {
         >
           <Send size={14} />
         </button>
+      </div>
       </div>
     </div>
   )

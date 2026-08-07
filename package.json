@@ -59,7 +59,9 @@
     "etl:historico": "node scripts/etl-historico.mjs",
     "hist:status": "node scripts/hist-status.mjs",
     "categoria:migrate": "node --experimental-strip-types scripts/migrate-categoria-mercado.mjs",
-    "radar:migrate-saude": "node scripts/migrate-radar-saude-publica.mjs"
+    "radar:migrate-saude": "node scripts/migrate-radar-saude-publica.mjs",
+    "etl:enriquecer": "node scripts/etl-enriquecer.mjs",
+    "ia:migrate": "node scripts/migrate-ia-conversas.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",

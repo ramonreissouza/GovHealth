@@ -14,8 +14,10 @@ export default function CopilotoPage() {
         {/* Dizia "GPT-4", que não é o motor (ver lib/llm.ts). Anunciar um modelo que
             não está rodando é o tipo de detalhe que o cliente confere. */}
         <Topbar title="Copiloto IA" subtitle="dados PNCP + TransfereGov" />
-        <main className="flex-1 overflow-hidden p-6 bg-bg">
-          <div className="h-full max-w-3xl mx-auto flex flex-col">
+        {/* Sem `max-w-3xl` aqui: a coluna de conversas anteriores mora dentro do
+            ChatInterface, e o limite de largura da página a espremeria. */}
+        <main className="flex-1 overflow-hidden py-6 pr-6 bg-bg">
+          <div className="h-full flex flex-col">
             <ChatInterface />
           </div>
         </main>
