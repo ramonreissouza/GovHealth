@@ -171,7 +171,9 @@
       "Bash(OUTDIR=\"C:/Users/souza/AppData/Local/Temp/claude/C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean/769a2f61-a104-4814-b47a-4a05fcc18ba8/scratchpad/shots\" AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_v3.mjs)",
       "PowerShell(npx eslint src/lib/llm.ts src/app/api/copiloto/route.ts src/app/api/edital/analise/route.ts 2>&1)",
       "PowerShell(npx eslint src/app/edital/page.tsx src/components/edital/PerguntasEdital.tsx src/components/copiloto/ChatInterface.tsx src/app/api/edital/pergunta/route.ts 2>&1)",
-      "Bash(iconv -f utf-8 -t utf-8)"
+      "Bash(iconv -f utf-8 -t utf-8)",
+      "Bash(vercel deploy *)",
+      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)"
     ]
   }
 }

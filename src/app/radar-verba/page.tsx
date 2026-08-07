@@ -395,7 +395,11 @@ function RadarVerbaConteudo() {
                       <dl className="text-[11px] space-y-1">
                         {detalhe.resumo.favorecido && (
                           <div className="flex gap-1.5">
-                            <dt className="text-faint flex-shrink-0">Quem recebe (e vai licitar):</dt>
+                            {/* Emenda de comissão é rateada entre municípios: chamar o maior
+                                favorecido de "quem recebe" esconderia os outros destinos. */}
+                            <dt className="text-faint flex-shrink-0">
+                              {detalhe.resumo.destinos > 1 ? `Maior destino (de ${detalhe.resumo.destinos}):` : 'Quem recebe (e vai licitar):'}
+                            </dt>
                             <dd className="text-muted">{detalhe.resumo.favorecido}{detalhe.resumo.cnpjFavorecido && <span className="text-faint font-mono-custom"> · {detalhe.resumo.cnpjFavorecido}</span>}</dd>
                           </div>
                         )}

@@ -157,6 +157,9 @@ export interface EmendaResumo {
   programa: string
   favorecido: string        // quem recebe o dinheiro — e quem vai licitar
   cnpjFavorecido: string
+  /** Quantos favorecidos distintos aparecem nos empenhos detalhados. >1 em emenda de
+   *  comissão, que é rateada entre municípios: aí `favorecido` é só o maior deles. */
+  destinos: number
   transferencia: string     // "Transferências a Municípios - Fundo a Fundo"
   orgaoRepassador: string
   observacao: string
@@ -237,6 +240,7 @@ export async function buscarDetalheEmenda(codigoEmenda: string, maxEmpenhos = 8)
         programa: semCodigo(principal.programa),
         favorecido: principal.favorecido || principal.ug,
         cnpjFavorecido: principal.codigoFavorecido,
+        destinos: new Set(empenhos.map((e) => e.codigoFavorecido || e.favorecido).filter(Boolean)).size,
         transferencia: semCodigo(principal.modalidade),
         orgaoRepassador: principal.orgaoSuperior || principal.orgao,
         observacao: principal.observacao,
