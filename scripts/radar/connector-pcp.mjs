@@ -86,6 +86,11 @@ export async function extrairMensagensHeuristica(page) {
       vistos.add(chave)
       const mp = txt.match(PAPEL)
       const mh = txt.match(HORA)
+      // SEM HORÁRIO NÃO É MENSAGEM. Só o papel ("fornecedor", "autoridade") casava com
+      // o menu do portal e com o rodapé, e isso virava mensagem no radar: "Processos
+      // Comprador Fornecedor Marketplace…", "CRIE SUA CONTA", telefone da central.
+      // Eram 7% do que o cliente via na tela. Todo item real do andamento tem data/hora.
+      if (!mh) continue
       // autor = trecho até ':' se começar com um papel; senão o próprio papel casado.
       let autor = null
       const antesDoisPontos = txt.split(/[:—-]/)[0]?.trim()

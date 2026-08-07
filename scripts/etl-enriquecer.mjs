@@ -20,9 +20,9 @@
 // Restartável: o progresso vai para etl_checkpoint por (mês, modalidade).
 //
 // Uso:
-//   node scripts/etl-enriquecer.mjs                    (2024-01 até hoje)
+//   node scripts/etl-enriquecer.mjs                    (2025-01 até hoje)
 //   node scripts/etl-enriquecer.mjs --de=2026-01 --ate=2026-08
-//   node scripts/etl-enriquecer.mjs --pausa=250
+//   node scripts/etl-enriquecer.mjs --conc=6 --pausa=250
 
 import fs from 'node:fs'
 import pg from 'pg'
@@ -36,9 +36,15 @@ if (!process.env.DATABASE_URL) {
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada.'); process.exit(1) }
 
 const arg = (n, d) => { const m = process.argv.find((a) => a.startsWith(`--${n}=`)); return m ? m.slice(n.length + 3) : d }
-const DE = arg('de', '2024-01')
+// Começa em 2025: medido na base, 2024 tem 1.469 contratações sem valor contra
+// 186.665 de 2025 e 49.477 de 2026. Varrer 2024 custa ~20 mil requisições para
+// alcançar 0,6% do que falta.
+const DE = arg('de', '2025-01')
 const ATE = arg('ate', new Date().toISOString().slice(0, 7))
 const PAUSA = Number(arg('pausa', '400'))
+// Frentes simultâneas. Fica em 1 por medição, não por conservadorismo: com 4 o PNCP
+// devolveu 429 em 22 das 27 primeiras frentes. Uma requisição por vez passa sempre.
+const CONC = Number(arg('conc', '1'))
 const BASE = 'https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao'
 const UA = 'GovHealth-ETL/1.0'
 
@@ -102,8 +108,11 @@ function meses(de, ate) {
 async function pagina(mes, mod, pag, tentativa = 0) {
   const url = `${BASE}?dataInicial=${ymd(mes, '01')}&dataFinal=${ymd(mes, ultimoDia(mes))}`
     + `&codigoModalidadeContratacao=${mod}&pagina=${pag}&tamanhoPagina=50`
+  // 60s, não 30: medido, a lista do PNCP leva 6-9s por página em condição normal e
+  // passa disso com várias frentes abertas. Com 30s o abort virava "furo" e a frente
+  // era abandonada inteira — foi o que aconteceu na primeira tentativa em paralelo.
   const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), 30000)
+  const timer = setTimeout(() => ac.abort(), 60000)
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': UA }, signal: ac.signal })
     if (r.status === 204) return { data: [], totalPaginas: 0 }
@@ -113,7 +122,14 @@ async function pagina(mes, mod, pag, tentativa = 0) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     return await r.json()
   } catch (e) {
-    if (tentativa < 5) { await sleep(2000 * (tentativa + 1)); return pagina(mes, mod, pag, tentativa + 1) }
+    // Recuo mais longo em 429: 2s não devolvia a cota, e as 5 tentativas queimavam em
+    // 30s. Agora vai a 5/10/20/40/80s.
+    const espera = String(e).includes('429') ? 5000 * 2 ** tentativa : 2000 * (tentativa + 1)
+    if (tentativa < 5) { await sleep(espera); return pagina(mes, mod, pag, tentativa + 1) }
+    // Desistir em silêncio escondia a razão: a frente inteira era abandonada e o log
+    // só mostrava "concluída". O motivo importa — 429 pede menos frentes, timeout pede
+    // mais paciência.
+    console.warn(`[enriq] furo em ${mes}/mod${mod} pág ${pag}: ${e instanceof Error ? e.message : e}`)
     return null
   } finally { clearTimeout(timer) }
 }
@@ -140,36 +156,51 @@ async function gravar(lote) {
 }
 
 const lista = meses(DE, ATE)
-console.log(`[enriq] ${lista.length} mês(es) × ${MODALIDADES.length} modalidades · ${DE} → ${ATE} · pausa ${PAUSA}ms`)
-let reqs = 0, vistos = 0, gravados = 0, furos = 0
+// Cada par (mês, modalidade) é independente e tem checkpoint próprio — dá para
+// rodar vários ao mesmo tempo. Medido em série: ~9 req/min, porque a lista do PNCP
+// leva ~6s por página e a pausa é irrelevante perto disso; as ~50 mil páginas
+// levariam DIAS. O gargalo é espera de rede, não taxa.
+const pares = lista.flatMap((mes) => MODALIDADES.map((mod) => ({ mes, mod })))
+console.log(`[enriq] ${lista.length} mês(es) × ${MODALIDADES.length} modalidades = ${pares.length} frentes · ${DE} → ${ATE} · ${CONC} em paralelo · pausa ${PAUSA}ms`)
+let reqs = 0, vistos = 0, gravados = 0, furos = 0, feitas = 0
 const t0 = Date.now()
 
-for (const mes of lista) {
-  for (const mod of MODALIDADES) {
-    const chave = `enriq:${mes}:${mod}`
-    let pag = await lerCp(chave)
-    if (pag === -1) continue                       // já concluído
-    for (;;) {
-      pag++
-      const j = await pagina(mes, mod, pag)
-      reqs++
-      if (j === null) { furos++; break }            // desistiu após 5 tentativas
-      const itens = j.data ?? []
-      if (!itens.length) { await salvarCp(chave, -1); break }
-      vistos += itens.length
-      const lote = itens
-        .filter((x) => x.numeroControlePNCP && x.valorTotalEstimado != null)
-        .map((x) => ({ id: x.numeroControlePNCP, valor: x.valorTotalEstimado,
-                       modalidade: x.modalidadeNome ?? null, link: x.linkSistemaOrigem ?? null }))
-      gravados += await gravar(lote)
-      await salvarCp(chave, pag)
-      if (pag >= (j.totalPaginas ?? pag)) { await salvarCp(chave, -1); break }
-      await sleep(PAUSA)
-    }
+async function varrer({ mes, mod }) {
+  const chave = `enriq:${mes}:${mod}`
+  let pag = await lerCp(chave)
+  if (pag === -1) return                           // já concluído
+  for (;;) {
+    pag++
+    const j = await pagina(mes, mod, pag)
+    reqs++
+    if (j === null) { furos++; break }              // desistiu após 5 tentativas
+    const itens = j.data ?? []
+    if (!itens.length) { await salvarCp(chave, -1); break }
+    vistos += itens.length
+    const lote = itens
+      .filter((x) => x.numeroControlePNCP && x.valorTotalEstimado != null)
+      .map((x) => ({ id: x.numeroControlePNCP, valor: x.valorTotalEstimado,
+                     modalidade: x.modalidadeNome ?? null, link: x.linkSistemaOrigem ?? null }))
+    gravados += await gravar(lote)
+    await salvarCp(chave, pag)
+    if (pag >= (j.totalPaginas ?? pag)) { await salvarCp(chave, -1); break }
+    await sleep(PAUSA)
   }
-  const min = (Date.now() - t0) / 60000
-  console.log(`[enriq] ${mes} · ${reqs} req · ${vistos.toLocaleString('pt-BR')} vistos · ${gravados.toLocaleString('pt-BR')} preenchidos · ${Math.round(reqs / Math.max(min, 0.01))} req/min`)
 }
+
+const fila = pares.slice()
+await Promise.all(Array.from({ length: CONC }, async () => {
+  for (;;) {
+    const p = fila.shift()
+    if (!p) return
+    await varrer(p)
+    feitas++
+    const min = (Date.now() - t0) / 60000
+    console.log(`[enriq] ${p.mes}/mod${p.mod} · ${feitas}/${pares.length} frentes · ${reqs} req · `
+      + `${vistos.toLocaleString('pt-BR')} vistos · ${gravados.toLocaleString('pt-BR')} preenchidos · `
+      + `${furos} furo(s) · ${Math.round(reqs / Math.max(min, 0.01))} req/min`)
+  }
+}))
 
 const falta = (await db(`SELECT count(*)::int n FROM contratacoes WHERE valor_total_estimado IS NULL`)).rows[0].n
 console.log(`✓ Fim: ${gravados.toLocaleString('pt-BR')} contratações ganharam valor. Ainda sem valor: ${falta.toLocaleString('pt-BR')}. Páginas que furaram: ${furos}.`)

@@ -173,7 +173,9 @@
       "PowerShell(npx eslint src/app/edital/page.tsx src/components/edital/PerguntasEdital.tsx src/components/copiloto/ChatInterface.tsx src/app/api/edital/pergunta/route.ts 2>&1)",
       "Bash(iconv -f utf-8 -t utf-8)",
       "Bash(vercel deploy *)",
-      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)"
+      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)",
+      "Bash(sed -i \"s|await pg.locator\\('main'\\).innerText\\(\\)|await pg.locator\\('body'\\).innerText\\(\\)|\" _verif.mjs)",
+      "Bash(U='primemedical@govhealth.ai' P='PrimeMedical@2026' node _verif.mjs)"
     ]
   }
 }
