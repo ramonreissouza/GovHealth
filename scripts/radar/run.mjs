@@ -6,6 +6,7 @@
 //
 // Uso:
 //   node scripts/radar/run.mjs                 # captura real (Compras.gov.br)
+//   node scripts/radar/run.mjs --urgentes      # só processos com sessão à porta (roda a cada 20 min)
 //   node scripts/radar/run.mjs --simulado      # fixtures, sem browser (grava)
 //   node scripts/radar/run.mjs --simulado --dry # fixtures, sem gravar (só imprime)
 
@@ -31,10 +32,30 @@ loadEnv()
 const DRY = process.argv.includes('--dry')
 const SIMULADO = process.argv.includes('--simulado')
 const ONLY_PCP = process.argv.includes('--pcp-only') // pula o laço de credenciais; só o passo público (PCP)
+// PASSADA DE URGÊNCIA (a cada 20 min, contra as 2 h da passada completa).
+// Só processos com sessão à porta: é quando o chat ferve (convocação, diligência com
+// prazo de horas, intenção de recurso) e 2 h de atraso custa o certame.
+const URGENTES = process.argv.includes('--urgentes')
 const argVal = (name, def) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : def }
 const LIMIT = Number(argVal('limit', '0')) || 0 // 0 = sem limite; N = no máx. N processos PCP públicos
 
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada.'); process.exit(1) }
+
+// RECORTE DA PASSADA DE URGÊNCIA
+// A data da sessão não está em radar_processos; vem de `contratacoes` pelo
+// numero_controle_pncp. Duas limitações que este SQL não esconde:
+//  · as colunas são DATE, sem hora — "próximas 24 h" vira ontem/hoje/amanhã. Ontem
+//    entra porque disputa que começou à tarde atravessa a noite, e sem horário não
+//    dá para saber se já acabou;
+//  · processo que não casa com `contratacoes` (metade deles, medido) não tem data e
+//    NUNCA entra aqui — segue coberto pela passada completa de 2 h, e só por ela.
+const FILTRO_URGENTE = `
+      AND EXISTS (
+        SELECT 1 FROM contratacoes c
+         WHERE c.numero_controle_pncp = p.licitacao_id
+           AND (c.data_encerramento_proposta BETWEEN current_date - 1 AND current_date + 1
+             OR c.data_abertura_proposta     BETWEEN current_date - 1 AND current_date + 1))`
+const filtro = URGENTES ? FILTRO_URGENTE : ''
 
 // ── cofre (mesmo algoritmo de src/lib/radar/crypto.ts) ───────────────────────
 function decrypt(blob) {
@@ -157,10 +178,30 @@ await client.connect()
 let totalMsgs = 0, novasMsgs = 0, conectores = 0
 try {
   const { rows: creds } = await client.query(
-    `SELECT id, titular_id, user_id, conector_id, cnpj, login, cred_cipher, storage_state
-       FROM radar_credenciais WHERE ativo = true`,
+    `SELECT c.id, c.titular_id, c.user_id, c.conector_id, c.cnpj, c.login, c.cred_cipher, c.storage_state
+       FROM radar_credenciais c
+       LEFT JOIN radar_saude s ON s.credencial_id = c.id
+      WHERE c.ativo = true
+        -- Na passada de 20 min, credencial que já pede intervenção humana fica de fora:
+        -- insistir no login a cada 20 min não resolve CAPTCHA nem sessão expirada, e
+        -- ainda arrisca bloqueio da conta no portal. A passada de 2 h continua tentando.
+        ${URGENTES ? `AND coalesce(s.status, '') NOT IN ('captcha_2fa', 'sessao_expirada')` : ''}`,
   )
-  console.log(`→ ${creds.length} credencial(is) ativa(s)${SIMULADO ? ' [SIMULADO]' : ''}${DRY ? ' [DRY]' : ''}${ONLY_PCP ? ' [PCP-ONLY]' : ''}${LIMIT ? ` [LIMIT ${LIMIT}]` : ''}`)
+  console.log(`→ ${creds.length} credencial(is) ativa(s)${SIMULADO ? ' [SIMULADO]' : ''}${DRY ? ' [DRY]' : ''}${ONLY_PCP ? ' [PCP-ONLY]' : ''}${URGENTES ? ' [URGENTES]' : ''}${LIMIT ? ` [LIMIT ${LIMIT}]` : ''}`)
+
+  // Passada de urgência com fila vazia é o caso NORMAL — a maioria das rodadas de 20
+  // min não tem sessão à porta. Sai antes de qualquer navegador subir.
+  if (URGENTES) {
+    const { rows: [{ n }] } = await client.query(
+      `SELECT count(*)::int n FROM radar_processos p
+        WHERE p.status = 'ativo' AND p.mutado = false${FILTRO_URGENTE}`)
+    if (!n) {
+      console.log('✓ Radar urgente: nenhum processo com sessão entre ontem e amanhã. Nada a fazer.')
+      await client.end()
+      process.exit(0)
+    }
+    console.log(`→ ${n} processo(s) com sessão à porta`)
+  }
 
   for (const cred of (ONLY_PCP ? [] : creds)) {
     conectores++
@@ -168,11 +209,19 @@ try {
 
     // Processos ativos (não silenciados) do tenant p/ este conector.
     const { rows: processos } = await client.query(
-      `SELECT id, licitacao_id, titulo, uf, link_portal FROM radar_processos
-        WHERE titular_id = $1 AND conector_id = $2 AND status = 'ativo' AND mutado = false`,
+      `SELECT p.id, p.licitacao_id, p.titulo, p.uf, p.link_portal FROM radar_processos p
+        WHERE p.titular_id = $1 AND p.conector_id = $2 AND p.status = 'ativo' AND p.mutado = false${filtro}`,
       [cred.titular_id, cred.conector_id],
     )
     const mapa = new Map(processos.map((p) => [p.licitacao_id, p]))
+
+    // Nada urgente para esta credencial: não abre navegador nem toca no portal. Só na
+    // passada de urgência — na completa, rodar com lista vazia ainda serve para
+    // atualizar a saúde do conector.
+    if (URGENTES && !processos.length) {
+      console.log(`  · ${cred.conector_id}/${cred.cnpj}: nenhum processo com sessão à porta — pulando`)
+      continue
+    }
 
     // PCP: resolve a URL pública de cada processo (manual > auto), p/ o modo público.
     const urlPublicaPorLic = cred.conector_id === 'pcp' ? await resolverUrlsPCP(client, processos, DRY) : new Map()
@@ -235,7 +284,11 @@ try {
       await client.query(
         `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, duracao_ms, atualizado_em)
          VALUES ($1,$2,$3,$4, ${okAgora ? 'now()' : 'NULL'}, now(), $5, $6, now())
-         ON CONFLICT (credencial_id) DO UPDATE SET
+         -- O predicado NÃO é decoração: radar_saude_cred_uq é um índice único PARCIAL
+         -- (WHERE credencial_id IS NOT NULL), e o Postgres só infere índice parcial se
+         -- o ON CONFLICT repetir o predicado. Sem ele, 42P10 — era o que derrubava
+         -- TODA passada do Radar desde que a PK virou índice parcial.
+         ON CONFLICT (credencial_id) WHERE credencial_id IS NOT NULL DO UPDATE SET
            status = EXCLUDED.status,
            verificado_em = ${okAgora ? 'now()' : 'radar_saude.verificado_em'},
            tentado_em = now(), detalhe = EXCLUDED.detalhe, duracao_ms = EXCLUDED.duracao_ms, atualizado_em = now()`,
@@ -254,7 +307,7 @@ try {
          FROM radar_processos p
         WHERE p.conector_id = 'pcp' AND p.status = 'ativo' AND p.mutado = false
           AND NOT EXISTS (SELECT 1 FROM radar_credenciais c
-                          WHERE c.titular_id = p.titular_id AND c.conector_id = 'pcp' AND c.ativo = true)
+                          WHERE c.titular_id = p.titular_id AND c.conector_id = 'pcp' AND c.ativo = true)${filtro}
         ORDER BY p.criado_em DESC`,
     )
     const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { AnaliseEdital } from '@/lib/types'
 import { IA_HABILITADA } from '@/lib/features'
 import { getLLM, hojeBR, LLM_MODEL, llmConfigurado } from '@/lib/llm'
+import { calendarioParaPrompt } from '@/lib/prazos-uteis'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,6 +17,8 @@ export const maxDuration = 60
 const MAX_CHARS = 100_000
 
 const SYSTEM_PROMPT = `HOJE É {hoje} ({hoje_iso}). Toda data do edital deve ser lida contra ESTA data — é ela que decide se a sessão já passou, se o prazo de impugnação ainda está aberto (tempestividade) e o que classificar como urgente. Não use nenhuma outra noção de "hoje".
+
+{calendario}NÃO faça conta de calendário de cabeça. Dia da semana, quantos dias faltam e prazo em dias úteis vêm PRONTOS no bloco CALENDÁRIO acima — copie de lá ao preencher "prazos" e ao julgar tempestividade. Se a data de que você precisa não estiver no bloco, diga que não dá para cravar o dia em vez de estimar.
 
 Você é um ADVOGADO especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde (equipamentos, medicamentos, OPME, serviços). Analise o EDITAL/Termo de Referência com o rigor de uma auditoria de Tribunal de Contas.
 
@@ -108,7 +111,8 @@ export async function POST(req: NextRequest) {
       ? `\n\nO fornecedor vende os seguintes produtos (avalie a aderência em "aderenciaPortfolio"): ${body.portfolio.join('; ')}.`
       : ''
 
-    const userContent = `EDITAL:\n${texto.slice(0, MAX_CHARS)}${portfolioStr}`
+    const editalNoPrompt = texto.slice(0, MAX_CHARS)
+    const userContent = `EDITAL:\n${editalNoPrompt}${portfolioStr}`
 
     // Instanciado aqui (não no topo) para o build não exigir a chave.
     const openai = getLLM()
@@ -116,9 +120,11 @@ export async function POST(req: NextRequest) {
     // Resolvida por requisição (a instância da função é reaproveitada; data fixada
     // na inicialização do módulo envelheceria enquanto o processo vive).
     const hoje = hojeBR()
+    const calendario = calendarioParaPrompt(editalNoPrompt, hoje.iso)
     const systemPrompt = SYSTEM_PROMPT
       .replace('{hoje}', hoje.extenso)
       .replace('{hoje_iso}', hoje.iso)
+      .replace('{calendario}', calendario ? `${calendario}\n\n` : '')
 
     const completion = await openai.chat.completions.create({
       model: LLM_MODEL,

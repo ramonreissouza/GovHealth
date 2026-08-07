@@ -81,7 +81,11 @@ export async function POST(req: NextRequest) {
   await query(
     `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status)
      VALUES ($1,$2,$3,'nunca_verificado')
-     ON CONFLICT (credencial_id) DO NOTHING`,
+     -- WHERE obrigatório: radar_saude_cred_uq é índice único PARCIAL (credencial_id IS
+     -- NOT NULL, por causa do monitor público que grava saúde sem credencial). Índice
+     -- parcial só é inferido se o ON CONFLICT repetir o predicado; sem isso, 42P10 —
+     -- aqui isso quebraria o cadastro de credencial.
+     ON CONFLICT (credencial_id) WHERE credencial_id IS NOT NULL DO NOTHING`,
     [id, t.titularId, conectorId],
   )
   await query(

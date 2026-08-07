@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { IA_HABILITADA } from '@/lib/features'
 import { getLLM, hojeBR, LLM_MODEL, llmConfigurado } from '@/lib/llm'
+import { calendarioParaPrompt } from '@/lib/prazos-uteis'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -19,10 +20,11 @@ const MAX_HISTORICO = 8   // 4 perguntas anteriores; o edital já ocupa o grosso
 
 const SYSTEM_PROMPT = `HOJE É {hoje} ({hoje_iso}). Qualquer cálculo de prazo ("ainda dá tempo?", "quando vence?") parte desta data.
 
-Você é um advogado especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde. Você está respondendo perguntas sobre UM edital específico, cujo texto integral vem no fim deste prompt.
+{calendario}Você é um advogado especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde. Você está respondendo perguntas sobre UM edital específico, cujo texto integral vem no fim deste prompt.
 
 Regras inegociáveis:
 - O texto do edital é a ÚNICA fonte sobre este certame. Não invente número, data, valor ou exigência que não esteja lá.
+- NÃO faça conta de calendário de cabeça: dia da semana, quantos dias faltam e prazo em dias úteis saem PRONTOS no bloco CALENDÁRIO acima. Copie de lá. Se a data de que você precisa não estiver no bloco, diga que não dá para cravar o dia em vez de estimar.
 - Quando a resposta estiver no edital, CITE o trecho literal entre aspas e diga em que item/cláusula aparece.
 - Quando NÃO estiver, diga isso com todas as letras ("o edital não trata disso" ou "isso não aparece no trecho enviado") antes de qualquer outra coisa. Só então, se ajudar, ofereça o que a Lei 14.133/2021 diz ou o que é praxe — deixando explícito que é interpretação sua, não texto do edital.
 - Pergunta sobre risco, direcionamento ou impugnação: responda como advogado, com o fundamento legal (artigo).
@@ -67,11 +69,16 @@ export async function POST(req: NextRequest) {
     const aderencia = body.portfolio?.length
       ? `Contexto do fornecedor que está perguntando: ele vende ${body.portfolio.join('; ')}. Considere isso ao avaliar aderência, risco e chance de ganhar.\n\n`
       : ''
+    // O calendário sai do MESMO recorte que o modelo vai ler — datas de um trecho
+    // cortado não podem virar prazo no bloco.
+    const editalNoPrompt = texto.slice(0, MAX_CHARS)
+    const calendario = calendarioParaPrompt(editalNoPrompt, hoje.iso)
     const systemPrompt = SYSTEM_PROMPT
       .replace('{hoje}', hoje.extenso)
       .replace('{hoje_iso}', hoje.iso)
+      .replace('{calendario}', calendario ? `${calendario}\n\n` : '')
       .replace('{aderencia}', aderencia)
-      .replace('{edital}', texto.slice(0, MAX_CHARS))
+      .replace('{edital}', editalNoPrompt)
 
     const historico = (body.historico ?? [])
       .filter((m) => m && typeof m.content === 'string' && m.content.trim())

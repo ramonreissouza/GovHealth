@@ -42,7 +42,9 @@ async function playwright() {
 async function marcarSaude(cred, status, detalhe) {
   await q(`INSERT INTO radar_saude (credencial_id,titular_id,conector_id,status,verificado_em,tentado_em,detalhe,atualizado_em)
     VALUES ($1,$2,$3,$4, ${status === 'ok' ? 'now()' : 'NULL'}, now(), $5, now())
-    ON CONFLICT (credencial_id) DO UPDATE SET status=EXCLUDED.status,
+    -- WHERE obrigatório: radar_saude_cred_uq é índice único PARCIAL; sem repetir o
+    -- predicado o Postgres não o infere e devolve 42P10.
+    ON CONFLICT (credencial_id) WHERE credencial_id IS NOT NULL DO UPDATE SET status=EXCLUDED.status,
       verificado_em=${status === 'ok' ? 'now()' : 'radar_saude.verificado_em'}, tentado_em=now(), detalhe=EXCLUDED.detalhe, atualizado_em=now()`,
     [cred.id, cred.titular_id, cred.conector_id, status, detalhe ?? null])
 }
