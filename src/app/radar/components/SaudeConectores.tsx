@@ -21,7 +21,9 @@ export interface SaudeItem {
 }
 
 const COR_CLS: Record<string, string> = {
-  verde: 'bg-emerald-500/12 text-emerald-400 border-emerald-500/30',
+  // /10 e não /12: a escala de opacidade do Tailwind anda de 5 em 5, então `/12` não
+  // gera classe nenhuma e o selo ficava sem fundo.
+  verde: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
   amarelo: 'bg-amber/15 text-amber border-amber/30',
   vermelho: 'bg-red/15 text-red border-red/30',
   cinza: 'bg-bg4 text-faint border-subtle2',

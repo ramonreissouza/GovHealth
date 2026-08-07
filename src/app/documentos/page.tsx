@@ -19,7 +19,9 @@ import {
 } from '@/lib/documentos'
 
 const ESTADO_CLS: Record<EstadoDoc, string> = {
-  valido: 'bg-emerald-500/12 text-emerald-400 border-emerald-500/30',
+  // /10 e não /12: a escala de opacidade do Tailwind anda de 5 em 5 — `/12` não gera
+  // classe e o selo ficava sem fundo.
+  valido: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
   vencendo: 'bg-amber/15 text-amber border-amber/30',
   vencido: 'bg-red/15 text-red border-red/30',
   sem_validade: 'bg-bg4 text-faint border-subtle2',
