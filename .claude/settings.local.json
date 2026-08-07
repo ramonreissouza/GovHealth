@@ -154,7 +154,24 @@
       "PowerShell(\"agora: $\\(Get-Date -Format 'HH:mm:ss'\\)\"; Get-Content 'etl-historico.log' -Tail 6; if \\(Test-Path '.pncp-municipios.json'\\) { \"CACHE PRONTO: $\\(\\(Get-Item '.pncp-municipios.json'\\).Length\\) bytes\" } else { 'cache ainda nao gravado \\(mapa em andamento\\)' })",
       "PowerShell(\"=== .claude/settings.local.json ===\"; git diff .claude/settings.local.json; \"=== next-env.d.ts ===\"; git diff next-env.d.ts; \"=== .gitignore \\(etl/log\\) ===\"; Select-String -Path '.gitignore' -Pattern 'log|hist|pncp|err' | ForEach-Object { $_.Line })",
       "PowerShell(git log --oneline origin/main..HEAD | Measure-Object -Line | ForEach-Object { \"commits a enviar: $\\($_.Lines\\)\" }; git push origin main 2>&1 | Select-Object -Last 8)",
-      "PowerShell($f = '.next\\\\static\\\\W2tDwbuJHFHR0U0ArRq3-'; if \\(Test-Path $f\\) { \"existe: $\\(\\(Get-Item $f\\).GetType\\(\\).Name\\)\"; try { Remove-Item $f -Recurse -Force -ErrorAction Stop; 'removido' } catch { \"trava: $\\($_.Exception.Message.Substring\\(0,80\\)\\)\" } } else { 'nao existe' })"
+      "PowerShell($f = '.next\\\\static\\\\W2tDwbuJHFHR0U0ArRq3-'; if \\(Test-Path $f\\) { \"existe: $\\(\\(Get-Item $f\\).GetType\\(\\).Name\\)\"; try { Remove-Item $f -Recurse -Force -ErrorAction Stop; 'removido' } catch { \"trava: $\\($_.Exception.Message.Substring\\(0,80\\)\\)\" } } else { 'nao existe' })",
+      "Bash(AUD_EMAIL=primemedical@govhealth.ai AUD_SENHA=PrimeMedical@2026 node __TRACKED_VAR__/audit-prime.mjs https://gov-health.vercel.app __TRACKED_VAR__/shots)",
+      "Bash(cp __TRACKED_VAR__/audit-prime.mjs ./_audit-prime.mjs)",
+      "Bash(AUD_EMAIL=primemedical@govhealth.ai AUD_SENHA=PrimeMedical@2026 node ./_audit-prime.mjs https://gov-health.vercel.app __TRACKED_VAR__/shots)",
+      "Bash(cd \"C:/Users/souza/OneDrive/Documentos/TecHealth/Hospmult/govhealth-ai \\(1\\)/govhealth-ai-clean\" && npx vercel env pull /tmp/envprod --environment=production --yes 2>&1 | tail -3 && grep -E \"^\\(NEXTAUTH_URL|NEXT_PUBLIC_APP_URL\\)=\" /tmp/envprod)",
+      "Bash(AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_probe-sessao.mjs)",
+      "Bash(grep -rn \"notificaçãoões\\\\|notifica..ões\\\\` : \\\\|notificaç\" src/app/alertas/page.tsx)",
+      "Bash(OUTDIR=\"C:/Users/souza/AppData/Local/Temp/claude/C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean/769a2f61-a104-4814-b47a-4a05fcc18ba8/scratchpad/shots\" AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_probe-lic.mjs)",
+      "Bash(AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_probe-api.mjs)",
+      "Bash(OUTDIR=\"C:/Users/souza/AppData/Local/Temp/claude/C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean/769a2f61-a104-4814-b47a-4a05fcc18ba8/scratchpad/shots\" AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_probe-cadeado.mjs)",
+      "Bash(AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_probe-lento.mjs)",
+      "Bash(OUTDIR=\"C:/Users/souza/AppData/Local/Temp/claude/C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean/769a2f61-a104-4814-b47a-4a05fcc18ba8/scratchpad/shots\" AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_final.mjs)",
+      "Bash(node scripts/radar/run.mjs --pcp-only)",
+      "Bash(node scripts/etl-enriquecer.mjs --ufs=AL,BA,CE,PB,PE --limite=500)",
+      "Bash(OUTDIR=\"C:/Users/souza/AppData/Local/Temp/claude/C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean/769a2f61-a104-4814-b47a-4a05fcc18ba8/scratchpad/shots\" AUD_EMAIL='primemedical@govhealth.ai' AUD_SENHA='PrimeMedical@2026' node ./_v3.mjs)",
+      "PowerShell(npx eslint src/lib/llm.ts src/app/api/copiloto/route.ts src/app/api/edital/analise/route.ts 2>&1)",
+      "PowerShell(npx eslint src/app/edital/page.tsx src/components/edital/PerguntasEdital.tsx src/components/copiloto/ChatInterface.tsx src/app/api/edital/pergunta/route.ts 2>&1)",
+      "Bash(iconv -f utf-8 -t utf-8)"
     ]
   }
 }

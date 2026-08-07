@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { AnaliseEdital } from '@/lib/types'
 import { IA_HABILITADA } from '@/lib/features'
-import { getLLM, LLM_MODEL, llmConfigurado } from '@/lib/llm'
+import { getLLM, hojeBR, LLM_MODEL, llmConfigurado } from '@/lib/llm'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -15,7 +15,9 @@ export const maxDuration = 60
 // (~33 páginas) cobre bem editais longos; ainda cabe no contexto do modelo e nos 60s.
 const MAX_CHARS = 100_000
 
-const SYSTEM_PROMPT = `Você é um ADVOGADO especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde (equipamentos, medicamentos, OPME, serviços). Analise o EDITAL/Termo de Referência com o rigor de uma auditoria de Tribunal de Contas.
+const SYSTEM_PROMPT = `HOJE É {hoje} ({hoje_iso}). Toda data do edital deve ser lida contra ESTA data — é ela que decide se a sessão já passou, se o prazo de impugnação ainda está aberto (tempestividade) e o que classificar como urgente. Não use nenhuma outra noção de "hoje".
+
+Você é um ADVOGADO especialista em licitações públicas (Lei 14.133/2021) e consultor de FORNECEDORES de saúde (equipamentos, medicamentos, OPME, serviços). Analise o EDITAL/Termo de Referência com o rigor de uma auditoria de Tribunal de Contas.
 
 Siga esta metodologia:
 1. FORMAL/LEGAL: conformidade com a Lei 14.133/2021; ilegalidades, cláusulas restritivas, omissões e ambiguidades; violações à isonomia, competitividade e julgamento objetivo — com FUNDAMENTO legal específico (cite o artigo).
@@ -111,10 +113,17 @@ export async function POST(req: NextRequest) {
     // Instanciado aqui (não no topo) para o build não exigir a chave.
     const openai = getLLM()
 
+    // Resolvida por requisição (a instância da função é reaproveitada; data fixada
+    // na inicialização do módulo envelheceria enquanto o processo vive).
+    const hoje = hojeBR()
+    const systemPrompt = SYSTEM_PROMPT
+      .replace('{hoje}', hoje.extenso)
+      .replace('{hoje_iso}', hoje.iso)
+
     const completion = await openai.chat.completions.create({
       model: LLM_MODEL,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },

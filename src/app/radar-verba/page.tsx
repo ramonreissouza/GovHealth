@@ -8,10 +8,10 @@ import { useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Loader2, AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Building2, FileText, ArrowRight } from 'lucide-react'
+import { Loader2, AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Building2, FileText, ArrowRight, Target } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { createDeal, dealExists } from '@/lib/crm'
-import { parseValorBR, type EmendaDetalhe } from '@/lib/emendas'
+import { parseValorBR, type EmendaDetalhe, type NaturezaVerba } from '@/lib/emendas'
 import { Paginacao } from '@/components/ui/Paginacao'
 import { PAGE_SIZE_PADRAO as POR_PAGINA } from '@/components/ui/PageSizeSelector'
 import type { EmendaRadar, Temperatura } from '@/lib/radar-verba'
@@ -22,6 +22,14 @@ import CapagBadge from '@/components/ui/CapagBadge'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const PORTAL_URL = 'https://portaldatransparencia.gov.br/emendas'
+
+// Capital vira equipamento e obra; custeio vira consumo, medicamento e serviço. Para
+// quem vende, é a primeira triagem do lead — por isso vem antes de qualquer número.
+const NATUREZA_META: Record<NaturezaVerba, { label: string; cls: string; dica: string }> = {
+  investimento: { label: 'Investimento', cls: 'bg-accent/15 text-accent border-accent/30', dica: 'equipamento, obra, material permanente' },
+  custeio: { label: 'Custeio', cls: 'bg-brand-blue/15 text-brand-blue border-brand-blue/30', dica: 'consumo, medicamento, serviço' },
+  indefinido: { label: 'Não classificado', cls: 'bg-bg4 text-faint border-subtle2', dica: 'o Portal não informou a categoria da despesa' },
+}
 
 const TEMP_META: Record<Temperatura, { label: string; cls: string }> = {
   quente: { label: 'Quente', cls: 'bg-red/15 text-red border border-red/30' },
@@ -362,6 +370,58 @@ function RadarVerbaConteudo() {
                   <span className="text-faint">Subfunção:</span> {selected.subfuncao || '—'} · <span className="text-faint">Tipo:</span> {selected.tipo || '—'} · <span className="text-faint">% executado:</span> {selected.percentualExecutado}%
                 </div>
 
+                {/* PARA QUE É A VERBA — a pergunta que o detalhe não respondia.
+                    Tudo isto já vinha do Portal junto com o empenho e era descartado:
+                    o vendedor via quanto, mas não para quê nem para quem. */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Target size={13} className="text-accent" />
+                    <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Para que é a verba</span>
+                  </div>
+
+                  {detalheLoading ? (
+                    <div className="h-16 bg-bg3 border border-subtle rounded-lg animate-pulse" />
+                  ) : detalhe?.resumo ? (
+                    <div className="bg-bg3 border border-subtle rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={clsx('text-[9px] font-mono-custom px-1.5 py-0.5 rounded-full uppercase border', NATUREZA_META[detalhe.resumo.natureza].cls)}>
+                          {NATUREZA_META[detalhe.resumo.natureza].label}
+                        </span>
+                        <span className="text-[10px] text-faint">{NATUREZA_META[detalhe.resumo.natureza].dica}</span>
+                      </div>
+                      {detalhe.resumo.finalidade && (
+                        <p className="text-[12.5px] text-strong leading-snug">{detalhe.resumo.finalidade}</p>
+                      )}
+                      <dl className="text-[11px] space-y-1">
+                        {detalhe.resumo.favorecido && (
+                          <div className="flex gap-1.5">
+                            <dt className="text-faint flex-shrink-0">Quem recebe (e vai licitar):</dt>
+                            <dd className="text-muted">{detalhe.resumo.favorecido}{detalhe.resumo.cnpjFavorecido && <span className="text-faint font-mono-custom"> · {detalhe.resumo.cnpjFavorecido}</span>}</dd>
+                          </div>
+                        )}
+                        {detalhe.resumo.programa && (
+                          <div className="flex gap-1.5"><dt className="text-faint flex-shrink-0">Programa:</dt><dd className="text-muted">{detalhe.resumo.programa}</dd></div>
+                        )}
+                        {detalhe.resumo.transferencia && (
+                          <div className="flex gap-1.5"><dt className="text-faint flex-shrink-0">Repasse:</dt><dd className="text-muted">{detalhe.resumo.transferencia}</dd></div>
+                        )}
+                        {detalhe.resumo.orgaoRepassador && (
+                          <div className="flex gap-1.5"><dt className="text-faint flex-shrink-0">Origem:</dt><dd className="text-muted">{detalhe.resumo.orgaoRepassador}</dd></div>
+                        )}
+                      </dl>
+                      {detalhe.resumo.observacao && (
+                        <p className="text-[11px] text-muted leading-snug border-t border-subtle pt-2">{detalhe.resumo.observacao}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11.5px] text-muted leading-snug bg-bg3 border border-subtle rounded-lg p-3">
+                      O Portal ainda não detalhou o empenho desta emenda — sem isso ele não diz a finalidade.
+                      O que se sabe vem da própria emenda: <strong className="text-strong">{selected.subfuncao || 'saúde'}</strong> em {selected.municipio || selected.uf}.
+                      Emendas recém-empenhadas costumam levar algumas semanas para aparecer detalhadas.
+                    </p>
+                  )}
+                </div>
+
                 {/* Empenhos = para onde o dinheiro vai */}
                 <div>
                   <div className="mb-2">
@@ -410,6 +470,15 @@ function RadarVerbaConteudo() {
                 {/* Próximos passos — para o lead NÃO morrer no detalhe. */}
                 <div className="space-y-2">
                   <div className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">Próximos passos</div>
+                  {/* O município é o que o vendedor precisa atacar — antes o link mais
+                      específico era a UF inteira, o que não ajuda a agir. */}
+                  {selected.municipio && selected.uf && (
+                    <a href={`/oportunidades?uf=${selected.uf}&municipio=${encodeURIComponent(selected.municipio)}&status=aberto`}
+                       className="flex items-center justify-between bg-bg3 border border-subtle rounded-lg px-3 py-2.5 hover:border-accent transition-colors">
+                      <span className="text-[12px] text-strong">Licitações abertas em {selected.municipio}</span>
+                      <ArrowRight size={14} className="text-accent flex-shrink-0" />
+                    </a>
+                  )}
                   {selected.uf && (
                     <a href={`/oportunidades?uf=${selected.uf}&status=aberto`}
                        className="flex items-center justify-between bg-bg3 border border-subtle rounded-lg px-3 py-2.5 hover:border-accent transition-colors">
@@ -419,7 +488,12 @@ function RadarVerbaConteudo() {
                   )}
                   <a href={PORTAL_URL} target="_blank" rel="noopener noreferrer"
                      className="flex items-center justify-between bg-bg3 border border-subtle rounded-lg px-3 py-2.5 hover:border-accent transition-colors">
-                    <span className="text-[12px] text-strong">Abrir no Portal da Transparência</span>
+                    <span className="text-[12px] text-strong">
+                      Abrir no Portal da Transparência
+                      {/* O Portal não tem URL pública por emenda: cai na busca, e o código
+                          é o que o usuário precisa colar lá. */}
+                      <span className="block text-[10px] text-faint font-mono-custom">busque pelo código {selected.codigoEmenda}</span>
+                    </span>
                     <ExternalLink size={13} className="text-accent flex-shrink-0" />
                   </a>
                   <button onClick={() => adicionarCrm(selected)} disabled={addedCrm.has(selected.codigoEmenda)}

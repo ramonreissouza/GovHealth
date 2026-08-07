@@ -3,14 +3,14 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { clsx } from 'clsx'
-import { Send, Bot } from 'lucide-react'
+import { Send, Bot, Square } from 'lucide-react'
 import { getEmpresa } from '@/lib/empresa'
 import { HYDRATED_EVENT } from '@/lib/synced'
 import HistoricoConversas, { useHistorico } from '@/components/ia/HistoricoConversas'
 
 const SAUDACAO =
   'Olá! Sou o **GovHealth AI**, seu copiloto de inteligência comercial para saúde pública.\n\n' +
-  'Tenho acesso em tempo real a dados do **PNCP**, **TransfereGov** e **Portal da Transparência**. Posso ajudar você a:\n\n' +
+  'A plataforma acompanha **PNCP**, **TransfereGov** e **Portal da Transparência** — os números exatos ficam nas telas de Licitações, Vencedores e Radar de Verba. Aqui eu ajudo a **interpretar e decidir**:\n\n' +
   '• Identificar oportunidades antes do edital\n• Analisar concorrentes por região\n' +
   '• Prever editais baseado em convênios ativos\n• Priorizar sua carteira comercial\n\nO que você quer descobrir?'
 
@@ -71,21 +71,47 @@ export default function ChatInterface() {
   // fixo da tela, não conteúdo do usuário; salvá-la encheria o histórico de conversas
   // idênticas e vazias.
   const [conversaId, setConversaId] = useState<string | null>(null)
+  const [abrindo, setAbrindo] = useState(false)
   const { conversas, recarregar } = useHistorico('copiloto')
 
+  // Uma "sessão de tela": muda quando o usuário abre outra conversa ou clica em Nova
+  // conversa. Tudo que é assíncrono (carregar o histórico, o streaming da resposta,
+  // a gravação) confere a sessão antes de escrever na tela.
+  //
+  // Sem isso a tela mentia: quem clicava numa conversa e, antes de ela chegar,
+  // pedia "Nova conversa" e já perguntava outra coisa, via a pergunta SUMIR — a
+  // resposta atrasada do clique anterior chegava depois e repunha a conversa velha
+  // por cima. Pior: a resposta nova ia parar, gravada, dentro da conversa antiga.
+  const sessaoRef = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+
+  /** Encerra o que estiver em voo e abre uma sessão nova. Devolve o número dela. */
+  const trocarSessao = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)   // senão um pedido pendurado deixaria o campo desabilitado para sempre
+    return ++sessaoRef.current
+  }, [])
+
   const novaConversa = useCallback(() => {
+    trocarSessao()
+    setAbrindo(false)
     setConversaId(null)
     setMessages([{ id: 'init', role: 'assistant', content: SAUDACAO, createdAt: new Date() }])
     setInput('')
     inputRef.current?.focus()
-  }, [])
+  }, [trocarSessao])
 
   const abrirConversa = useCallback(async (id: string) => {
+    const seq = trocarSessao()
+    setConversaId(id)   // marca a ativa na lista já no clique, sem esperar a rede
+    setAbrindo(true)
     try {
       const r = await fetch(`/api/ia/conversas/${id}`)
+      if (seq !== sessaoRef.current) return   // o usuário já saiu daqui
       if (!r.ok) return
       const j = await r.json()
-      setConversaId(id)
+      if (seq !== sessaoRef.current) return
       setMessages((j.mensagens ?? []).map((m: { id: number; papel: string; conteudo: string; criado_em: string }) => ({
         id: String(m.id),
         role: m.papel === 'assistant' ? 'assistant' as const : 'user' as const,
@@ -93,17 +119,23 @@ export default function ChatInterface() {
         createdAt: new Date(m.criado_em),
       })))
     } catch { /* deixa a conversa atual na tela */ }
-  }, [])
+    finally { if (seq === sessaoRef.current) setAbrindo(false) }
+  }, [trocarSessao])
 
-  /** Grava o par pergunta+resposta. Cria a conversa no primeiro par. */
-  const persistir = useCallback(async (pergunta: string, resposta: string) => {
+  /**
+   * Grava o par pergunta+resposta. Cria a conversa no primeiro par.
+   * `id` vem por parâmetro (e não do estado) porque quem chama é o `finally` de um
+   * envio que começou lá atrás: ler o estado aqui gravaria na conversa que estiver
+   * aberta AGORA, não naquela em que a pergunta foi feita.
+   */
+  const persistir = useCallback(async (id: string | null, seq: number, pergunta: string, resposta: string) => {
     const mensagens = [
       { papel: 'user', conteudo: pergunta },
       { papel: 'assistant', conteudo: resposta },
     ]
     try {
-      if (conversaId) {
-        await fetch(`/api/ia/conversas/${conversaId}`, {
+      if (id) {
+        await fetch(`/api/ia/conversas/${id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mensagens }),
         })
@@ -113,11 +145,13 @@ export default function ChatInterface() {
           body: JSON.stringify({ tipo: 'copiloto', mensagens }),
         })
         const j = await r.json()
-        if (j?.id) setConversaId(j.id)
+        // Só assume o id novo se a tela ainda está nessa conversa — senão o próximo
+        // envio, já em outra conversa, escreveria dentro desta.
+        if (j?.id && seq === sessaoRef.current) setConversaId(j.id)
       }
       await recarregar()
     } catch { /* a conversa segue na tela mesmo se o histórico falhar */ }
-  }, [conversaId, recarregar])
+  }, [recarregar])
 
   // Setup só existe no cliente (localStorage) e chega assíncrono logo após o login.
   const [sugestoes, setSugestoes] = useState<string[]>([])
@@ -133,7 +167,12 @@ export default function ChatInterface() {
   }, [messages])
 
   async function sendMessage(text: string = input) {
-    if (!text.trim() || loading) return
+    if (!text.trim() || loading || abrindo) return
+
+    // Congelados no início: a conversa em que a pergunta foi feita e a sessão de
+    // tela dela. Todo o resto desta função é assíncrono e o estado pode mudar no meio.
+    const seq = sessaoRef.current
+    const idDestino = conversaId
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -152,12 +191,19 @@ export default function ChatInterface() {
       { id: assistantId, role: 'assistant', content: '', createdAt: new Date() },
     ])
 
+    // Teto de espera: o provedor é o plano grátis da Z.ai e já pendurou requisição.
+    // Sem isso o `loading` nunca cai e o campo de digitar fica morto até dar F5.
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
+    const limite = setTimeout(() => ctrl.abort(new DOMException('tempo', 'TimeoutError')), 90_000)
+
     // Fora do try porque o `finally` precisa ler o texto acumulado para gravar.
     let accumulated = ''
     try {
       const res = await fetch('/api/copiloto', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
         body: JSON.stringify({
           messages: [...messages, userMsg].map((m) => ({
             role: m.role,
@@ -174,6 +220,8 @@ export default function ChatInterface() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+
+        if (seq !== sessaoRef.current) return   // trocou de conversa no meio do stream
 
         const text = decoder.decode(value)
         const lines = text.split('\n')
@@ -214,24 +262,40 @@ export default function ChatInterface() {
         }
       }
     } catch (err) {
+      // Cancelado pelo próprio usuário (Parar, Nova conversa, abrir outra): a tela já
+      // está onde ele quer, não há erro a mostrar.
+      const abortado = err instanceof DOMException && err.name === 'AbortError'
+      if (seq !== sessaoRef.current) return
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
             ? {
                 ...m,
-                content:
-                  'Erro ao conectar com o copiloto. Verifique se ZAI_API_KEY está configurada no ambiente.',
+                content: abortado && !accumulated
+                  ? '_Resposta interrompida._'
+                  : abortado
+                    ? accumulated
+                    : 'Erro ao conectar com o copiloto. Tente de novo em alguns instantes.',
               }
             : m
         )
       )
     } finally {
-      setLoading(false)
-      inputRef.current?.focus()
-      // Só grava se a resposta veio. Salvar um turno com resposta vazia deixaria no
-      // histórico uma conversa que não dá para retomar.
-      if (accumulated.trim()) void persistir(userMsg.content, accumulated)
+      clearTimeout(limite)
+      if (abortRef.current === ctrl) abortRef.current = null
+      if (seq === sessaoRef.current) {
+        setLoading(false)
+        inputRef.current?.focus()
+        // Só grava se a resposta veio. Salvar um turno com resposta vazia deixaria no
+        // histórico uma conversa que não dá para retomar.
+        if (accumulated.trim()) void persistir(idDestino, seq, userMsg.content, accumulated)
+      }
     }
+  }
+
+  /** Para a resposta em andamento SEM trocar de sessão: o que já veio fica na tela e é gravado. */
+  function pararResposta() {
+    abortRef.current?.abort()
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -264,6 +328,11 @@ export default function ChatInterface() {
       <div className="flex-1 flex flex-col h-full min-w-0 pl-5">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
+        {/* Abrir uma conversa é uma ida ao banco. Sem este aviso a tela ficava com a
+            conversa anterior no lugar, dando a impressão de que o clique não pegou. */}
+        {abrindo && (
+          <div className="text-[11px] font-mono-custom text-faint px-1">carregando conversa…</div>
+        )}
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -331,16 +400,28 @@ export default function ChatInterface() {
           onKeyDown={handleKeyDown}
           placeholder="Pergunte sobre municípios, editais, concorrentes, verbas..."
           rows={1}
-          disabled={loading}
+          disabled={loading || abrindo}
           className="flex-1 bg-bg3 border border-subtle2 rounded-lg px-4 py-2.5 text-[13px] text-strong placeholder:text-faint resize-none outline-none focus:border-accent/40 transition-colors disabled:opacity-50"
         />
-        <button
-          onClick={() => sendMessage()}
-          disabled={loading || !input.trim()}
-          className="px-4 py-2.5 bg-accent hover:bg-accent2 disabled:opacity-40 text-black rounded-lg transition-colors flex items-center gap-2"
-        >
-          <Send size={14} />
-        </button>
+        {/* Enquanto responde, o botão vira "parar": o campo fica desabilitado durante o
+            streaming, então sem uma saída um pedido lento prendia a tela. */}
+        {loading ? (
+          <button
+            onClick={pararResposta}
+            title="Parar resposta"
+            className="px-4 py-2.5 bg-bg3 border border-subtle2 hover:border-accent/40 text-muted rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Square size={13} />
+          </button>
+        ) : (
+          <button
+            onClick={() => sendMessage()}
+            disabled={abrindo || !input.trim()}
+            className="px-4 py-2.5 bg-accent hover:bg-accent2 disabled:opacity-40 text-black rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Send size={14} />
+          </button>
+        )}
       </div>
       </div>
     </div>

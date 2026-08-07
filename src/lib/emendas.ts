@@ -118,12 +118,56 @@ export interface EmendaEmpenho {
   programa: string
   acao: string
   modalidade: string
+  categoria: string         // "4 - DESPESAS DE CAPITAL"
+  grupo: string             // "4 - Investimentos"
+  elemento: string          // "42 - Auxílios", "52 - Equipamentos e material permanente"…
+  subTitulo: string
+  planoOrcamentario: string
+}
+
+/**
+ * Para que a verba serve, em uma palavra.
+ * É a pergunta que o vendedor faz primeiro: capital/investimento vira equipamento e
+ * obra; custeio vira consumo, medicamento e serviço. Sai da dupla categoria+grupo da
+ * despesa — em transferência fundo a fundo o `elemento` é genérico ("Auxílios") e
+ * não serve para isso.
+ */
+export type NaturezaVerba = 'investimento' | 'custeio' | 'indefinido'
+
+/**
+ * "8535 - ESTRUTURACAO DE UNIDADES…" → "ESTRUTURACAO DE UNIDADES…"
+ * O código nem sempre é numérico: as ações de custeio vêm como "2E90 - …", e uma
+ * regex só de dígitos deixava o código sobrando no meio da frase na tela.
+ */
+export function semCodigo(s: string): string {
+  return String(s ?? '').replace(/^\s*[A-Z0-9][A-Z0-9.]{1,7}\s*-\s*/i, '').trim()
+}
+
+export function naturezaDaVerba(categoria: string, grupo: string): NaturezaVerba {
+  const t = `${categoria} ${grupo}`.toLowerCase()
+  if (t.includes('capital') || t.includes('investimento')) return 'investimento'
+  if (t.includes('corrente') || t.includes('custeio')) return 'custeio'
+  return 'indefinido'
+}
+
+/** Leitura pronta do empenho mais relevante — o que a tela mostra sem ter de interpretar. */
+export interface EmendaResumo {
+  natureza: NaturezaVerba
+  finalidade: string        // a ação orçamentária: "estruturação de unidades de atenção especializada"
+  programa: string
+  favorecido: string        // quem recebe o dinheiro — e quem vai licitar
+  cnpjFavorecido: string
+  transferencia: string     // "Transferências a Municípios - Fundo a Fundo"
+  orgaoRepassador: string
+  observacao: string
 }
 
 export interface EmendaDetalhe {
   codigoEmenda: string
   fases: { empenho: number; liquidacao: number; pagamento: number }
   empenhos: EmendaEmpenho[]
+  /** null quando a emenda ainda não tem empenho detalhado no Portal. */
+  resumo: EmendaResumo | null
 }
 
 async function buscarDocumentosEmenda(codigoEmenda: string): Promise<EmendaDocumentoRaw[]> {
@@ -176,7 +220,28 @@ export async function buscarDetalheEmenda(codigoEmenda: string, maxEmpenhos = 8)
       programa: String(x.programa ?? ''),
       acao: String(x.acao ?? ''),
       modalidade: String(x.modalidade ?? ''),
+      categoria: String(x.categoria ?? ''),
+      grupo: String(x.grupo ?? ''),
+      elemento: String(x.elemento ?? ''),
+      subTitulo: String(x.subTitulo ?? ''),
+      planoOrcamentario: String(x.planoOrcamentario ?? ''),
     }))
 
-  return { codigoEmenda, fases, empenhos }
+  // O resumo sai do MAIOR empenho: quando a emenda foi fatiada, é ele que representa
+  // o destino do dinheiro. Pegar o primeiro daria a fatia que por acaso veio na frente.
+  const principal = empenhos.slice().sort((a, b) => parseValorBR(b.valor) - parseValorBR(a.valor))[0]
+  const resumo: EmendaResumo | null = principal
+    ? {
+        natureza: naturezaDaVerba(principal.categoria, principal.grupo),
+        finalidade: semCodigo(principal.acao),
+        programa: semCodigo(principal.programa),
+        favorecido: principal.favorecido || principal.ug,
+        cnpjFavorecido: principal.codigoFavorecido,
+        transferencia: semCodigo(principal.modalidade),
+        orgaoRepassador: principal.orgaoSuperior || principal.orgao,
+        observacao: principal.observacao,
+      }
+    : null
+
+  return { codigoEmenda, fases, empenhos, resumo }
 }

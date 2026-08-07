@@ -46,11 +46,42 @@ const UA = 'GovHealth-ETL/1.0'
 // grosso; as outras somam pouco mas custam poucas páginas.
 const MODALIDADES = [1, 4, 5, 6, 8, 9, 12, 13]
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
-await client.connect()
-await client.query("SET statement_timeout = '300s'")
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// CONEXÃO QUE SOBREVIVE ÀS HORAS DE VARREDURA
+// A primeira tentativa desta passada morreu em "Connection terminated unexpectedly"
+// logo no começo: um único pg.Client segurado por horas atrás do PgBouncer cai, e o
+// evento 'error' sem ouvinte derruba o processo inteiro — 5 h de coleta perdidas
+// porque o banco piscou. Agora cada consulta reconecta se precisar.
+let client = null
+
+async function conectar() {
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  // Sem este ouvinte, a queda vira 'unhandled error event' e mata o processo.
+  c.on('error', (e) => { console.warn(`[enriq] conexão caiu: ${e.message}`); if (client === c) client = null })
+  await c.connect()
+  // Depois do connect, nunca como parâmetro de startup: o PgBouncer rejeita.
+  await c.query("SET statement_timeout = '300s'")
+  return c
+}
+
+async function db(sql, args) {
+  let ultimo
+  for (let t = 0; t < 5; t++) {
+    try {
+      if (!client) client = await conectar()
+      return await client.query(sql, args)
+    } catch (e) {
+      ultimo = e
+      console.warn(`[enriq] banco: ${e.message} — reconectando (${t + 1}/5)`)
+      try { await client?.end() } catch { /* já estava morta */ }
+      client = null
+      await sleep(2000 * (t + 1))
+    }
+  }
+  throw new Error(`banco inacessível após 5 tentativas: ${ultimo?.message}`)
+}
+
 const ymd = (mes, dia) => `${mes.replace('-', '')}${dia}`
 const ultimoDia = (mes) => {
   const [a, m] = mes.split('-').map(Number)
@@ -88,8 +119,8 @@ async function pagina(mes, mod, pag, tentativa = 0) {
 }
 
 const lerCp = async (chave) => Number(
-  (await client.query(`SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1`, [chave])).rows[0]?.ultima_pagina ?? 0)
-const salvarCp = (chave, p) => client.query(
+  (await db(`SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1`, [chave])).rows[0]?.ultima_pagina ?? 0)
+const salvarCp = (chave, p) => db(
   `INSERT INTO etl_checkpoint (chave, ultima_pagina, atualizado_em) VALUES ($1,$2,now())
    ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`, [chave, p])
 
@@ -98,7 +129,7 @@ async function gravar(lote) {
   if (!lote.length) return 0
   const vals = lote.map((_, i) => `($${i * 4 + 1},$${i * 4 + 2}::numeric,$${i * 4 + 3},$${i * 4 + 4})`).join(',')
   const args = lote.flatMap((r) => [r.id, r.valor, r.modalidade, r.link])
-  const res = await client.query(
+  const res = await db(
     `UPDATE contratacoes c SET
        valor_total_estimado = COALESCE(c.valor_total_estimado, v.valor),
        modalidade_nome      = COALESCE(c.modalidade_nome, v.modalidade),
@@ -140,6 +171,6 @@ for (const mes of lista) {
   console.log(`[enriq] ${mes} · ${reqs} req · ${vistos.toLocaleString('pt-BR')} vistos · ${gravados.toLocaleString('pt-BR')} preenchidos · ${Math.round(reqs / Math.max(min, 0.01))} req/min`)
 }
 
-const falta = (await client.query(`SELECT count(*)::int n FROM contratacoes WHERE valor_total_estimado IS NULL`)).rows[0].n
+const falta = (await db(`SELECT count(*)::int n FROM contratacoes WHERE valor_total_estimado IS NULL`)).rows[0].n
 console.log(`✓ Fim: ${gravados.toLocaleString('pt-BR')} contratações ganharam valor. Ainda sem valor: ${falta.toLocaleString('pt-BR')}. Páginas que furaram: ${furos}.`)
-await client.end()
+await client?.end()

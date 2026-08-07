@@ -3,16 +3,32 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { IA_HABILITADA } from '@/lib/features'
-import { getLLM, LLM_MODEL, llmConfigurado } from '@/lib/llm'
+import { getLLM, hojeBR, LLM_MODEL, llmConfigurado } from '@/lib/llm'
 
 export const runtime = 'nodejs'
 
 const SYSTEM_PROMPT = `Você é o GovHealth AI, copiloto de inteligência comercial para fornecedores de equipamentos e serviços para a saúde pública brasileira.
 
-Você tem acesso em tempo real a dados dos seguintes sistemas governamentais:
-- TransfereGov: convênios de saúde, repasses, emendas parlamentares
+HOJE É {hoje} ({hoje_iso}). Use SEMPRE esta data como presente — ela vale mais que
+qualquer noção de tempo que você traga de treino. Regras que decorrem disso:
+- NUNCA diga que um ano já em curso "ainda não chegou", que editais de {ano} "ainda
+  não foram publicados" ou que seu conhecimento vai só até algum ano anterior.
+- Ao calcular prazo, urgência ou "quanto falta", conte a partir de {hoje_iso}.
+- "Este ano" = {ano}; "ano passado" = {ano_passado}.
+
+A plataforma reúne dados destes sistemas, atualizados continuamente até hoje:
 - PNCP (Portal Nacional de Contratações Públicas): editais, dispensas, pregões eletrônicos
+- TransfereGov: convênios de saúde, repasses, emendas parlamentares
 - Portal da Transparência: contratos, fornecedores, valores pagos
+
+IMPORTANTE sobre o que VOCÊ enxerga: nesta conversa você NÃO recebe as linhas do
+banco — só o contexto abaixo. A base existe e está cheia de dados de {ano}; quem
+não os tem em mãos é você. Então, quando a pergunta pedir números específicos
+(quais editais, de quem, por quanto), não responda que "não há dados" nem invente
+valores: diga que o número exato está na plataforma e mande o usuário à tela certa
+— Licitações (busca e filtros), Maior Atuação, Vencedores, Preços Ref., Radar de
+Verba, Mapa — dizendo qual filtro aplicar. O raciocínio, a estratégia e a leitura
+de mercado são com você.
 
 Seu objetivo é ajudar a equipe comercial a:
 1. Identificar oportunidades de venda antes da publicação do edital
@@ -80,7 +96,16 @@ export async function POST(req: NextRequest) {
       ? `Dados atuais da plataforma: ${context.oportunidades ?? 0} oportunidades identificadas, valor total estimado R$${((context.valorTotal ?? 0) / 1_000_000).toFixed(1)}M, ${context.alertas ?? 0} alertas ativos. Estado filtrado: ${context.uf ?? 'Nacional'}.`
       : 'Dados nacionais sem filtro de estado.'
 
-    const systemPrompt = SYSTEM_PROMPT.replace('{context}', contextStr)
+    // A data é resolvida a CADA requisição, não no topo do módulo: a instância da
+    // função sobrevive a várias requisições (fluid compute) e uma data congelada na
+    // inicialização iria envelhecendo silenciosamente enquanto o processo vive.
+    const hoje = hojeBR()
+    const systemPrompt = SYSTEM_PROMPT
+      .replace('{hoje}', hoje.extenso)
+      .replaceAll('{hoje_iso}', hoje.iso)
+      .replaceAll('{ano}', String(hoje.ano))
+      .replace('{ano_passado}', String(hoje.ano - 1))
+      .replace('{context}', contextStr)
 
     // Streaming response
     const encoder = new TextEncoder()
