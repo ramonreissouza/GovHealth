@@ -103,6 +103,12 @@ body {
   .tag-blue { background: rgba(47,128,237,.10); color: var(--accent); border: 1px solid rgba(47,128,237,.22); }
   .tag-purple { background: rgba(124,58,237,.10); color: var(--purple); border: 1px solid rgba(124,58,237,.22); }
   .tag-cyan { background: rgba(8,145,178,.10); color: var(--cyan); border: 1px solid rgba(8,145,178,.22); }
+  /* Botão/painel de IA (roxo). Escrito à mão, e não com `bg-brand-purple/15`, porque
+     --purple é um var() de cor completa: o Tailwind 3 não consegue aplicar opacidade
+     nele e o modificador /15 sai ignorado (fundo roxo chapado). */
+  .btn-purple { background: rgba(124,58,237,.12); border: 1px solid rgba(124,58,237,.38); }
+  .btn-purple:hover { background: rgba(124,58,237,.22); border-color: rgba(124,58,237,.60); }
+  .borda-purple { border-color: rgba(124,58,237,.32); }
   /* Cores literais (sem var()) porque estas não têm cor semântica no tema — existem
      só para dar contraste entre as categorias clínicas, que passaram de 7 para 14. */
   .tag-teal { background: rgba(13,148,136,.10); color: #0d9488; border: 1px solid rgba(13,148,136,.22); }

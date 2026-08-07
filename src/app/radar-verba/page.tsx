@@ -258,9 +258,12 @@ function RadarVerbaConteudo() {
                           <td className="px-3 py-2.5">
                             <span className="text-strong">{e.municipio || '—'}</span>
                             <span className="text-faint"> / {e.uf || '—'}</span>
+                            {/* tag-purple, e não `bg-brand-purple/15`: --purple é uma cor completa
+                                em var() e o Tailwind 3 não gera a classe com opacidade — o selo
+                                ficava sem fundo e sem cor de borda. */}
                             {e.esfera === 'estadual' && (
                               <span title="Emenda de deputado estadual (portal de transparência do estado)"
-                                className="ml-1.5 text-[8px] font-mono-custom px-1 py-0.5 rounded bg-brand-purple/15 text-brand-purple border border-brand-purple/30 uppercase align-middle">Est</span>
+                                className="tag-purple ml-1.5 text-[8px] font-mono-custom px-1 py-0.5 rounded uppercase align-middle">Est</span>
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-muted truncate max-w-[160px]">{e.autor || '—'}</td>

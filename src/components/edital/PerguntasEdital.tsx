@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { clsx } from 'clsx'
-import { Send, Square, MessagesSquare } from 'lucide-react'
+import { Send, Square, MessagesSquare, X } from 'lucide-react'
 
 export interface TurnoEdital {
   id: string
@@ -32,26 +32,40 @@ function formatar(s: string): string {
 }
 
 export default function PerguntasEdital({
-  texto, portfolio, turnos, setTurnos, onTurno, truncado,
+  texto, portfolio, turnos, setTurnos, onPergunta, onResposta, truncado, pedidoFoco = 0, onFechar,
 }: {
   texto: string
   portfolio: string[]
   turnos: TurnoEdital[]
   setTurnos: React.Dispatch<React.SetStateAction<TurnoEdital[]>>
-  /** Chamado quando um par pergunta+resposta fecha — para gravar no histórico da conta. */
-  onTurno?: (pergunta: string, resposta: string) => void
+  /** Chamado no ENVIO da pergunta. Separado da resposta de propósito: gravar só o par
+   *  completo perdia a pergunta quando o usuário saía da tela enquanto a IA escrevia. */
+  onPergunta?: (pergunta: string) => void
+  /** Chamado quando a resposta fecha — grava no histórico da conta. */
+  onResposta?: (pergunta: string, resposta: string) => void
   /** O texto disponível é só um trecho (análise antiga, salva antes de guardarmos o edital inteiro). */
   truncado?: boolean
+  /** Contador que sobe a cada clique em "Tirar dúvidas" — traz o painel à vista e foca o campo. */
+  pedidoFoco?: number
+  onFechar?: () => void
 }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const fimRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const caixaRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { fimRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [turnos])
   // Encerra o pedido em voo se a tela sair (trocar de análise, sair da página).
   useEffect(() => () => abortRef.current?.abort(), [])
+  // O botão fica no alto e o painel embaixo da análise, que é longa: sem rolar até
+  // aqui o clique pareceria não ter feito nada.
+  useEffect(() => {
+    if (!pedidoFoco) return
+    caixaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    inputRef.current?.focus({ preventScroll: true })
+  }, [pedidoFoco])
 
   async function perguntar(q: string = input) {
     const pergunta = q.trim()
@@ -65,6 +79,7 @@ export default function PerguntasEdital({
     ])
     setInput('')
     setLoading(true)
+    onPergunta?.(pergunta)
 
     // O histórico vai SEM o turno novo (que ainda não tem resposta) — e sem o texto
     // do edital, que o servidor põe no prompt do sistema.
@@ -124,18 +139,28 @@ export default function PerguntasEdital({
       if (abortRef.current === ctrl) abortRef.current = null
       setLoading(false)
       inputRef.current?.focus()
-      if (acumulado.trim()) onTurno?.(pergunta, acumulado)
+      if (acumulado.trim()) onResposta?.(pergunta, acumulado)
     }
   }
 
   return (
-    <div className="bg-bg2 border border-subtle rounded-xl p-4 mt-4">
+    <div ref={caixaRef} className="borda-purple bg-bg2 border rounded-xl p-4 mt-4 scroll-mt-6">
       <div className="flex items-center gap-2 mb-1">
         <MessagesSquare size={14} className="text-brand-purple" />
-        <h3 className="font-heading font-bold text-[13px] text-strong">Perguntar sobre este edital</h3>
+        <h3 className="font-heading font-bold text-[13px] text-strong">Tirar dúvidas sobre este edital</h3>
+        {onFechar && (
+          <button
+            onClick={onFechar}
+            title="Fechar (as perguntas ficam salvas)"
+            className="ml-auto text-faint hover:text-strong transition-colors"
+          >
+            <X size={13} />
+          </button>
+        )}
       </div>
       <p className="text-[11px] text-faint mb-3">
         Responde só com base no documento carregado — e avisa quando a resposta não está lá.
+        As perguntas ficam salvas junto com a análise, em &ldquo;Conversas anteriores&rdquo;.
         {truncado && ' Atenção: desta análise só ficou salvo um trecho do edital; reenvie o PDF para perguntar sobre o texto completo.'}
       </p>
 

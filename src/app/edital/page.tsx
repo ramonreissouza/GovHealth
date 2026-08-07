@@ -8,6 +8,7 @@ import { clsx } from 'clsx'
 import {
   FileText, Upload, Loader2, Sparkles, AlertTriangle, CheckCircle2, Clock,
   ShieldAlert, ListChecks, Building2, Boxes, X, FileWarning, Gavel, Scale, Copy, Check, Download,
+  MessagesSquare,
 } from 'lucide-react'
 import { extrairTextoPDF } from '@/lib/pdf'
 import { getProdutos } from '@/lib/portfolio'
@@ -85,6 +86,27 @@ function relatorioHtml(a: AnaliseEdital, titulo: string): string {
 </body></html>`
 }
 
+/** O que fica guardado no navegador entre visitas à tela. */
+interface Rascunho {
+  analise: AnaliseEdital | null
+  fileName: string | null
+  conversaId: string | null
+  turnos: TurnoEdital[]
+  texto: string
+}
+
+function gravarRascunho(s: Rascunho) {
+  // Sem análise E sem perguntas não há o que restaurar — texto colado sozinho não vale
+  // 100 mil caracteres de localStorage.
+  if (!s.analise && s.turnos.length === 0) return
+  try {
+    localStorage.setItem(LS_EDITAL, JSON.stringify({
+      analise: s.analise, fileName: s.fileName, conversaId: s.conversaId, turnos: s.turnos,
+      texto: s.texto.slice(0, MAX_TEXTO), criadoEm: Date.now(),
+    }))
+  } catch { /* cota estourada: a análise continua no histórico da conta */ }
+}
+
 function baixarRelatorio(a: AnaliseEdital, fileName: string | null) {
   const html = relatorioHtml(a, a.objeto ? `Análise — ${a.objeto.slice(0, 60)}` : 'Análise de Edital')
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
@@ -118,22 +140,44 @@ export default function EditalPage() {
   // Análises antigas guardaram só 2.000 caracteres do edital; nelas a pergunta livre
   // enxerga menos do que o usuário imagina, e a tela precisa dizer isso.
   const [trechoParcial, setTrechoParcial] = useState(false)
+  // O painel de perguntas fica FECHADO até pedirem: com ele sempre aberto no fim de
+  // uma análise longa, ninguém rolava até lá e a ferramenta passava despercebida.
+  // `pedidoFoco` sobe a cada clique — é o que faz o painel vir à vista e focar o campo
+  // mesmo quando ele já está aberto.
+  const [duvidasAbertas, setDuvidasAbertas] = useState(false)
+  const [pedidoFoco, setPedidoFoco] = useState(0)
+  const abrirDuvidas = useCallback(() => {
+    setDuvidasAbertas(true)
+    setPedidoFoco((n) => n + 1)
+  }, [])
+  // Criação da conversa em voo. Duas perguntas seguidas antes da primeira gravar (ou
+  // uma pergunta junto com o "Analisar edital") criariam DUAS conversas do mesmo
+  // edital na lista; quem chegar depois espera nesta promessa.
+  const criacaoRef = useRef<Promise<string | null> | null>(null)
 
   useEffect(() => {
     setProdutos(getProdutos().filter((p) => p.ativo).map((p) => p.nome))
-    // Restaura a última análise — não perder ao sair da tela e voltar.
+    // Restaura o que estava na tela — análise, texto e perguntas.
     try {
       const raw = localStorage.getItem(LS_EDITAL)
-      if (raw) {
-        const o = JSON.parse(raw)
-        if (o?.analise) {
-          setAnalise(o.analise)
-          if (o.fileName) setFileName(o.fileName)
-          if (o.conversaId) setConversaId(o.conversaId)
-          // O texto volta junto: sem ele as perguntas sobre o edital ficariam sem fonte.
-          if (typeof o.texto === 'string') setTexto(o.texto)
-          if (Array.isArray(o.turnos)) setTurnos(o.turnos)
-        }
+      if (!raw) return
+      const o = JSON.parse(raw)
+      // Sem exigir análise: quem perguntou ANTES de mandar analisar também tem o que
+      // recuperar, e era justamente essa a pergunta que sumia ao trocar de tela.
+      if (o?.analise) setAnalise(o.analise)
+      if (o?.fileName) setFileName(o.fileName)
+      if (o?.conversaId) setConversaId(o.conversaId)
+      // O texto volta junto: sem ele as perguntas sobre o edital ficariam sem fonte.
+      if (typeof o?.texto === 'string') setTexto(o.texto)
+      if (Array.isArray(o?.turnos) && o.turnos.length) {
+        // Resposta que ficou pela metade (saiu da tela enquanto a IA escrevia) volta
+        // como aviso: um balão vazio ficaria "pensando" para sempre.
+        setTurnos((o.turnos as TurnoEdital[]).map((t) => (
+          t.role === 'assistant' && !t.content?.trim()
+            ? { ...t, content: 'Resposta interrompida — você saiu da tela enquanto ela era escrita. Pergunte de novo.' }
+            : t
+        )))
+        setDuvidasAbertas(true)
       }
     } catch { /* noop */ }
   }, [])
@@ -144,17 +188,22 @@ export default function EditalPage() {
   // Com atraso porque `texto` muda a cada tecla quando o edital é colado à mão —
   // gravar 100 mil caracteres por tecla travaria a digitação.
   useEffect(() => {
-    if (!analise) return
-    const t = setTimeout(() => {
-      try {
-        localStorage.setItem(LS_EDITAL, JSON.stringify({
-          analise, fileName, conversaId, turnos,
-          texto: texto.slice(0, MAX_TEXTO), criadoEm: Date.now(),
-        }))
-      } catch { /* cota estourada: a análise continua no histórico da conta */ }
-    }, 400)
+    const t = setTimeout(() => gravarRascunho({ analise, fileName, conversaId, turnos, texto }), 400)
     return () => clearTimeout(t)
   }, [analise, fileName, conversaId, turnos, texto])
+
+  // Espelho do estado atual, sempre fresco, para gravar na saída. Atualizado em efeito
+  // sem lista de dependências (roda depois de todo render) — escrever no ref durante o
+  // render é proibido.
+  const rascunhoRef = useRef<Rascunho>({ analise, fileName, conversaId, turnos, texto })
+  useEffect(() => { rascunhoRef.current = { analise, fileName, conversaId, turnos, texto } })
+
+  // GRAVAÇÃO NA SAÍDA — é o que faltava.
+  // A resposta da IA chega token a token, e cada token mexe em `turnos`: o atraso de
+  // 400 ms acima era reagendado a cada pedaço e a gravação nunca acontecia enquanto a
+  // IA escrevia. Ao sair da tela nesse meio, o agendamento pendente era descartado e a
+  // pergunta sumia — o rascunho no navegador ainda era o de ANTES dela.
+  useEffect(() => () => gravarRascunho(rascunhoRef.current), [])
 
   const abrirConversa = useCallback(async (id: string) => {
     try {
@@ -167,6 +216,7 @@ export default function EditalPage() {
       const analiseMsg = msgs.find((m) => m.papel === 'assistant' && m.dados)
       const editalMsg = msgs.find((m) => m.papel === 'user')
       if (!analiseMsg && !editalMsg) return
+      criacaoRef.current = null
       setConversaId(id)
       setAnalise((analiseMsg?.dados as AnaliseEdital) ?? null)
       setFileName(j.conversa?.titulo ?? null)
@@ -175,21 +225,26 @@ export default function EditalPage() {
       // Perguntas livres = tudo menos o texto do edital e a análise. Filtrado por
       // exclusão (e não por posição) porque a análise pode ter entrado DEPOIS das
       // primeiras perguntas, quando o usuário pergunta antes de mandar analisar.
-      setTurnos(msgs
+      const perguntas = msgs
         .filter((m) => m !== editalMsg && m !== analiseMsg)
         .map((m) => ({
           id: String(m.id),
           role: m.papel === 'assistant' ? 'assistant' as const : 'user' as const,
           content: m.conteudo,
-        })))
+        }))
+      setTurnos(perguntas)
+      // Conversa que já tinha dúvidas volta com o painel aberto — é o que a pessoa
+      // veio reler.
+      setDuvidasAbertas(perguntas.length > 0)
       setErro(null); setPdfStatus(null)
     } catch { /* mantém a análise atual */ }
   }, [])
 
   const novaAnalise = useCallback(() => {
     setConversaId(null)
+    criacaoRef.current = null
     setTexto(''); setAnalise(null); setErro(null); setPdfStatus(null); setFileName(null)
-    setTurnos([]); setTrechoParcial(false)
+    setTurnos([]); setTrechoParcial(false); setDuvidasAbertas(false)
     try { localStorage.removeItem(LS_EDITAL) } catch { /* noop */ }
   }, [])
 
@@ -203,6 +258,7 @@ export default function EditalPage() {
     setFileName(file.name)
     // Edital novo: as perguntas do anterior não valem mais como contexto.
     setTurnos([]); setTrechoParcial(false); setConversaId(null); setAnalise(null)
+    setDuvidasAbertas(false); criacaoRef.current = null
     setPdfStatus('Extraindo texto do PDF…')
     try {
       const t = await extrairTextoPDF(file, (p, total) => setPdfStatus(`Lendo página ${p}/${total}…`))
@@ -219,6 +275,42 @@ export default function EditalPage() {
       setPdfStatus(null)
     }
   }, [])
+
+  /**
+   * Id da conversa deste edital, criando-a na primeira vez que alguém precisar dela.
+   * A conversa nasce só com o TEXTO do edital: é ele que sustenta as perguntas quando
+   * a análise for reaberta meses depois — sem isso, voltar numa análise antiga só
+   * permitiria reler, não perguntar. A análise e cada par pergunta+resposta entram
+   * depois, por PATCH.
+   */
+  const garantirConversa = useCallback(async (titulo: string): Promise<string | null> => {
+    if (conversaId) return conversaId
+    criacaoRef.current ??= (async () => {
+      const r = await fetch('/api/ia/conversas', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'edital', titulo,
+          mensagens: [{
+            papel: 'user',
+            conteudo: texto.slice(0, MAX_TEXTO),
+            dados: { completo: texto.length <= MAX_TEXTO },
+          }],
+        }),
+      })
+      const j = await r.json()
+      return (j?.id as string | undefined) ?? null
+    })()
+    let id: string | null = null
+    try {
+      id = await criacaoRef.current
+    } finally {
+      // Promessa que falhou não pode ficar guardada: as próximas perguntas ficariam
+      // presas nela para sempre. Sem id, a próxima tentativa cria de novo.
+      if (!id) criacaoRef.current = null
+    }
+    if (id) setConversaId(id)
+    return id
+  }, [conversaId, texto])
 
   async function analisar() {
     if (texto.trim().length < 200) {
@@ -243,29 +335,16 @@ export default function EditalPage() {
       const titulo = fileName || data.analise?.objeto || 'Análise de edital'
       const analiseMsg = { papel: 'assistant', conteudo: data.analise?.resumo ?? '', dados: data.analise }
       try {
-        if (conversaId) {
-          // Já existe conversa deste edital (o usuário perguntou antes de mandar analisar):
-          // a análise entra nela. Criar outra duplicaria o mesmo edital na lista.
-          await fetch(`/api/ia/conversas/${conversaId}`, {
+        // Se o usuário já perguntou antes de mandar analisar, a conversa existe e a
+        // análise entra nela — criar outra duplicaria o mesmo edital na lista. O
+        // título também é atualizado aqui: quem perguntou primeiro salvou a conversa
+        // com um nome provisório.
+        const id = await garantirConversa(titulo)
+        if (id) {
+          await fetch(`/api/ia/conversas/${id}`, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ titulo, mensagens: [analiseMsg] }),
           })
-        } else {
-          const r = await fetch('/api/ia/conversas', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              tipo: 'edital', titulo,
-              mensagens: [
-                // O texto do edital é guardado (até o mesmo teto que a análise usa) porque
-                // é ele que sustenta as perguntas livres quando a análise for reaberta —
-                // sem isso, voltar numa análise antiga só permitiria reler, não perguntar.
-                { papel: 'user', conteudo: texto.slice(0, MAX_TEXTO), dados: { completo: texto.length <= MAX_TEXTO } },
-                analiseMsg,
-              ],
-            }),
-          })
-          const j = await r.json()
-          if (j?.id) setConversaId(j.id)
         }
         await recarregar()
       } catch { /* a análise segue na tela mesmo se o histórico falhar */ }
@@ -278,41 +357,31 @@ export default function EditalPage() {
   }
 
   /**
-   * Grava um par pergunta+resposta livre. Se o usuário perguntou ANTES de analisar,
-   * não existe conversa ainda — cria uma com o edital, senão a pergunta se perderia
-   * ao sair da tela.
+   * Grava uma mensagem da conversa de dúvidas. Se o usuário perguntou ANTES de
+   * analisar, não existe conversa ainda — `garantirConversa` cria uma com o edital.
+   *
+   * Pergunta e resposta são gravadas SEPARADAMENTE, na hora de cada uma. Gravar só o
+   * par completo parecia mais limpo, mas perdia a pergunta inteira quando a IA
+   * demorava e o usuário trocava de tela no meio: ficava sem resposta E sem registro.
+   * Assim, no pior caso a conversa guarda a pergunta sem resposta — que é a verdade.
    */
-  async function persistirPergunta(pergunta: string, resposta: string) {
-    const par = [
-      { papel: 'user', conteudo: pergunta },
-      { papel: 'assistant', conteudo: resposta },
-    ]
+  async function persistirMensagem(papel: 'user' | 'assistant', conteudo: string) {
     try {
-      if (conversaId) {
-        await fetch(`/api/ia/conversas/${conversaId}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mensagens: par }),
-        })
-      } else {
-        const r = await fetch('/api/ia/conversas', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tipo: 'edital',
-            titulo: fileName || 'Perguntas sobre edital',
-            mensagens: [
-              { papel: 'user', conteudo: texto.slice(0, MAX_TEXTO), dados: { completo: texto.length <= MAX_TEXTO } },
-              ...par,
-            ],
-          }),
-        })
-        const j = await r.json()
-        if (j?.id) setConversaId(j.id)
-      }
+      const id = await garantirConversa(fileName || analise?.objeto || 'Perguntas sobre edital')
+      if (!id) return
+      await fetch(`/api/ia/conversas/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mensagens: [{ papel, conteudo }] }),
+      })
       await recarregar()
     } catch { /* a pergunta segue na tela mesmo se o histórico falhar */ }
   }
 
   function limpar() { novaAnalise() }
+
+  // Só os turnos do usuário: o contador é "quantas dúvidas eu já tirei", não o total
+  // de balões na tela.
+  const nPerguntas = turnos.filter((t) => t.role === 'user').length
 
   if (!IA_HABILITADA) return <IADesativada title="Copiloto de Edital" />
 
@@ -384,6 +453,15 @@ export default function EditalPage() {
                   {produtos.length > 0 && <span className="ml-2 text-accent">· {produtos.length} produto(s) do portfólio no contexto</span>}
                 </span>
                 <div className="flex items-center gap-2">
+                  {/* Só ENQUANTO não há análise. Com a análise na tela o botão vive no
+                      cabeçalho dela (logo acima do relatório), que é onde os olhos
+                      estão — dois botões iguais na mesma tela só confundem. Aqui ele
+                      existe porque a dúvida antes da análise é caso real: às vezes é
+                      uma pergunta só ("preciso de registro na ANVISA?") e não vale
+                      esperar o relatório inteiro. */}
+                  {texto.trim().length >= 200 && !analise && (
+                    <BotaoDuvidas onClick={abrirDuvidas} n={nPerguntas} />
+                  )}
                   {texto && (
                     <button onClick={limpar} className="px-3 py-2 rounded-lg bg-bg3 border border-subtle text-[12px] text-muted hover:text-strong transition-colors">
                       Limpar
@@ -410,31 +488,37 @@ export default function EditalPage() {
             {/* Resultado */}
             {analise && (
               <>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-3 gap-3">
                   <span className="text-[11px] font-mono-custom text-faint">Análise salva neste navegador — continua aqui quando você voltar.</span>
-                  <button
-                    onClick={() => baixarRelatorio(analise, fileName)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-black text-[12px] font-semibold hover:bg-accent2 transition-colors"
-                  >
-                    <Download size={14} /> Baixar relatório
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Aqui é onde a dúvida costuma nascer: logo depois de ler a análise. */}
+                    <BotaoDuvidas onClick={abrirDuvidas} n={nPerguntas} />
+                    <button
+                      onClick={() => baixarRelatorio(analise, fileName)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-black text-[12px] font-semibold hover:bg-accent2 transition-colors"
+                    >
+                      <Download size={14} /> Baixar relatório
+                    </button>
+                  </div>
                 </div>
                 <Resultado a={analise} />
               </>
             )}
 
-            {/* Perguntas livres. Não exige a análise pronta — às vezes a dúvida é uma só
-                ("preciso de registro na ANVISA?") e não vale esperar o relatório inteiro.
-                Fica DEPOIS do resultado: com análise na tela, a pergunta costuma nascer
-                do que se acabou de ler. */}
-            {texto.trim().length >= 200 && (
+            {/* Perguntas livres. Não exige a análise pronta, e fica DEPOIS do resultado:
+                com análise na tela, a pergunta costuma nascer do que se acabou de ler.
+                Só aparece quando pedido — ou quando a conversa reaberta já tem dúvidas. */}
+            {texto.trim().length >= 200 && duvidasAbertas && (
               <PerguntasEdital
                 texto={texto}
                 portfolio={produtos}
                 turnos={turnos}
                 setTurnos={setTurnos}
                 truncado={trechoParcial}
-                onTurno={persistirPergunta}
+                onPergunta={(p) => { void persistirMensagem('user', p) }}
+                onResposta={(_p, r) => { void persistirMensagem('assistant', r) }}
+                pedidoFoco={pedidoFoco}
+                onFechar={() => setDuvidasAbertas(false)}
               />
             )}
           </div>
@@ -442,6 +526,25 @@ export default function EditalPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Porta de entrada do painel de perguntas — aparece no card de envio e no topo da análise. */
+function BotaoDuvidas({ onClick, n }: { onClick: () => void; n: number }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Perguntar à IA sobre este edital"
+      className="btn-purple flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold text-strong transition-colors"
+    >
+      <MessagesSquare size={14} className="text-brand-purple" />
+      Tirar dúvidas
+      {n > 0 && (
+        <span className="tag-purple text-[10px] font-mono-custom rounded-full px-1.5 py-0.5 leading-none">
+          {n}
+        </span>
+      )}
+    </button>
   )
 }
 
