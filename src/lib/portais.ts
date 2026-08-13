@@ -18,13 +18,30 @@ export interface Portal {
   dominios: string[]
   /** Marcas que aparecem como "[MARCA] - ..." no objeto ou em usuarioNome. */
   marcas?: string[]
+  /**
+   * O que o link realmente é. Medido em 13/08/2026 nos hosts não reconhecidos:
+   * boa parte do que o PNCP manda em `linkSistemaOrigem` NÃO é portal de disputa,
+   * é o portal de transparência do próprio município — a URL leva a onde se LÊ o
+   * edital, não a onde a sessão acontece (ex.: `transparencia.agilicloud.com.br/
+   * prefjuruena-mt/licitacoes/...`). Dizer "a disputa acontece aqui" nesses casos
+   * seria falso, então quem for afirmar isso na UI deve filtrar por 'disputa'.
+   * Ausente = não classificado (não afirme nada).
+   */
+  tipo?: 'disputa' | 'transparencia'
 }
 
 // Catálogo dos portais já observados nos dados do PNCP. Acrescentar portal = uma
 // entrada aqui (a UI e os filtros passam a reconhecê-lo automaticamente).
+//
+// A ORDEM IMPORTA: `portalPorUrl` devolve o PRIMEIRO que casar, e o casamento
+// inclui `h.includes(d)`. Entradas específicas primeiro, genéricas por último —
+// o curinga de `.gov.br` fecha a lista de propósito.
 export const PORTAIS: Portal[] = [
-  { id: 'comprasgov', nome: 'Compras.gov.br',
-    dominios: ['cnetmobile.estaleiro.serpro.gov.br', 'comprasnet.gov.br', 'gov.br/compras', 'compras.gov.br'],
+  // ── Disputa nacional ──────────────────────────────────────────────────────
+  { id: 'comprasgov', nome: 'Compras.gov.br', tipo: 'disputa',
+    // `comprasgovernamentais.gov.br` é o mesmo Compras.gov com outro domínio:
+    // 635 registros estavam caindo em "não informado" só por isso.
+    dominios: ['cnetmobile.estaleiro.serpro.gov.br', 'comprasnet.gov.br', 'gov.br/compras', 'compras.gov.br', 'comprasgovernamentais.gov.br'],
     marcas: ['compras.gov', 'comprasnet', 'compras.gov.br'] },
   { id: 'licitanet', nome: 'Licitanet',
     dominios: ['licitanet.com.br'], marcas: ['licitanet'] },
@@ -52,6 +69,71 @@ export const PORTAIS: Portal[] = [
     dominios: ['compras.m2atecnologia.com.br', 'm2atecnologia.com.br'], marcas: ['m2a'] },
   { id: 'siga', nome: 'SIGA',
     dominios: ['siga.pr.gov.br'], marcas: ['siga'] },
+  { id: 'comprasbr', nome: 'Compras BR',
+    dominios: ['comprasbr.com.br'], marcas: ['compras br', 'comprasbr'], tipo: 'disputa' },
+
+  // ── Disputa estadual ──────────────────────────────────────────────────────
+  // Sistemas próprios de estado, onde a sessão roda de verdade (a WaveCode vende
+  // CELIC/RS e Procergs pelo mesmo motivo). `host()` já tira o prefixo `www\d?.`,
+  // então `www1.compras.mg.gov.br` casa com `compras.mg.gov.br`.
+  //
+  // Os nomes seguem `lib/portais-estaduais.ts` (PORTAIS_CONFIG) de propósito: o
+  // mesmo portal com dois nomes diferentes em duas telas é defeito, e aquele
+  // módulo já é exibido na página /estados.
+  { id: 'compras-rj', nome: 'SIGA-RJ', tipo: 'disputa',
+    dominios: ['compras.rj.gov.br'], marcas: ['siga-rj', 'compras.rj'] },
+  { id: 'compras-mg', nome: 'LicitaMG', tipo: 'disputa',
+    dominios: ['compras.mg.gov.br'], marcas: ['licitamg', 'compras.mg'] },
+  { id: 'celic-rs', nome: 'Compras RS', tipo: 'disputa',
+    dominios: ['compras.rs.gov.br', 'celic.rs.gov.br'], marcas: ['celic', 'compras.rs'] },
+  { id: 'pe-integrado', nome: 'Compras PE', tipo: 'disputa',
+    dominios: ['peintegrado.pe.gov.br'], marcas: ['pe integrado', 'peintegrado'] },
+  { id: 'ecompras-am', nome: 'e-Compras AM', tipo: 'disputa',
+    dominios: ['e-compras.am.gov.br'], marcas: ['e-compras'] },
+  { id: 'comprasnet-se', nome: 'Comprasnet SE', tipo: 'disputa',
+    dominios: ['comprasnet.se.gov.br', 'aracajucompras.se.gov.br', 'compras.saocristovao.se.gov.br'] },
+  { id: 'centraldecompras-pb', nome: 'Central de Compras PB', tipo: 'disputa',
+    dominios: ['centraldecompras.pb.gov.br'] },
+
+  // ── Transparência (o link leva ao edital, NÃO à sessão) ───────────────────
+  // Casas de software que hospedam o portal de transparência de centenas de
+  // municípios. Confirmado pela própria URL, que traz /transparencia/ ou
+  // /portal-transparencia/ no caminho.
+  { id: 'transparencia-pr', nome: 'Transparência PR (portal estadual)', tipo: 'transparencia',
+    dominios: ['transparencia.pr.gov.br'] },
+  { id: 'tce-rs', nome: 'TCE-RS (licitações)', tipo: 'transparencia',
+    dominios: ['tce.rs.gov.br'] },
+  { id: 'geosiap', nome: 'GeoSIAP (transparência municipal)', tipo: 'transparencia',
+    dominios: ['geosiap.net.br'], marcas: ['geosiap'] },
+  { id: 'agili', nome: 'Ágili (transparência municipal)', tipo: 'transparencia',
+    dominios: ['agilicloud.com.br'], marcas: ['agili'] },
+  { id: 'governotransparente', nome: 'Governo Transparente', tipo: 'transparencia',
+    dominios: ['governotransparente.com.br'], marcas: ['governo transparente'] },
+  { id: 'contratosgov', nome: 'ContratosGov', tipo: 'transparencia',
+    dominios: ['contratosgov.com.br'], marcas: ['contratosgov'] },
+  { id: 'gp-transparencia', nome: 'GP Transparência', tipo: 'transparencia',
+    dominios: ['gp.srv.br'] },
+  { id: 'sai', nome: 'SAI — Sistema de Acesso à Informação', tipo: 'transparencia',
+    dominios: ['sai.io.org.br'], marcas: ['sistema de acesso'] },
+
+  // ── Não classificados ─────────────────────────────────────────────────────
+  // Volume relevante e marca evidente no próprio domínio, mas eu NÃO verifiquei
+  // se são de disputa ou de transparência. Sem `tipo` de propósito: nomear é
+  // seguro, afirmar onde a sessão roda não é.
+  { id: 'pncpmap', nome: 'PNCP Map', dominios: ['pncpmap.jelastic.saveincloud.net'] },
+  { id: 'empro', nome: 'EMPRO (São José do Rio Preto)', dominios: ['empro.com.br'] },
+  { id: 'centi', nome: 'Centi', dominios: ['centi.com.br'] },
+  { id: 'slicx', nome: 'SLICX', dominios: ['slicx.com.br'] },
+  { id: 'diretriz', nome: 'Diretriz', dominios: ['diretriz.net'] },
+  { id: 'cebi', nome: 'CEBI Cloud', dominios: ['cebicloud.com.br'] },
+
+  // ── Curinga, SEMPRE por último ────────────────────────────────────────────
+  // Sobram ~1.060 hosts de cauda longa, quase todos o site do próprio município
+  // (`compras.barueri.sp.gov.br`, `goiandira.go.gov.br`, `catanduva.sp.gov.br`…).
+  // Um por um não se paga; dizer "portal do próprio órgão" é verdadeiro e muito
+  // mais útil que "Portal não informado". Só chega aqui quem não casou acima.
+  { id: 'orgao-proprio', nome: 'Portal do próprio órgão',
+    dominios: ['.gov.br', '.leg.br', '.jus.br'] },
 ]
 
 const POR_ID = new Map(PORTAIS.map((p) => [p.id, p]))

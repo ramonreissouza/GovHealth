@@ -188,8 +188,13 @@ async function varrer({ mes, mod }) {
     vistos += itens.length
     const lote = itens
       .filter((x) => x.numeroControlePNCP && x.valorTotalEstimado != null)
+      // `.trim() || null` e não `?? null`: o PNCP devolve linkSistemaOrigem como
+      // string VAZIA com frequência, e `?? null` gravava o '' no banco. Medido em
+      // 13/08/2026: 40.772 registros com link_externo = '' — que contam como
+      // "tem link" em qualquer count(link_externo) e não resolvem portal nenhum.
       .map((x) => ({ id: x.numeroControlePNCP, valor: x.valorTotalEstimado,
-                     modalidade: x.modalidadeNome ?? null, link: x.linkSistemaOrigem ?? null }))
+                     modalidade: x.modalidadeNome ?? null,
+                     link: (x.linkSistemaOrigem ?? '').trim() || null }))
     gravados += await gravar(lote)
     await salvarCp(chave, pag)
     if (pag >= (j.totalPaginas ?? pag)) { await salvarCp(chave, -1); break }
