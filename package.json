@@ -25,6 +25,7 @@
     "portais:migrate": "node scripts/migrate-portais.mjs",
     "portais:backfill": "node scripts/backfill-portais.mjs",
     "portais:harvest": "node scripts/harvest-portais.mjs",
+    "portais:verificar": "tsx scripts/verificar-portais.ts",
     "categorias:reclassificar": "node scripts/reclassificar-categorias.mjs",
     "portais:noite": "node scripts/harvest-noite.mjs",
     "pipeline:noite": "node scripts/pipeline-noite.mjs",

@@ -34,6 +34,13 @@ export interface Licitacao {
   situacaoCompraId: number
   situacaoCompraNome: string
   linkSistemaOrigem: string
+  /**
+   * `usuarioNome` do PNCP: o SISTEMA que publicou (IPM, Betha, BLL, Licitanet…).
+   * Vem em ~100% das respostas contra ~30% do link, e é o único sinal de portal
+   * para os ~190 mil registros sem link próprio. Sem ele aqui, `resolverPortal`
+   * nunca vê o que o harvest passa dias coletando.
+   */
+  usuarioNome?: string | null
   itens?: ItemLicitacao[]
 }
 

@@ -32,7 +32,15 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
   const [monitor, setMonitor] = useState<Estado>('idle')
   const [erro, setErro] = useState<string | null>(null)
 
-  const portal = resolverPortal({ linkExterno: lic.linkSistemaOrigem, objeto: lic.objetoCompra })
+  // `usuarioNome` entra aqui porque é o único sinal de portal dos ~190 mil
+  // registros sem link próprio (a API já trocou o link deles pela URL canônica do
+  // PNCP). `resolverPortal` prefere a URL e só cai no nome do sistema depois, que
+  // é a ordem de confiança certa.
+  const portal = resolverPortal({
+    linkExterno: lic.linkSistemaOrigem,
+    usuarioNome: lic.usuarioNome,
+    objeto: lic.objetoCompra,
+  })
   // Só quem é de disputa pode virar "Disputa no X". O catálogo tem portal de
   // transparência municipal (o PNCP manda essa URL em linkSistemaOrigem igual),
   // e ali o link leva à leitura do edital, não à sessão.

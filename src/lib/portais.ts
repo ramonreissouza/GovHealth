@@ -43,31 +43,34 @@ export const PORTAIS: Portal[] = [
     // 635 registros estavam caindo em "não informado" só por isso.
     dominios: ['cnetmobile.estaleiro.serpro.gov.br', 'comprasnet.gov.br', 'gov.br/compras', 'compras.gov.br', 'comprasgovernamentais.gov.br'],
     marcas: ['compras.gov', 'comprasnet', 'compras.gov.br'] },
-  { id: 'licitanet', nome: 'Licitanet',
+  // `tipo: 'disputa'` explícito em TODOS: sem ele, ePortalDeDisputa() devolvia
+  // false e a UI dizia "Ver no Licitanet" em vez de "Disputa no Licitanet" —
+  // justamente nos portais que mais importam. Pego pelo caso 1 de _t.ts.
+  { id: 'licitanet', nome: 'Licitanet', tipo: 'disputa',
     dominios: ['licitanet.com.br'], marcas: ['licitanet'] },
-  { id: 'bnc', nome: 'BNC — Bolsa Nacional de Compras',
+  { id: 'bnc', nome: 'BNC — Bolsa Nacional de Compras', tipo: 'disputa',
     dominios: ['bnccompras.com', 'bnc.org.br'], marcas: ['bnc', 'bolsa nacional'] },
-  { id: 'bll', nome: 'BLL — Bolsa de Licitações e Leilões',
+  { id: 'bll', nome: 'BLL — Bolsa de Licitações e Leilões', tipo: 'disputa',
     dominios: ['bllcompras.com', 'bllcompras.org.br', 'bll.org.br'], marcas: ['bll'] },
-  { id: 'licitacoes-e', nome: 'Licitações-e (Banco do Brasil)',
+  { id: 'licitacoes-e', nome: 'Licitações-e (Banco do Brasil)', tipo: 'disputa',
     dominios: ['licitacoes-e.com.br', 'licitacoes-e2.bb.com.br', 'bb.com.br'], marcas: ['licitacoes-e', 'licitações-e', 'banco do brasil'] },
-  { id: 'pcp', nome: 'Portal de Compras Públicas',
+  { id: 'pcp', nome: 'Portal de Compras Públicas', tipo: 'disputa',
     dominios: ['portaldecompraspublicas.com.br'], marcas: ['portal de compras publicas', 'pcp'] },
-  { id: 'licitamaisbrasil', nome: 'Licita Mais Brasil',
+  { id: 'licitamaisbrasil', nome: 'Licita Mais Brasil', tipo: 'disputa',
     dominios: ['licitamaisbrasil.com.br'], marcas: ['licita mais brasil'] },
-  { id: 'licitardigital', nome: 'Licitar Digital',
+  { id: 'licitardigital', nome: 'Licitar Digital', tipo: 'disputa',
     dominios: ['licitardigital.com.br', 'app2.licitardigital.com.br'], marcas: ['licitar digital'] },
-  { id: 'ammlicita', nome: 'AMM Licita',
+  { id: 'ammlicita', nome: 'AMM Licita', tipo: 'disputa',
     dominios: ['ammlicita.org.br', 'app2.ammlicita.org.br'], marcas: ['amm licita'] },
-  { id: 'sigep', nome: 'SIGEP',
+  { id: 'sigep', nome: 'SIGEP', tipo: 'disputa',
     dominios: ['sigep.com.br'], marcas: ['sigep'] },
-  { id: 'publicenter', nome: 'Publicenter',
+  { id: 'publicenter', nome: 'Publicenter', tipo: 'disputa',
     dominios: ['publicenter.com.br'], marcas: ['publicenter'] },
-  { id: 'banrisul', nome: 'Pregão Banrisul',
+  { id: 'banrisul', nome: 'Pregão Banrisul', tipo: 'disputa',
     dominios: ['pregaobanrisul.com.br'], marcas: ['banrisul', 'procergs'] },
-  { id: 'm2a', nome: 'M2A Tecnologia',
+  { id: 'm2a', nome: 'M2A Tecnologia', tipo: 'disputa',
     dominios: ['compras.m2atecnologia.com.br', 'm2atecnologia.com.br'], marcas: ['m2a'] },
-  { id: 'siga', nome: 'SIGA',
+  { id: 'siga', nome: 'SIGA', tipo: 'disputa',
     dominios: ['siga.pr.gov.br'], marcas: ['siga'] },
   { id: 'comprasbr', nome: 'Compras BR',
     dominios: ['comprasbr.com.br'], marcas: ['compras br', 'comprasbr'], tipo: 'disputa' },
@@ -127,6 +130,14 @@ export const PORTAIS: Portal[] = [
   { id: 'diretriz', nome: 'Diretriz', dominios: ['diretriz.net'] },
   { id: 'cebi', nome: 'CEBI Cloud', dominios: ['cebicloud.com.br'] },
 
+  // ── PNCP, ANTES do curinga ────────────────────────────────────────────────
+  // Obrigatoriamente aqui: quando não há link real, /api/opportunities cai na URL
+  // canônica `pncp.gov.br/app/editais/...`, e sem esta entrada o curinga `.gov.br`
+  // engoliria ~190 mil registros dizendo "Portal do próprio órgão" para uma URL
+  // que é do agregador nacional. O PNCP é o mural onde se LÊ o edital — nunca a
+  // sessão, por definição.
+  { id: 'pncp', nome: 'PNCP', dominios: ['pncp.gov.br'], tipo: 'transparencia' },
+
   // ── Curinga, SEMPRE por último ────────────────────────────────────────────
   // Sobram ~1.060 hosts de cauda longa, quase todos o site do próprio município
   // (`compras.barueri.sp.gov.br`, `goiandira.go.gov.br`, `catanduva.sp.gov.br`…).
@@ -182,9 +193,25 @@ export function portalPorTexto(texto: string | null | undefined): string | null 
 }
 
 /**
+ * Sinais que a URL dá mas que quase não informam, e por isso PERDEM para o nome
+ * do sistema publicador:
+ *
+ *  - `pncp`: /api/opportunities troca link ausente pela URL canônica
+ *    `pncp.gov.br/app/editais/...`. Casar por ela diria "PNCP" para todo registro
+ *    sem link — apagando justamente o `usuarioNome` que o harvest coleta.
+ *  - `orgao-proprio`: o curinga `.gov.br`. Saber que é "IPM Sistemas" é mais
+ *    específico que "Portal do próprio órgão".
+ *
+ * Não saem do catálogo porque, se NADA mais resolver, ainda são melhores que
+ * "Portal não informado" — só descem na fila.
+ */
+const SINAIS_FRACOS = new Set(['pncp', 'orgao-proprio'])
+
+/**
  * Resolve o portal de uma contratação a partir do que houver. A ordem reflete a
  * confiança de cada sinal: a URL do sistema de origem é a verdade; o nome do
- * sistema vem logo depois; o marcador no objeto é o resgate do histórico.
+ * sistema vem logo depois; o marcador no objeto é o resgate do histórico. Sinal
+ * fraco de URL fica para o fim, senão ele cala os sinais melhores.
  */
 export function resolverPortal(row: {
   linkExterno?: string | null
@@ -192,12 +219,17 @@ export function resolverPortal(row: {
   objeto?: string | null
   fonte?: string | null
 }): string {
-  return portalPorUrl(row.linkExterno)
+  const porUrl = portalPorUrl(row.linkExterno)
+  const urlForte = porUrl && !SINAIS_FRACOS.has(porUrl) ? porUrl : null
+  return urlForte
     ?? portalPorTexto(row.usuarioNome)
     ?? portalPorTexto(row.objeto)
     // `fonte` só identifica portal quando a coleta veio direto dele (não vale 'pncp',
     // que é o agregador e não diz nada sobre onde a sessão roda).
     ?? (row.fonte && row.fonte !== 'pncp' ? (POR_ID.has(row.fonte) ? row.fonte : null) : null)
+    // Último recurso: o sinal fraco da URL. "PNCP" ou "Portal do próprio órgão"
+    // ainda diz mais ao fornecedor que "Portal não informado".
+    ?? porUrl
     ?? PORTAL_DESCONHECIDO.id
 }
 

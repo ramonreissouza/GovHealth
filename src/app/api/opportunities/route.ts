@@ -131,6 +131,7 @@ interface ContratacaoRow {
   tipo_fornecimento: string | null
   fonte: string | null
   link_externo: string | null
+  usuario_nome: string | null
   aberto: boolean
 }
 
@@ -249,7 +250,8 @@ async function buscarDoBanco(params: {
             modalidade_nome, objeto_compra, ano_compra, sequencial_compra,
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
-            situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo`
+            situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo,
+            usuario_nome`
   const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
 
   // Modo mapa: top-N por UF (janela) → toda UF com dado aparece, sem viés de recência.
@@ -293,6 +295,11 @@ async function buscarDoBanco(params: {
       situacaoCompraId: r.aberto ? 1 : 4,
       situacaoCompraNome: r.aberto ? 'Em aberto' : 'Encerrada (homologada)',
       linkSistemaOrigem: link,
+      // Segue cru para a UI: `link` acima já virou a URL canônica do PNCP quando
+      // não havia link próprio, então ele não distingue mais "sem portal" de
+      // "portal é o PNCP". `usuario_nome` distingue, e é o que resolve o portal
+      // dos registros sem link.
+      usuarioNome: r.usuario_nome,
     }
     const catBanco = r.categoria_saude as Oportunidade['categoria'] | null
     return montarOportunidade({
