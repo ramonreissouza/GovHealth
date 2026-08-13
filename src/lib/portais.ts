@@ -201,6 +201,20 @@ export function resolverPortal(row: {
     ?? PORTAL_DESCONHECIDO.id
 }
 
+/**
+ * O link daquele portal leva à SESSÃO da disputa, ou só à leitura do edital?
+ *
+ * Quem escreve "Disputa no X" na UI tem que passar por aqui. Metade do catálogo
+ * é portal de transparência municipal (o PNCP manda essa URL em
+ * `linkSistemaOrigem` do mesmo jeito), e afirmar disputa ali é falso: o
+ * fornecedor clica esperando a sessão e cai numa página de consulta.
+ *
+ * `tipo` ausente = não verificado, e não-verificado NÃO conta como disputa.
+ */
+export function ePortalDeDisputa(id: string | null | undefined): boolean {
+  return !!id && POR_ID.get(id)?.tipo === 'disputa'
+}
+
 /** Nome amigável de um portal pelo id. */
 export function nomePortal(id: string | null | undefined): string {
   if (!id) return PORTAL_DESCONHECIDO.nome

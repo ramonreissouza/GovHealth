@@ -15,7 +15,7 @@ import { useState } from 'react'
 import { clsx } from 'clsx'
 import { Download, Radar, ExternalLink, Check, Loader2 } from 'lucide-react'
 import type { Licitacao } from '@/lib/types'
-import { resolverPortal, nomePortal } from '@/lib/portais'
+import { resolverPortal, nomePortal, ePortalDeDisputa } from '@/lib/portais'
 
 /** Página do edital no PNCP (onde ficam os arquivos p/ download). */
 function paginaEditalPncp(lic: Licitacao): string | null {
@@ -33,6 +33,10 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
   const [erro, setErro] = useState<string | null>(null)
 
   const portal = resolverPortal({ linkExterno: lic.linkSistemaOrigem, objeto: lic.objetoCompra })
+  // Só quem é de disputa pode virar "Disputa no X". O catálogo tem portal de
+  // transparência municipal (o PNCP manda essa URL em linkSistemaOrigem igual),
+  // e ali o link leva à leitura do edital, não à sessão.
+  const eDisputa = ePortalDeDisputa(portal)
   const pagEdital = paginaEditalPncp(lic)
 
   async function ativarMonitoramento() {
@@ -41,7 +45,9 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
       const r = await fetch('/api/radar/processos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          conectorId: portal === 'desconhecido' ? 'comprasgov' : portal,
+          // Só existe conector de chat para portal de disputa. Mandar 'geosiap'
+          // ou 'orgao-proprio' aqui criaria processo com conector inexistente.
+          conectorId: eDisputa ? portal : 'comprasgov',
           licitacaoId: lic.numeroControlePNCP,
           titulo: (lic.objetoCompra ?? '').slice(0, 240),
           uf: uf ?? lic.orgaoEntidade?.uf ?? '',
@@ -85,13 +91,19 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
           <a href={lic.linkSistemaOrigem} target="_blank" rel="noopener noreferrer"
             className={clsx(btn, 'border-subtle2 bg-bg3 text-muted hover:text-accent hover:border-subtle')}>
             <ExternalLink size={12} />
-            {portal === 'desconhecido' ? 'Acessar local da disputa' : `Disputa no ${nomePortal(portal)}`}
+            {eDisputa ? `Disputa no ${nomePortal(portal)}`
+              // Reconhecido, mas é transparência (ou não verificado): o link leva ao
+              // edital. Nomear ainda ajuda — "Ver no GeoSIAP" diz o que vem depois
+              // do clique. O que não pode é prometer sessão de disputa.
+              : portal !== 'desconhecido' ? `Ver no ${nomePortal(portal)}`
+              : 'Acessar local da disputa'}
           </a>
         )}
 
         {/* Portal reconhecido pelo marcador "[PORTAL] - ..." do objeto, mas sem URL
-            para levar a pessoa. Dizer onde é continua valendo mais que silêncio. */}
-        {!lic.linkSistemaOrigem && portal !== 'desconhecido' && (
+            para levar a pessoa. Dizer onde é continua valendo mais que silêncio —
+            e só vale dizer "disputa" se for portal de disputa. */}
+        {!lic.linkSistemaOrigem && eDisputa && (
           <span className="text-[10.5px] text-faint">Disputa no {nomePortal(portal)}</span>
         )}
 
