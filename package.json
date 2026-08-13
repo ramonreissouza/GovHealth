@@ -27,6 +27,7 @@
     "portais:harvest": "node scripts/harvest-portais.mjs",
     "categorias:reclassificar": "node scripts/reclassificar-categorias.mjs",
     "portais:noite": "node scripts/harvest-noite.mjs",
+    "pipeline:noite": "node scripts/pipeline-noite.mjs",
     "documentos:migrate": "node scripts/migrate-documentos.mjs",
     "emendas:migrate": "node scripts/migrate-emendas.mjs",
     "emendas:ingest": "node scripts/ingest-emendas.mjs",
