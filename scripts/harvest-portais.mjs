@@ -78,9 +78,21 @@ const ESPERA_MIN = 800
 const ESPERA_MAX = 60000
 let seguidasOk = 0
 
+// A recuperação tem que ser GEOMÉTRICA, igual à punição. Até 13/08/2026 ela era
+// linear (-100ms a cada 15 acertos) contra uma punição de ×2, e essa assimetria
+// prendia o coletor no teto: depois da queda do PNCP de 12-13/08 a espera ficou
+// em 60.000ms e, para voltar aos 1.500ms, precisaria de (60000-1500)/100 = 585
+// reduções × 15 acertos = 8.775 pedidos bem-sucedidos = 75h só de recuperação
+// (simulado, não estimado). Era isso, e não a lentidão do PNCP, que produzia a
+// projeção de "falta ~178h" com a API respondendo 8/8 a 1 req/s.
+// ×0,7 a cada 5 acertos volta dos 60s aos 800ms em 65 pedidos (16,5min). Relaxar
+// rápido é seguro porque a punição continua a um único erro de distância.
 function aoSucesso() {
   seguidasOk++
-  if (seguidasOk >= 15 && espera > ESPERA_MIN) { espera = Math.max(ESPERA_MIN, espera - 100); seguidasOk = 0 }
+  if (seguidasOk >= 5 && espera > ESPERA_MIN) {
+    espera = Math.max(ESPERA_MIN, Math.round(espera * 0.7))
+    seguidasOk = 0
+  }
 }
 function aoLimite() {
   seguidasOk = 0
