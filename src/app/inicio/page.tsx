@@ -204,16 +204,17 @@ export default async function InicioPage() {
               {/* SUBSTITUIÇÃO DE CUSTO, logo abaixo do CTA — é onde o olho vai
                   depois do botão, e é o argumento que a concorrência repete três
                   vezes na página deles ("trocaram 2 ferramentas e cortaram
-                  custo"). Aqui são 3.
+                  custo").
 
-                  TEMPO VERBAL DE PROPÓSITO: "está trocando", não "trocou". A
-                  migração está em curso, não concluída. Quando fechar, vira
-                  "trocou 3 ferramentas pela GovHealth e cortou custo" — e aí
-                  ganha o "cortou custo", que hoje seria afirmar resultado que
-                  ninguém mediu. Anônimo até o cliente autorizar o nome. */}
-              <p className="reveal flex items-center gap-2 text-[13px] text-muted mt-6" style={{ '--d': '0.2s' } as React.CSSProperties}>
-                <span className="font-mono-custom font-bold text-[15px] text-gradient-brand">3</span>
-                ferramentas: é o que um cliente está trocando pela GovHealth.
+                  É afirmação de ESCOPO do produto ("substitui 2 ou 3"), não
+                  depoimento de cliente. A versão anterior contava um caso
+                  específico em andamento, o que obrigava a escrever "está
+                  trocando" e a omitir o corte de custo — mais fraca e mais frágil.
+                  Como afirmação de escopo, não depende de migração fechada nem de
+                  autorização de nome. */}
+              <p className="reveal text-[13px] text-muted mt-6" style={{ '--d': '0.2s' } as React.CSSProperties}>
+                Uma assinatura GovHealth no lugar de{' '}
+                <strong className="text-strong">2 ou 3 ferramentas</strong> — corte de custo.
               </p>
             </div>
 
@@ -443,11 +444,11 @@ export default async function InicioPage() {
             <p className="text-center text-[13.5px] text-muted mb-4 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
             {/* A mesma frase do hero, repetida AQUI de propósito: é na seção de
                 preço que a objeção de custo aparece, e é onde "uma assinatura no
-                lugar de três" deixa de ser vaidade e vira justificativa de ticket.
-                A concorrência repete a versão deles três vezes na página. */}
+                lugar de duas ou três" deixa de ser vaidade e vira justificativa de
+                ticket. A concorrência repete a versão deles três vezes na página. */}
             <p className="text-center text-[13.5px] text-strong mb-10 max-w-[560px] mx-auto">
-              Uma assinatura no lugar de <strong className="text-gradient-brand">3 ferramentas</strong> — é a
-              troca que um cliente está fazendo agora.
+              Uma assinatura GovHealth no lugar de{' '}
+              <strong className="text-gradient-brand">2 ou 3 ferramentas</strong>. Corte de custo.
             </p>
             <div className="grid sm:grid-cols-3 gap-5 max-w-[1000px] mx-auto">
               {PLANOS.map((p, i) => (
