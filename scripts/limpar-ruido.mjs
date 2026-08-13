@@ -28,14 +28,25 @@
 // Uso:
 //   node scripts/limpar-ruido.mjs            (ENSAIO — não escreve nada)
 //   node scripts/limpar-ruido.mjs --aplicar  (grava)
+//   node scripts/limpar-ruido.mjs --so-valor --teto=1e9 --aplicar
 //   npm run ruido:limpar / npm run ruido:limpar -- --aplicar
+//
+// --so-valor  roda APENAS a limpeza (2). A limpeza (1) APAGA linhas, e nem sempre
+//             se quer as duas juntas — separar evita um DELETE não pedido.
+// --teto=N    limiar de "valor impossível". Aceita 1e9. Ver acima por que o padrão
+//             é 1e10 e o que se perde ao baixar para 1e9.
 
 import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude } from './saude-filter.mjs'
 
 const APLICAR = process.argv.includes('--aplicar')
-const TETO_IMPOSSIVEL = 1e10   // R$ 10 bi
+const SO_VALOR = process.argv.includes('--so-valor')
+const argTeto = process.argv.find((a) => a.startsWith('--teto='))
+const TETO_IMPOSSIVEL = argTeto ? Number(argTeto.slice(7)) : 1e10   // R$ 10 bi
+if (!Number.isFinite(TETO_IMPOSSIVEL) || TETO_IMPOSSIVEL <= 0) {
+  console.error(`ERRO: --teto inválido: ${argTeto?.slice(7)}`); process.exit(1)
+}
 
 if (!process.env.DATABASE_URL) {
   const env = fs.readFileSync('.env.local', 'utf8')
@@ -71,7 +82,7 @@ const RUIDO_RE = [
 ]
 const PRODUTO_SAUDE_RE = /medicament|f[áa]rmac|fralda|material (m[ée]dic|hospitalar|penso)|equipament|insumo|seringa|cateter|luva|gaze|reagente|vacina|pr[óo]tese|[óo]rtese/i
 
-const { rows: todos } = await db.query(
+const { rows: todos } = SO_VALOR ? { rows: [] } : await db.query(
   `SELECT numero_controle_pncp ncp, objeto_compra obj, categoria_saude cat
      FROM contratacoes WHERE objeto_compra IS NOT NULL`)
 
@@ -92,6 +103,7 @@ for (const r of alcance.slice(0, 6)) console.log(`        · (${r.cat}) ${r.obj.
 console.log('')
 
 const ncps = fora.map((r) => r.ncp)
+if (SO_VALOR) console.log('(1) PULADA (--so-valor): nenhum registro será apagado.\n')
 // Contagem das DEPENDÊNCIAS antes de qualquer DELETE. `itens` tem FK declarada
 // (apagar contratacoes sem apagar itens falha); `resultados` não tem FK, então
 // sobraria órfão e a tela de Vencedores continuaria mostrando comida homologada.
@@ -122,6 +134,19 @@ console.log(`    soma da base hoje : ${brl(somas.tudo)}`)
 console.log(`    soma sem eles     : ${brl(somas.sem)}`)
 for (const r of absurdos) console.log(`      · ${brl(r.v)} | ${(r.org ?? '').slice(0, 30)} | ${r.obj}`)
 
+// Quem foi neutralizado por um teto MAIS BAIXO numa execução anterior e hoje está
+// abaixo do teto vigente. Sem isto, `--teto` só sabe descer: subir de 1e9 para 1e10
+// deixaria os 71 da faixa 1-10 bi neutralizados para sempre, e a base ficaria
+// dependente da ordem em que os tetos foram testados. Com isto a operação é
+// idempotente — o teto define o estado final, não um acúmulo de execuções.
+const { rows: devolver } = await db.query(
+  `SELECT numero_controle_pncp ncp, valor_original v, left(objeto_compra,52) obj
+     FROM contratacoes WHERE valor_original IS NOT NULL AND valor_original < $1
+     ORDER BY valor_original DESC`, [TETO_IMPOSSIVEL])
+console.log(`\n    a RESTAURAR (neutralizados abaixo do teto vigente): ${devolver.length}`)
+for (const r of devolver.slice(0, 6)) console.log(`      · ${brl(r.v)} | ${r.obj}`)
+if (devolver.length > 6) console.log(`      · ... e mais ${devolver.length - 6}`)
+
 if (!APLICAR) {
   console.log('\nEnsaio. Para gravar: node scripts/limpar-ruido.mjs --aplicar')
   await db.end()
@@ -139,6 +164,23 @@ try {
         SET valor_original = valor_total_estimado, valor_total_estimado = NULL
       WHERE valor_total_estimado >= $1`, [TETO_IMPOSSIVEL])
   console.log(`\nvalor neutralizado: ${nAbs} registros (original guardado em valor_original)`)
+
+  // Devolve o valor de quem ficou abaixo do teto vigente (ver comentário acima).
+  const { rowCount: nDev } = await db.query(
+    `UPDATE contratacoes
+        SET valor_total_estimado = valor_original, valor_original = NULL
+      WHERE valor_original IS NOT NULL AND valor_original < $1`, [TETO_IMPOSSIVEL])
+  console.log(`valor restaurado  : ${nDev} registros (voltaram a contar nas somas)`)
+
+  if (SO_VALOR) {
+    await db.query('COMMIT')
+    const { rows: [f] } = await db.query(
+      `SELECT count(*) n, sum(valor_total_estimado) soma FROM contratacoes`)
+    console.log(`\nbase agora: ${f.n} contratações, soma ${brl(f.soma)}`)
+    console.log('(1) não executada — nada foi apagado.')
+    await db.end()
+    process.exit(0)
+  }
 
   // DESPEJO ANTES DE APAGAR. São 24 mil linhas de produção somando três tabelas;
   // sem isto, um erro de julgamento meu sobre um padrão seria irreversível. Com o

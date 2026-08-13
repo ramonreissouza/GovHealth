@@ -140,7 +140,15 @@ const salvarCp = (chave, p) => db(
   `INSERT INTO etl_checkpoint (chave, ultima_pagina, atualizado_em) VALUES ($1,$2,now())
    ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`, [chave, p])
 
-/** UPDATE em lote: só toca linhas que existem na base E estão sem valor. */
+/** UPDATE em lote: só toca linhas que existem na base E estão sem valor.
+ *
+ * NÃO RESSUSCITAR VALOR NEUTRALIZADO. `valor_original IS NOT NULL` marca registro
+ * que limpar-ruido.mjs já julgou impossível (erro de digitação de quem publicou no
+ * PNCP: credenciamento de R$ 29 tri, município de 20 mil habitantes com registro de
+ * preços de R$ 9,8 bi). A neutralização põe NULL no valor — que é exatamente a
+ * condição que este UPDATE procura, então sem esta guarda ele repõe o absurdo na
+ * passada seguinte. Medido em 11/08/2026: os 6 registros neutralizados estavam
+ * TODOS de volta, com o valor original intacto. */
 async function gravar(lote) {
   if (!lote.length) return 0
   const vals = lote.map((_, i) => `($${i * 4 + 1},$${i * 4 + 2}::numeric,$${i * 4 + 3},$${i * 4 + 4})`).join(',')
@@ -151,7 +159,8 @@ async function gravar(lote) {
        modalidade_nome      = COALESCE(c.modalidade_nome, v.modalidade),
        link_externo         = COALESCE(c.link_externo, v.link)
      FROM (VALUES ${vals}) AS v(id, valor, modalidade, link)
-     WHERE c.numero_controle_pncp = v.id AND c.valor_total_estimado IS NULL`, args)
+     WHERE c.numero_controle_pncp = v.id AND c.valor_total_estimado IS NULL
+       AND c.valor_original IS NULL`, args)
   return res.rowCount ?? 0
 }
 

@@ -1,4 +1,4 @@
-# scripts/keep-awake.ps1 — impede a máquina de suspender por ociosidade enquanto roda.
+﻿# scripts/keep-awake.ps1 — impede a máquina de suspender por ociosidade enquanto roda.
 # Usa SetThreadExecutionState (ES_CONTINUOUS | ES_SYSTEM_REQUIRED): diz ao Windows
 # "o sistema está em uso, não durma", em AC OU bateria, SEM alterar o plano de energia.
 # O efeito some sozinho quando este processo termina. Reaplica a cada 60s por segurança.

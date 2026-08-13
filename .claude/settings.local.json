@@ -175,7 +175,15 @@
       "Bash(vercel deploy *)",
       "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)",
       "Bash(sed -i \"s|await pg.locator\\('main'\\).innerText\\(\\)|await pg.locator\\('body'\\).innerText\\(\\)|\" _verif.mjs)",
-      "Bash(U='primemedical@govhealth.ai' P='PrimeMedical@2026' node _verif.mjs)"
+      "Bash(U='primemedical@govhealth.ai' P='PrimeMedical@2026' node _verif.mjs)",
+      "Bash(claude plugin *)",
+      "PowerShell(node _verif.mjs)",
+      "PowerShell(npx eslint src/app/edital/page.tsx src/components/edital/PerguntasEdital.tsx 2>&1)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri 'http://localhost:3000/login' -UseBasicParsing -TimeoutSec 6; \"dev server: $\\($r.StatusCode\\)\" } catch { \"dev server fora: $\\($_.Exception.Message\\)\" })",
+      "PowerShell(foreach \\($p in 3000..3006\\) { try { $r = Invoke-WebRequest -Uri \"http://localhost:$p/login\" -UseBasicParsing -TimeoutSec 4; $t = if \\($r.Content -match 'GovHealth'\\) { 'GovHealth' } else { 'outro' }; \"$p -> $\\($r.StatusCode\\) $t\" } catch { } })",
+      "Read(//c/Users/souza/AppData/Local/Temp/claude/C--Users-souza-OneDrive-Documentos-TecHealth-Hospmult-govhealth-ai--1--govhealth-ai-clean/769a2f61-a104-4814-b47a-4a05fcc18ba8/tasks/**)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime, CPU | Format-Table -Auto | Out-String -Width 200; Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId, @{n='cmd';e={$_.CommandLine.Substring\\(0,[Math]::Min\\(160,$_.CommandLine.Length\\)\\)}} | Format-List)",
+      "PowerShell(node _st.mjs)"
     ]
   }
 }
