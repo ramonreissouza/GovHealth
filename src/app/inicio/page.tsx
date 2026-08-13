@@ -9,6 +9,7 @@ import type { Metadata } from 'next'
 import { clsx } from 'clsx'
 import { ArrowRight, ShieldCheck, Check, Radar, Swords, Globe, MessageSquare, Tag, Wallet } from 'lucide-react'
 import { PLANOS, precoLabel, orcamentoHref } from '@/lib/planos'
+import { resolverPortal, ePortalDeDisputa, nomePortal } from '@/lib/portais'
 import { query } from '@/lib/db'
 import { siteUrl } from '@/lib/site'
 
@@ -69,6 +70,42 @@ async function getStats(): Promise<Stats> {
   }
 }
 
+/**
+ * Portais de DISPUTA com licitação de saúde na base, do maior para o menor.
+ *
+ * Só entra `tipo: 'disputa'`. Metade do catálogo é portal de transparência (o
+ * PNCP manda essa URL em `linkSistemaOrigem` igual), e ali o link leva à leitura
+ * do edital, não à sessão — nomear isso como portal de disputa numa página de
+ * venda é o tipo de exagero que o cliente derruba na primeira demo.
+ *
+ * Agrupa por (host, sistema) e resolve em TS com o MESMO `resolverPortal` da
+ * tela, em vez de reescrever o catálogo em SQL: duas cópias da regra divergem, e
+ * a divergência apareceria justamente na landing. São ~1.100 hosts × ~100
+ * sistemas publicadores, então a consulta é barata.
+ */
+async function getPortaisDisputa(): Promise<{ nome: string; n: number }[]> {
+  try {
+    const rows = await query<{ host: string; sistema: string; n: number }>(
+      `SELECT lower(split_part(split_part(regexp_replace(coalesce(link_externo,''), '^https?://', ''), '/', 1), ':', 1)) AS host,
+              coalesce(usuario_nome, '') AS sistema, count(*)::int AS n
+         FROM contratacoes
+        WHERE link_externo IS NOT NULL OR usuario_nome IS NOT NULL
+        GROUP BY 1, 2`)
+
+    const soma = new Map<string, number>()
+    for (const r of rows) {
+      const id = resolverPortal({ linkExterno: r.host || null, usuarioNome: r.sistema || null })
+      if (!ePortalDeDisputa(id)) continue
+      soma.set(id, (soma.get(id) ?? 0) + Number(r.n))
+    }
+    return [...soma.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, n]) => ({ nome: nomePortal(id), n }))
+  } catch {
+    return []
+  }
+}
+
 const num = (n: number) => n.toLocaleString('pt-BR')
 const bilhoes = (v: number) => `R$ ${(v / 1e9).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} bi`
 
@@ -98,14 +135,18 @@ const PASSOS = [
 ]
 
 export default async function InicioPage() {
-  const s = await getStats()
+  const [s, portais] = await Promise.all([getStats(), getPortaisDisputa()])
   // Provas escolhidas para sustentar o eixo do hero, não para impressionar solto:
   // volume (bi), urgência (abertas agora), o dado que ninguém tem (portais) e
   // concorrência mapeada. Município/UF descem para o bloco do mapa.
   const PROVAS = [
     { v: bilhoes(s.valor), l: 'em licitações de saúde mapeadas' },
     { v: num(s.abertas), l: 'abertas agora, esperando proposta' },
-    { v: num(s.portais), l: 'portais de disputa identificados' },
+    // ANTES era `count(distinct usuario_nome)` = 101, com este mesmo rótulo. Mas
+    // aquilo conta SISTEMAS PUBLICADORES (IPM, Betha, Fiorilli…), não portais de
+    // disputa — o rótulo era falso. `portais.length` sai do catálogo, é menor e é
+    // verdadeiro, e a faixa logo acima nomeia um por um para quem quiser conferir.
+    { v: num(portais.length || s.portais), l: 'portais de disputa, nominalmente' },
     { v: num(s.fornecedores), l: 'concorrentes com histórico rastreado' },
   ]
 
@@ -150,7 +191,7 @@ export default async function InicioPage() {
               </h1>
               <p className="reveal text-[17px] text-muted leading-relaxed max-w-[520px] mt-5" style={{ '--d': '0.1s' } as React.CSSProperties}>
                 <strong className="text-strong">{num(s.abertas)} licitações de saúde abertas agora</strong>, espalhadas por{' '}
-                {num(s.portais)} portais diferentes. A GovHealth mostra onde disputar, vigia o chat do
+                {num(portais.length || s.portais)} portais diferentes. A GovHealth mostra onde disputar, vigia o chat do
                 pregão por você e diz se o município tem capacidade de pagar — antes do seu lance.
               </p>
               <div className="reveal flex items-center gap-4 mt-8" style={{ '--d': '0.15s' } as React.CSSProperties}>
@@ -159,6 +200,21 @@ export default async function InicioPage() {
                 </Link>
                 <Link href="/login" className="text-[14px] text-muted hover:text-strong transition-colors">Já tenho conta</Link>
               </div>
+
+              {/* SUBSTITUIÇÃO DE CUSTO, logo abaixo do CTA — é onde o olho vai
+                  depois do botão, e é o argumento que a concorrência repete três
+                  vezes na página deles ("trocaram 2 ferramentas e cortaram
+                  custo"). Aqui são 3.
+
+                  TEMPO VERBAL DE PROPÓSITO: "está trocando", não "trocou". A
+                  migração está em curso, não concluída. Quando fechar, vira
+                  "trocou 3 ferramentas pela GovHealth e cortou custo" — e aí
+                  ganha o "cortou custo", que hoje seria afirmar resultado que
+                  ninguém mediu. Anônimo até o cliente autorizar o nome. */}
+              <p className="reveal flex items-center gap-2 text-[13px] text-muted mt-6" style={{ '--d': '0.2s' } as React.CSSProperties}>
+                <span className="font-mono-custom font-bold text-[15px] text-gradient-brand">3</span>
+                ferramentas: é o que um cliente está trocando pela GovHealth.
+              </p>
             </div>
 
             {/* Screenshot real do dashboard, emoldurado + chip de vidro flutuante (ar de monitoramento) */}
@@ -184,6 +240,43 @@ export default async function InicioPage() {
             </div>
           </div>
         </section>
+
+        {/* ── Bloco 1.5 — Os portais, com nome ───────────────────────────── */}
+        {/* A concorrência põe uma fileira de logos aqui e escreve "integrado aos
+            principais portais". Nós NÃO somos integrados — integração é dar lance
+            dentro do portal, e não fazemos isso. O verbo honesto é "reunimos" +
+            "dizemos em qual", que por acaso é o que eles NÃO dizem, porque para
+            eles o portal é onde o robô opera, não algo que o fornecedor precisa
+            descobrir.
+
+            Nome em texto e não logo: marca de terceiro em página comercial, sem
+            contrato, é risco jurídico — e o número de licitações ao lado de cada
+            nome é mais verificável que um logo. */}
+        {portais.length > 0 && (
+          <section className="border-b border-subtle bg-bg2">
+            <div className="max-w-[1080px] mx-auto px-6 py-8">
+              <p className="text-center text-[12px] font-mono-custom text-faint uppercase tracking-wider mb-1">
+                {portais.length} portais de disputa
+              </p>
+              <p className="text-center text-[14.5px] text-muted mb-6 max-w-[620px] mx-auto">
+                A sessão do seu pregão roda em um destes. A GovHealth reúne as licitações de saúde
+                de todos eles — e diz <strong className="text-strong">em qual</strong> a sua acontece.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-x-2.5 gap-y-2">
+                {portais.slice(0, 14).map((p) => (
+                  <span key={p.nome}
+                    className="inline-flex items-baseline gap-1.5 text-[12.5px] text-strong bg-bg3 border border-subtle rounded-full px-3 py-1.5">
+                    {p.nome}
+                    <span className="font-mono-custom text-[11px] text-faint">{num(p.n)}</span>
+                  </span>
+                ))}
+                {portais.length > 14 && (
+                  <span className="text-[12.5px] text-faint px-1">e mais {portais.length - 14}</span>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* ── Bloco 2 — Prova por números (faixa fina) ───────────────────── */}
         <section className="border-b border-subtle bg-bg3/60">
@@ -347,7 +440,15 @@ export default async function InicioPage() {
         <section id="planos" className="border-y border-subtle bg-bg3/60">
           <div className="max-w-[1080px] mx-auto px-6 py-20">
             <h2 className="text-center font-heading font-bold text-[28px] mb-1">Escolha o plano da sua operação</h2>
-            <p className="text-center text-[13.5px] text-muted mb-10 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
+            <p className="text-center text-[13.5px] text-muted mb-4 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
+            {/* A mesma frase do hero, repetida AQUI de propósito: é na seção de
+                preço que a objeção de custo aparece, e é onde "uma assinatura no
+                lugar de três" deixa de ser vaidade e vira justificativa de ticket.
+                A concorrência repete a versão deles três vezes na página. */}
+            <p className="text-center text-[13.5px] text-strong mb-10 max-w-[560px] mx-auto">
+              Uma assinatura no lugar de <strong className="text-gradient-brand">3 ferramentas</strong> — é a
+              troca que um cliente está fazendo agora.
+            </p>
             <div className="grid sm:grid-cols-3 gap-5 max-w-[1000px] mx-auto">
               {PLANOS.map((p, i) => (
                 <div key={p.id} className={clsx('reveal rounded-2xl p-7 border flex flex-col', p.destaque ? 'border-accent shadow-xl shadow-accent/10 bg-gradient-brand-soft' : 'border-subtle bg-bg2')} style={{ '--d': `${i * 0.08}s` } as React.CSSProperties}>
