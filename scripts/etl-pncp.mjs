@@ -145,12 +145,18 @@ async function upsertContratacao(c) {
   // O PNCP não manda esse campo em ~metade dos registros; nesses fica NULL e a
   // identificação cai no marcador "[PORTAL] - ..." do objeto (ver lib/portais.ts).
   const linkOrigem = (c.linkSistemaOrigem ?? '').trim() || null
+  // `usuarioNome` é o SISTEMA que publicou (IPM, Betha, BLL, Licitanet…) e vem na
+  // MESMA resposta de lista, em ~100% dos registros — contra ~44% do link. Só não
+  // era gravado aqui, e por isso o harvest-portais.mjs precisava reler o passado
+  // inteiro: em 13/08/2026 tínhamos link em 42,9% e nome do sistema em 0,6%.
+  // Gravando na coleta, a fila do harvest para de crescer sozinha.
+  const sistemaOrigem = (c.usuarioNome ?? '').trim() || null
   await dbQuery(
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
        data_publicacao, data_abertura_proposta, data_encerramento_proposta, situacao_id, categoria_saude,
-       link_externo)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       link_externo, usuario_nome)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      ON CONFLICT (numero_controle_pncp) DO UPDATE SET
        valor_total_estimado = EXCLUDED.valor_total_estimado,
        data_abertura_proposta = EXCLUDED.data_abertura_proposta,
@@ -158,14 +164,15 @@ async function upsertContratacao(c) {
        situacao_id = EXCLUDED.situacao_id,
        categoria_saude = EXCLUDED.categoria_saude,
        -- COALESCE: nunca apaga um link que já temos se a releitura vier sem ele.
-       link_externo = COALESCE(EXCLUDED.link_externo, contratacoes.link_externo)`,
+       link_externo = COALESCE(EXCLUDED.link_externo, contratacoes.link_externo),
+       usuario_nome = COALESCE(EXCLUDED.usuario_nome, contratacoes.usuario_nome)`,
     [c.numeroControlePNCP, c.orgaoEntidade?.cnpj ?? '', c.orgaoEntidade?.razaoSocial ?? null,
      c.unidadeOrgao?.municipioNome ?? null, c.unidadeOrgao?.ufSigla ?? UF, c.modalidadeNome ?? null,
      c.objetoCompra ?? null, c.anoCompra ?? null, c.sequencialCompra ?? null, c.valorTotalEstimado ?? null,
      (c.dataPublicacaoPncp ?? '').slice(0, 10) || null,
      (c.dataAberturaProposta ?? '').slice(0, 10) || null,
      (c.dataEncerramentoProposta ?? '').slice(0, 10) || null,
-     c.situacaoCompraId ?? null, categoria(c.objetoCompra), linkOrigem],
+     c.situacaoCompraId ?? null, categoria(c.objetoCompra), linkOrigem, sistemaOrigem],
   )
 }
 
