@@ -88,6 +88,41 @@ async function medirOuEsperar() {
   }
 }
 
+/** Uma requisição barata só para saber se vale começar uma rodada.
+ *
+ *  POR QUE ISTO EXISTE: o harvest e o enriquecedor sabem RECUPERAR de uma queda
+ *  do PNCP, mas descobrem a queda trabalhando. Medido em 13/08/2026 das 09:37 às
+ *  10:26: 10 pares consumidos a 5m20s cada (4 tentativas de 20s + 4 esperas de
+ *  backoff no teto de 60s), todos em `pag=1/?`, ZERO registros resolvidos — e o
+ *  circuit-breaker exige 10 falhas seguidas, então cada ciclo de outage custa
+ *  ~53 min de máquina ligada por nada. A sonda chega à mesma conclusão em 20s.
+ *
+ *  204 conta como vivo: é a resposta legítima do PNCP para dia/modalidade sem
+ *  nada publicado, e tratá-la como queda faria a sonda barrar o pipeline num dia
+ *  vazio. */
+async function pncpVivo() {
+  const url = 'https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao'
+    + '?dataInicial=20260805&dataFinal=20260805&codigoModalidadeContratacao=6&pagina=1&tamanhoPagina=50'
+  try {
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
+    return r.status === 200 || r.status === 204
+  } catch {
+    return false
+  }
+}
+
+/** Espera o PNCP voltar antes de gastar uma rodada. Não desiste: quem decide
+ *  parar é você, e a tarefa de logon religa depois de reboot. */
+async function esperarPncp(rotulo) {
+  let tentativa = 0
+  while (!(await pncpVivo())) {
+    tentativa++
+    log(`${rotulo}: PNCP fora — sonda ${tentativa}, esperando ${ESPERA_RECUSA / 60000}min`)
+    await sleep(ESPERA_RECUSA)
+  }
+  if (tentativa) log(`${rotulo}: PNCP respondeu depois de ${tentativa} sonda(s) — retomando`)
+}
+
 function rodar(script, args = []) {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, [script, ...args], { stdio: 'inherit', env: process.env })
@@ -112,6 +147,8 @@ async function colherPortais(soAbertas) {
       return
     }
 
+    await esperarPncp(rotulo)
+
     rodadas++
     log(`${rotulo}: rodada ${rodadas} — ${antes[alvo]} pendentes`)
     await rodar('./scripts/harvest-portais.mjs', soAbertas ? ['--abertas'] : [])
@@ -133,6 +170,7 @@ async function colherPortais(soAbertas) {
 async function enriquecerValores() {
   for (let passada = 1; passada <= PASSADAS_VALOR; passada++) {
     for (const j of JANELAS) {
+      await esperarPncp('FASE 2 · valores')
       const antes = await medirOuEsperar()
       log(`FASE 2 · valores: passada ${passada} ${j.de} -> ${j.ate}`
         + `${antes ? ` | ${antes.semValor} sem valor desde jan/2025` : ''}`)
