@@ -53,10 +53,56 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = env.match(/^DATABASE_URL=(.*)$/m)[1].trim().replace(/^["']|["']$/g, '')
 }
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+// POR QUE ESTE ENVELOPE DE BANCO EXISTE (medido em 17/08/2026, não suposto):
+// um pg.Client só, aberto por horas contra o PgBouncer da VM pela rede pública e
+// SEM timeout de consulta, PENDURA PARA SEMPRE quando a conexão vira half-open:
+// não chega RST, o socket continua "aberto" e o await nunca volta. Sintomas
+// medidos, os dois no mesmo dia: (1) coletor vivo há 27min com 1,05s de CPU
+// acumulada, zero linha no log e zero escrita no banco; (2) antes disso, 153min
+// de silêncio de madrugada — que eu li como "PNCP lento" e como "coletor no teto
+// do rate-limiter". Não era nenhum dos dois: era uma consulta esperando um
+// servidor que não ia responder nunca.
+// O pipeline-noite.mjs JÁ SABIA disso — o comentário do medir() diz que "o
+// PgBouncer da VM derruba conexão ociosa" e por isso o envolveu em repetição.
+// Só o harvest, que é quem fica horas de pé, ficou sem a mesma proteção.
+//
+// query_timeout é client-side de propósito: statement_timeout viaja como
+// parâmetro de startup e o PgBouncer recusa parâmetro que não conhece, então
+// pedir ao servidor para se policiar quebraria a conexão em vez de protegê-la.
+const CONEXAO = {
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  keepAlive: true,                 // o SO passa a detectar peer morto
+  query_timeout: 180000,           // pendurado vira erro (folga p/ os counts grandes)
+  connectionTimeoutMillis: 30000,
+}
+
+let db = new pg.Client(CONEXAO)
 await db.connect()
 
-await db.query(`
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** Consulta com reconexão. Repetir é seguro: tudo aqui é UPSERT ou UPDATE por
+ *  chave, então a mesma consulta duas vezes dá o mesmo estado final. */
+async function consultar(sql, params, tentativas = 5) {
+  let ultimo
+  for (let t = 1; t <= tentativas; t++) {
+    try {
+      return await db.query(sql, params)
+    } catch (e) {
+      ultimo = e
+      if (t === tentativas) break
+      console.log(`[harvest] banco: ${e.code ?? e.message} — reconectando (${t}/${tentativas})`)
+      try { await db.end() } catch {}
+      await sleep(Math.min(30000, 3000 * t))
+      db = new pg.Client(CONEXAO)
+      try { await db.connect() } catch (e2) { ultimo = e2 }
+    }
+  }
+  throw ultimo
+}
+
+await consultar(`
   CREATE TABLE IF NOT EXISTS harvest_portais (
     dia            DATE    NOT NULL,
     modalidade     INT     NOT NULL,
@@ -66,8 +112,6 @@ await db.query(`
     atualizado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (dia, modalidade)
   )`)
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ── Controle adaptativo de taxa ─────────────────────────────────────────────
 // A lista responde em ~1s quando o PNCP está tranquilo, mas devolve 500/timeout
@@ -147,7 +191,7 @@ async function gravar(itens) {
     (i.linkSistemaOrigem ?? '').trim() || null,
     (i.usuarioNome ?? '').trim() || null,
   ])
-  const { rowCount } = await db.query(
+  const { rowCount } = await consultar(
     `UPDATE contratacoes c SET
        link_externo = COALESCE(v.link, c.link_externo),
        usuario_nome = COALESCE(v.sistema, c.usuario_nome),
@@ -161,14 +205,14 @@ async function gravar(itens) {
 
 /** Fecha o par: o que não apareceu na lista nacional saiu do PNCP — marca visitado. */
 async function fecharPar(dia, modalidade, nomes) {
-  await db.query(
+  await consultar(
     `UPDATE contratacoes SET portal_backfill_em = now()
       WHERE portal_backfill_em IS NULL
         AND data_publicacao::date = $1
         AND modalidade_nome = ANY($2)`,
     [dia, nomes],
   )
-  await db.query(
+  await consultar(
     `UPDATE harvest_portais SET concluido = true, atualizado_em = now()
       WHERE dia = $1 AND modalidade = $2`, [dia, modalidade])
 }
@@ -187,7 +231,7 @@ const condAberta = SO_ABERTAS
   ? `AND NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = c.numero_controle_pncp)`
   : ``
 
-const { rows: fila } = await db.query(
+const { rows: fila } = await consultar(
   `SELECT to_char(c.data_publicacao::date, 'YYYY-MM-DD') dia, c.modalidade_nome, count(*) n
      FROM contratacoes c
     WHERE c.portal_backfill_em IS NULL
@@ -218,7 +262,7 @@ try {
   for (const par of trabalho) {
     if (paresFeitos >= LIMITE_PARES) break
 
-    const { rows: [cur] } = await db.query(
+    const { rows: [cur] } = await consultar(
       `INSERT INTO harvest_portais (dia, modalidade) VALUES ($1, $2)
        ON CONFLICT (dia, modalidade) DO UPDATE SET atualizado_em = now()
        RETURNING pagina, concluido`, [par.dia, par.cod])
@@ -239,7 +283,7 @@ try {
 
       casados += await gravar(res.itens)
       pagina++
-      await db.query(`UPDATE harvest_portais SET pagina = $3, total_paginas = $4, atualizado_em = now()
+      await consultar(`UPDATE harvest_portais SET pagina = $3, total_paginas = $4, atualizado_em = now()
                        WHERE dia = $1 AND modalidade = $2`, [par.dia, par.cod, pagina, totalPaginas])
       await sleep(espera)
     }
@@ -251,7 +295,7 @@ try {
 
     if (paresFeitos % 10 === 0) {
       const min = (Date.now() - t0) / 60000
-      const { rows: [f] } = await db.query(`SELECT count(*) n FROM contratacoes WHERE portal_backfill_em IS NULL`)
+      const { rows: [f] } = await consultar(`SELECT count(*) n FROM contratacoes WHERE portal_backfill_em IS NULL`)
       const porPar = paresFeitos / min
       const horas = porPar > 0 ? (trabalho.length - paresFeitos) / porPar / 60 : 0
       console.log(`  ${paresFeitos}/${trabalho.length} pares | ${casados} casados | ${pedidos} pedidos `
@@ -269,7 +313,7 @@ try {
   }
 } finally {
   const min = (Date.now() - t0) / 60000
-  const { rows: [f] } = await db.query(
+  const { rows: [f] } = await consultar(
     `SELECT count(*) FILTER (WHERE portal_backfill_em IS NULL) pendentes,
             count(usuario_nome) com_sistema, count(link_externo) com_link FROM contratacoes`)
   console.log(`[harvest] fim: ${paresFeitos} pares | ${casados} casados | ${pedidos} pedidos em ${min.toFixed(1)}min `
