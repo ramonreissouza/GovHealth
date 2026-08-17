@@ -47,3 +47,6 @@ etl-enriquecer.log
 # scripts de verificacao ao vivo (temporarios)
 _verif.mjs
 _v-*.png
+
+# PID do pipeline relancado destacado (runtime, nao versionar)
+.pipeline-pid

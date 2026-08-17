@@ -22,10 +22,38 @@ const normalizeKey = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g,
 const letra = (v) => { const c = String(v ?? '').trim().toUpperCase().charAt(0); return 'ABCD'.includes(c) ? c : null }
 const anoDoNome = (nome) => { const m = String(nome ?? '').match(/20\d{2}/); return m ? Number(m[0]) : null }
 
+/** Repete o que depende da rede. POR QUE EXISTE: sem repetição, uma única falha de
+ *  rede custava a semana inteira. Em 16/08/2026 o ingest morreu num `fetch failed`
+ *  ao baixar o XLSX (estados gravados, municípios não) e a tarefa é SEMANAL — os
+ *  municípios ficaram 7 dias parados, com a tarefa devolvendo resultado 1. A carga
+ *  é UPSERT por (ente_tipo, uf, municipio_key), então repetir é sempre seguro. */
+async function comRepeticao(rotulo, fn, tentativas = 4) {
+  let ultimo
+  for (let t = 1; t <= tentativas; t++) {
+    try { return await fn() } catch (e) {
+      ultimo = e
+      if (t === tentativas) break
+      const espera = 5000 * 2 ** (t - 1) // 5s, 10s, 20s
+      console.log(`… ${rotulo}: ${e.message} — tentativa ${t}/${tentativas}, repetindo em ${espera / 1000}s`)
+      await new Promise((r) => setTimeout(r, espera))
+    }
+  }
+  throw new Error(`${rotulo} falhou em ${tentativas} tentativas: ${ultimo?.message}`)
+}
+
+/** fetch que trata status != 2xx como erro — senão um 502 do Tesouro viraria
+ *  "cabeçalho não encontrado" mais adiante, escondendo a causa real. */
+async function buscar(url, ms) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(ms) })
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return r
+}
+
 async function recursoMaisRecente(id, formato) {
-  const j = await (await fetch(CKAN + id, { signal: AbortSignal.timeout(30000) })).json()
+  const j = await comRepeticao(`catálogo ${id}`, async () => (await buscar(CKAN + id, 30000)).json())
   const rs = (j.result?.resources || []).filter((x) => (x.format || '').toUpperCase() === formato)
   rs.sort((a, b) => (anoDoNome(b.name) ?? 0) - (anoDoNome(a.name) ?? 0) || new Date(b.last_modified || b.created || 0) - new Date(a.last_modified || a.created || 0))
+  if (!rs[0]) throw new Error(`nenhum recurso ${formato} em ${id}`)
   return rs[0]
 }
 
@@ -62,7 +90,7 @@ try {
   // ── ESTADOS (CSV) ──────────────────────────────────────────────────────────
   const rEst = await recursoMaisRecente('capag-estados', 'CSV')
   console.log('→ estados:', rEst?.name)
-  const txt = await (await fetch(rEst.url, { signal: AbortSignal.timeout(30000) })).text()
+  const txt = await comRepeticao('CSV de estados', async () => (await buscar(rEst.url, 30000)).text())
   const linhas = txt.split(/\r?\n/).filter((l) => l.trim())
   const head = linhas[0].split(';').map((h) => h.trim())
   const iUF = head.findIndex((h) => /^uf$/i.test(h))
@@ -81,7 +109,8 @@ try {
   // ── MUNICÍPIOS (XLSX) ────────────────────────────────────────────────────────
   const rMun = await recursoMaisRecente('capag-municipios', 'XLSX')
   console.log('→ municípios:', rMun?.name, '(baixando…)')
-  const buf = Buffer.from(await (await fetch(rMun.url, { signal: AbortSignal.timeout(120000) })).arrayBuffer())
+  const buf = await comRepeticao('XLSX de municípios', async () =>
+    Buffer.from(await (await buscar(rMun.url, 120000)).arrayBuffer()))
   const wb = XLSX.read(buf, { type: 'buffer' })
   const sheet = wb.SheetNames.find((s) => /pr[ée]via.*capag/i.test(s)) || wb.SheetNames[0]
   const grid = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { header: 1, raw: false, defval: '' })
