@@ -2,7 +2,9 @@
 // POST — envia notificações de alerta por email via Resend
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
 import { Resend } from 'resend'
+import { authOptions } from '@/lib/auth'
 import type { AlertaNotificacao } from '@/lib/alertas'
 import { buildAlertaDigestHtml } from '@/lib/alerta-email'
 
@@ -17,20 +19,29 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  let body: { notifs: AlertaNotificacao[]; destinatario?: string }
+  // O destinatário é SEMPRE o e-mail da própria sessão — nunca um valor vindo do
+  // client. Sem isto, qualquer conta autenticada podia mandar e-mail (com HTML
+  // arbitrário nas notifs) para qualquer endereço, usando o domínio da empresa
+  // como relay de phishing.
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.email) {
+    return NextResponse.json({ error: 'Não autenticado' }, { status: 401 })
+  }
+  const to = session.user.email
+
+  let body: { notifs: AlertaNotificacao[] }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { notifs, destinatario } = body
+  const { notifs } = body
 
   if (!Array.isArray(notifs) || notifs.length === 0) {
     return NextResponse.json({ error: 'Nenhuma notificação fornecida' }, { status: 400 })
   }
 
-  const to = destinatario ?? process.env.AUTH_DEMO_EMAIL ?? 'demo@govhealth.ai'
   const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
 
   const resend = new Resend(apiKey)
