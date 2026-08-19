@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { Oportunidade } from '@/lib/types'
@@ -19,18 +20,17 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
 import AcoesLicitacao from './components/AcoesLicitacao'
-import { ThSort, useOrdenacao, ordenarPor } from '@/components/ui/ThSort'
+import { ThSort, useOrdenacao } from '@/components/ui/ThSort'
 // Dossiê de edital DESATIVADO nas Licitações (a pedido). Reativar: descomentar.
 // import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
-import { getProdutos, casaComPortfolio, type ProdutoPortfolio } from '@/lib/portfolio'
+import { getProdutos, needlesPortfolioAtivo, type ProdutoPortfolio } from '@/lib/portfolio'
 import { getTerritorio } from '@/lib/territorio'
 import { getPreferences } from '@/lib/preferences'
 import { useSetupFiltro } from '@/lib/use-setup-filtro'
 import { HYDRATED_EVENT } from '@/lib/synced'
 import { publishDataStatus } from '@/lib/data-status'
-import { matchesTermo } from '@/lib/text'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -66,16 +66,6 @@ function parsePNCPNum(num?: string): { cnpj: string; ano: number; seq: number } 
   const seq = Number(parts[2])
   if (!ano || !seq) return null
   return { cnpj: parts[0], ano, seq }
-}
-
-// "Em aberto" = prazo de proposta ainda no futuro. O PNCP às vezes mantém
-// situacaoCompraId=1 mesmo após o prazo vencer, então a data de encerramento
-// (quando existe) é a fonte de verdade. Usada tanto no filtro quanto no KPI.
-function estaAberta(o: Oportunidade): boolean {
-  const lic = o.licitacaoRelacionada
-  return lic?.dataEncerramentoProposta
-    ? new Date(lic.dataEncerramentoProposta) > new Date()
-    : lic?.situacaoCompraId === 1
 }
 
 // ── ItemsRow: itens (equipamentos/acessórios) de uma oportunidade ────────────
@@ -173,18 +163,25 @@ const TIPO_LABEL: Record<string, string> = { todos: 'Todos', ...TIPO_LABEL_BASE 
 const TIPOS: { key: string; label: string }[] =
   Object.entries(TIPO_LABEL).map(([key, label]) => ({ key, label }))
 
+interface OpportunitiesResponse {
+  oportunidades: Oportunidade[]
+  totais: { total: number; valorTotal: number; abertas: number; estados: number; municipios: number; universo: number; comValor: number } | null
+  porTipo: Record<string, number> | null
+}
+
 function OportunidadesInner() {
   const searchParams = useSearchParams()
-  const [opps, setOpps] = useState<Oportunidade[]>([])
-  const [loading, setLoading] = useState(true)
 
   // Filters
   const [tipo, setTipo] = useState(searchParams.get('tipo') ?? 'todos')
   const [query, setQuery] = useState('')
+  const [queryDebounced, setQueryDebounced] = useState('')
   const [queryProponente, setQueryProponente] = useState('')
+  const [queryProponenteDebounced, setQueryProponenteDebounced] = useState('')
   // Filtro por cidade vindo do deep-link do mapa (?municipio=). Escopado pela UF.
   const [municipioFiltro, setMunicipioFiltro] = useState(searchParams.get('municipio') ?? '')
   const [queryConvenio, setQueryConvenio] = useState('')
+  const [queryConvenioDebounced, setQueryConvenioDebounced] = useState('')
   const [categoria, setCategoria] = useState('todos')
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(
     () => { const u = searchParams.get('uf'); return u ? new Set(u.toUpperCase().split(',').map((s) => s.trim()).filter(Boolean)) : new Set() },
@@ -202,8 +199,7 @@ function OportunidadesInner() {
   // atuação salvas no Setup. Re-tenta quando a conta termina de hidratar do servidor
   // (as prefs chegam de forma assíncrona logo após o login).
   // `setupResolvido` libera a 1a busca só quando já se sabe QUAIS UFs pedir — senão
-  // a tela dispara uma busca nacional que é jogada fora (e que, por ser mais lenta,
-  // ainda voltava por cima dos KPIs filtrados).
+  // a tela dispara uma busca nacional que é jogada fora.
   const [setupResolvido, setSetupResolvido] = useState(false)
   useEffect(() => {
     const aplicarSetup = () => {
@@ -235,9 +231,7 @@ function OportunidadesInner() {
   })
   // Default: abertas (as que ainda dá para disputar). Encerradas (já homologadas)
   // são muito mais — ao escolher "Encerrado" pré-selecionamos um ano p/ não pesar.
-  // Deep-link do dashboard (?opp=): status "todos" para NÃO esconder a licitação clicada
-  // (o filtro cliente de aberto/encerrado usa a data de encerramento e às vezes diverge
-  // do status do servidor — sem isto o lead vinha carregado mas não aparecia).
+  // Deep-link do dashboard (?opp=): status "todos" para NÃO esconder a licitação clicada.
   const [statusFiltro, setStatusFiltro] = useState(() => {
     if (searchParams.get('opp')) return 'todos'
     const s = searchParams.get('status'); return s === 'aberto' || s === 'encerrado' || s === 'todos' ? s : 'aberto'
@@ -254,28 +248,31 @@ function OportunidadesInner() {
     marcarTocado: marcarUFTocado,
     aoTrocar: () => { setSoPortfolio(false); setCategoria('todos'); setMunicipioFiltro('') },
   })
-  // Itens (equipamentos/acessórios) pré-carregados em lote, por nº de controle
-  // PNCP — habilita a busca por item e alimenta a pré-análise de cada licitação.
+  // Itens (equipamentos/acessórios) pré-carregados em lote, por nº de controle PNCP
+  // — alimenta a pré-análise (especificação, quantidade, valor) sem abrir o PNCP.
+  // Busca por item/equipamento ("luvas cirúrgicas") agora é feita no SERVIDOR (via
+  // `q`), não depende mais deste mapa — só o breakdown expandido usa.
   const [itensMap, setItensMap] = useState<Record<string, ItemPNCP[]>>({})
   const [itensProntos, setItensProntos] = useState(0)
   const [itensTotal, setItensTotal] = useState(0)
-  // Renderização em lotes ("mostrar mais") — evita pintar milhares de linhas de
-  // uma vez (abertas ~1,4 mil). Reinicia quando os filtros mudam.
   const [pageSize, setPageSize] = useState(PAGE_SIZE_PADRAO) // itens por página (50 padrão)
   const [pagina, setPagina] = useState(1)
   const { ordem, alternar } = useOrdenacao<'proponente' | 'status' | 'item' | 'valor' | 'ano' | 'score'>()
-  // Totais REAIS do filtro (servidor) — os KPIs refletem todo o universo, não só
-  // as linhas carregadas. porTipo alimenta as contagens das abas.
-  const [totais, setTotais] = useState<{ total: number; valorTotal: number; abertas: number; estados: number; universo?: number; comValor?: number } | null>(null)
-  const [porTipo, setPorTipo] = useState<Record<string, number> | null>(null)
 
   // Carrega o portfólio do fornecedor (localStorage) para o filtro "Meu Portfólio".
   useEffect(() => { setProdutos(getProdutos()) }, [])
   const temPortfolio = produtos.some((p) => p.ativo)
+  // Agulhas do portfólio ativo, para o servidor filtrar em SQL — só recalcula quando
+  // o portfólio muda (o servidor não sabe o que é "meu portfólio", só filtra pelo
+  // que recebe já normalizado — ver needlesPortfolioAtivo/produtoMatchTexto).
+  const portfolioNeedles = useMemo(
+    () => (soPortfolio ? needlesPortfolioAtivo(produtos) : []),
+    [soPortfolio, produtos],
+  )
 
   // Deep-link vindo do dashboard (?opp=<id>): a licitação clicada é expandida, a lista
-  // salta para a PÁGINA em que ela está, rola até o centro e destaca. (O efeito que faz
-  // isso fica mais abaixo, depois de `filtered`/`ordenadas`, para achar a página certa.)
+  // salta para a PÁGINA em que ela está (localizada no servidor — ver efeito abaixo),
+  // rola até o centro e destaca.
   const focusId = searchParams.get('opp')
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
@@ -287,57 +284,81 @@ function OportunidadesInner() {
     setUfsAtivos((p) => { const s = new Set(p); s.has(uf) ? s.delete(uf) : s.add(uf); return s })
   }
 
-  // Só a ÚLTIMA busca disparada pode escrever no estado. Ao entrar na tela sai uma
-  // busca sem o filtro do Setup (antes de as UFs hidratarem) e outra com; a sem
-  // filtro varre o país inteiro, demora ~3x mais e chegava DEPOIS — sobrescrevendo
-  // os KPIs. A tela dizia "R$ 221 bi · 50.241 · 27 estados" com o chip do Setup
-  // marcando 5 estados, quando o certo era "R$ 31,5 bi · 9.282 · 5 estados".
-  const reqSeq = useRef(0)
+  // Debounce da busca livre / proponente / convênio antes de virarem filtro do
+  // SERVIDOR — mesmo padrão de fornecedores/page.tsx e vencedores/page.tsx.
+  useEffect(() => { const t = setTimeout(() => setQueryDebounced(query.trim()), 350); return () => clearTimeout(t) }, [query])
+  useEffect(() => { const t = setTimeout(() => setQueryProponenteDebounced(queryProponente.trim()), 350); return () => clearTimeout(t) }, [queryProponente])
+  useEffect(() => { const t = setTimeout(() => setQueryConvenioDebounced(queryConvenio.trim()), 350); return () => clearTimeout(t) }, [queryConvenio])
 
-  const load = useCallback(async () => {
-    const seq = ++reqSeq.current
-    setLoading(true)
-    try {
-      // Status/ano/tipo vão ao servidor para conter o volume (encerradas são ~10 mil)
-      // e para os KPIs refletirem o total real do filtro.
-      const params = new URLSearchParams({ limit: '1500' })
-      if (minScore > 0) params.set('minScore', String(minScore))
-      if (categoria !== 'todos') params.set('categoria', categoria)
-      if (statusFiltro !== 'todos') params.set('status', statusFiltro)
-      if (anoFiltro !== 'todos') params.set('ano', anoFiltro)
-      if (tipo !== 'todos') params.set('tipo', tipo)
-      // Filtro por cidade (deep-link do mapa): manda município + a UF para o servidor
-      // (evita misturar cidades homônimas de estados diferentes) — KPIs batem com o mapa.
-      if (municipioFiltro) {
-        params.set('municipio', municipioFiltro)
-        const ufDL = searchParams.get('uf')
-        if (ufDL) params.set('uf', ufDL.split(',')[0])
-      } else if (ufsKey) {
-        // UF filtrada no SERVIDOR (não só no cliente): os KPIs/contagens batem com o
-        // filtro e a licitação clicada no dashboard entra no conjunto carregado.
-        params.set('ufs', ufsKey)
-      }
-      const res = await fetch(`/api/opportunities?${params}`)
-      const data = await res.json()
-      if (seq !== reqSeq.current) return          // resposta atrasada de um filtro velho
-      publishDataStatus(data)
-      setOpps(data.oportunidades ?? [])
-      setTotais(data.totais ?? null)
-      setPorTipo(data.porTipo ?? null)
-    } catch (e) { if (seq === reqSeq.current) console.error(e) }
-    finally { if (seq === reqSeq.current) setLoading(false) }
-  }, [categoria, minScore, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams])
+  // Reinicia o lote visível sempre que um filtro do SERVIDOR muda (tudo, já que todo
+  // filtro agora vai ao servidor). Trocar filtro/página encolher e continuar na
+  // página 7 mostraria vazio sem dizer por quê.
+  useEffect(() => {
+    setPagina(1)
+  }, [pageSize, tipo, statusFiltro, anoFiltro, categoria, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, minScore, soPortfolio, ufsKey, municipioFiltro, ordem.chave, ordem.dir])
 
-  // Espera o Setup ser resolvido antes da 1a busca. Sem isto, além da corrida acima,
-  // toda entrada em Licitações puxava 1.500 linhas do país inteiro para jogar fora.
-  useEffect(() => { if (setupResolvido) load() }, [load, setupResolvido])
+  const filtrosParams = useCallback(() => {
+    // Status/ano/tipo/busca/portfólio/ordenação vão ao servidor — os KPIs refletem
+    // o total real do filtro e a página busca só o que será mostrado.
+    const params = new URLSearchParams({
+      limit: String(pageSize),
+      offset: String((pagina - 1) * pageSize),
+    })
+    if (minScore > 0) params.set('minScore', String(minScore))
+    if (categoria !== 'todos') params.set('categoria', categoria)
+    if (statusFiltro !== 'todos') params.set('status', statusFiltro)
+    if (anoFiltro !== 'todos') params.set('ano', anoFiltro)
+    if (tipo !== 'todos') params.set('tipo', tipo)
+    // Filtro por cidade (deep-link do mapa): manda município + a UF para o servidor
+    // (evita misturar cidades homônimas de estados diferentes) — KPIs batem com o mapa.
+    if (municipioFiltro) {
+      params.set('municipio', municipioFiltro)
+      const ufDL = searchParams.get('uf')
+      if (ufDL) params.set('uf', ufDL.split(',')[0])
+    } else if (ufsKey) {
+      // UF filtrada no SERVIDOR (não só no cliente): os KPIs/contagens batem com o
+      // filtro e a licitação clicada no dashboard entra no conjunto carregado.
+      params.set('ufs', ufsKey)
+    }
+    if (queryDebounced) params.set('q', queryDebounced)
+    if (queryProponenteDebounced) params.set('proponente', queryProponenteDebounced)
+    if (queryConvenioDebounced) params.set('convenio', queryConvenioDebounced)
+    if (soPortfolio && portfolioNeedles.length) params.set('portfolio', JSON.stringify(portfolioNeedles))
+    if (ordem.chave) { params.set('sort', ordem.chave); params.set('dir', ordem.dir) }
+    return params
+  }, [pageSize, pagina, minScore, categoria, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, soPortfolio, portfolioNeedles, ordem])
 
-  // Pré-carrega os itens de TODAS as licitações em lote (banco), em blocos, para
-  // permitir buscar por equipamento/insumo — ex.: "luvas cirúrgicas" — e mostrar
-  // a pré-análise (especificação, quantidade, valor) sem abrir o PNCP.
+  // Uma query por combinação de filtros+página — o React Query cacheia cada uma
+  // (staleTime/gcTime em QueryProvider), então voltar a uma página JÁ vista não
+  // refaz o fetch (instantâneo). Uma página NOVA (ainda não cacheada) limpa `data`
+  // e mostra o loading de novo — sem placeholderData/keepPreviousData, que deixava
+  // a página anterior na tela enquanto a nova carregava (confuso com o load lento
+  // de agora). `enabled` espera o Setup resolver (evita 1 busca nacional jogada
+  // fora antes das UFs do Setup chegarem).
+  const { data, isLoading, isFetching } = useQuery<OpportunitiesResponse>({
+    queryKey: ['oportunidades', filtrosParams().toString()],
+    queryFn: async ({ signal }) => {
+      const params = filtrosParams()
+      const res = await fetch(`/api/opportunities?${params}`, { signal })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json = await res.json()
+      publishDataStatus(json)
+      return json
+    },
+    enabled: setupResolvido,
+  })
+  // Memoizado: sem isto, `data?.oportunidades ?? []` cria um array [] novo a cada
+  // render quando não há dados, e o efeito de pré-carga de itens (que depende de
+  // `visible`) rodaria de novo a cada render em vez de só quando a página muda.
+  const visible = useMemo(() => data?.oportunidades ?? [], [data])
+  const totais = data?.totais
+  const porTipo = data?.porTipo ?? null
+
+  // Pré-carrega os itens (equipamentos) só da PÁGINA atual (≤ pageSize, não mais até
+  // 1.500) — habilita a pré-análise expandida sem abrir o PNCP.
   useEffect(() => {
     const ids = Array.from(new Set(
-      opps.map((o) => o.licitacaoRelacionada?.numeroControlePNCP).filter((x): x is string => !!x)
+      visible.map((o) => o.licitacaoRelacionada?.numeroControlePNCP).filter((x): x is string => !!x)
     ))
     setItensMap({}); setItensProntos(0); setItensTotal(ids.length)
     if (ids.length === 0) return
@@ -359,92 +380,62 @@ function OportunidadesInner() {
       }
     })()
     return () => { cancelled = true }
-  }, [opps])
+  }, [visible])
 
   // Sincroniza a aba de tipo quando a URL muda (links da sidebar "Por Tipo")
   useEffect(() => { setTipo(searchParams.get('tipo') ?? 'todos') }, [searchParams])
 
-  // Reinicia o lote visível sempre que os filtros/dados mudam.
-  // Trocar filtro ou tamanho de página volta para a 1: continuar na página 7 de uma
-  // lista que encolheu para 3 mostraria vazio sem dizer por quê.
-  useEffect(() => { setPagina(1) }, [pageSize, opps, tipo, statusFiltro, anoFiltro, categoria, query, queryProponente, queryConvenio, minScore, soPortfolio, ufsAtivos])
-
-  // Client-side filtering
-  const filtered = opps.filter((o) => {
-    if (tipo !== 'todos' && (o.tipoFornecimento ?? 'outros') !== tipo) return false
-    if (soPortfolio && !casaComPortfolio(produtos, o)) return false
-    const lic = o.licitacaoRelacionada
-    if (ufsAtivos.size > 0 && !ufsAtivos.has(o.uf)) return false
-    if (municipioFiltro && (o.municipio ?? '').trim().toLowerCase() !== municipioFiltro.trim().toLowerCase()) return false
-    if (anoFiltro !== 'todos' && lic?.dataPublicacaoPncp?.substring(0, 4) !== anoFiltro) return false
-    if (statusFiltro === 'aberto' && !estaAberta(o)) return false
-    if (statusFiltro === 'encerrado' && estaAberta(o)) return false
-    if (queryProponente && !(o.hospital ?? o.municipio).toLowerCase().includes(queryProponente.toLowerCase())) return false
-    if (queryConvenio && !(lic?.numeroControlePNCP ?? '').toLowerCase().includes(queryConvenio.toLowerCase())) return false
-    if (query.trim()) {
-      // Casa contra hospital/município/objeto/CNPJ/PNCP E contra os itens
-      // (equipamentos/insumos) já pré-carregados — tolerante a acento e plural.
-      const nc = lic?.numeroControlePNCP ?? ''
-      const itensTexto = (itensMap[nc] ?? []).map((it) => it.descricao).join(' ')
-      return matchesTermo(query, o.hospital, o.municipio, o.descricao, lic?.orgaoEntidade.cnpj, nc, itensTexto)
-    }
-    return true
-  })
-
-  // KPIs — usam os totais REAIS do filtro (servidor) quando não há refinamento só
-  // do cliente (busca livre / portfólio). A UF agora vai ao servidor (ufs), então os
-  // totais já refletem o filtro de estado — não conta como refinamento de cliente.
-  const refinamentoCliente =
-    !!query.trim() || !!queryProponente.trim() || !!queryConvenio.trim() || soPortfolio
-  const usarTotais = !refinamentoCliente && !!totais
-  const totalLic = usarTotais ? totais!.total : filtered.length
-  const valorTotal = usarTotais ? totais!.valorTotal : filtered.reduce((s, o) => s + o.valorEstimado, 0)
-  const abertos = usarTotais ? totais!.abertas : filtered.filter(estaAberta).length
-  const universoLic = usarTotais ? (totais!.universo ?? totais!.total) : filtered.length
-  const estados = usarTotais ? totais!.estados : new Set(filtered.map((o) => o.uf)).size
-  // Divide pelas que TÊM valor, não por todas: 72% da base não traz valor (a busca do
-  // PNCP não devolve o campo) e essas entram somando zero. Usar `totalLic` diluiria o
-  // ticket médio a um terço do real.
-  const comValor = usarTotais
-    ? (totais!.comValor ?? totais!.total)
-    : filtered.filter((o) => o.valorEstimado > 0).length
+  // KPIs — sempre os totais REAIS do filtro (servidor), independente de quantas
+  // oportunidades vieram na página. Cobrem busca livre/portfólio também (o backend
+  // aplica os mesmos filtros no cálculo dos totais).
+  const totalLic = totais?.total ?? 0
+  const valorTotal = totais?.valorTotal ?? 0
+  const abertos = totais?.abertas ?? 0
+  const universoLic = totais?.universo ?? totalLic
+  const estados = totais?.estados ?? 0
+  const comValor = totais?.comValor ?? totalLic
   const ticketMedio = comValor ? valorTotal / comValor : 0
 
-  // Ordenação do cabeçalho ANTES do corte do lote. Se fosse depois, o clique
-  // reordenaria só as linhas já visíveis: quem ordena por "maior valor" veria o
-  // maior DAQUELE lote, não o da base filtrada — e concluiria, com razão, que a
-  // ordenação está errada.
-  const ordenadas = ordenarPor(filtered, ordem, {
-    proponente: (o) => o.hospital ?? o.municipio,
-    status: (o) => (estaAberta(o) ? 0 : 1),
-    item: (o) => o.descricao,
-    valor: (o) => o.valorEstimado,
-    ano: (o) => o.licitacaoRelacionada?.dataPublicacaoPncp?.substring(0, 4),
-    score: (o) => o.score,
-  })
+  // Deep-link (?opp=): localiza a página no SERVIDOR (mesmo filtro/ordenação ativos)
+  // em vez de carregar o universo inteiro no client para achar o índice.
+  const focusParamsKey = useMemo(() => {
+    if (!focusId) return null
+    const p = filtrosParams()
+    p.delete('offset')
+    return p.toString()
+  }, [focusId, filtrosParams])
+  const localizadoRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!focusId || !setupResolvido || !focusParamsKey) return
+    const chave = `${focusId}:${focusParamsKey}`
+    if (localizadoRef.current === chave) return
+    let vivo = true
+    ;(async () => {
+      try {
+        const params = new URLSearchParams(focusParamsKey)
+        params.set('localizarId', focusId)
+        const r = await fetch(`/api/opportunities?${params}`)
+        const j: { pagina: number | null } = await r.json()
+        if (!vivo) return
+        localizadoRef.current = chave
+        if (j.pagina) setPagina(j.pagina)
+      } catch { /* mantém a página atual */ }
+    })()
+    return () => { vivo = false }
+  }, [focusId, focusParamsKey, setupResolvido])
 
-  // Lote visível (reinicia ao mudar filtros/dados).
-  const visible = ordenadas.slice((pagina - 1) * pageSize, pagina * pageSize)
-
-  // Deep-link (?opp=): posição do lead focado. Declarado APÓS o efeito que reinicia a
-  // paginação (para o salto de página não ser sobrescrito) — garante que a linha exista
-  // no DOM antes de rolar até ela. O índice é medido em `ordenadas`, que é a lista
-  // realmente exibida: medir em `filtered` levava à página errada sempre que a
-  // ordenação diferia da ordem do filtro.
   // Aceita tanto o id da oportunidade (`pncp-<nºcontrole>`) quanto o nº de controle
   // PNCP "cru" — Portais Estaduais e outros linkadores mandam o controle sem prefixo.
   const focusOpp = focusId
-    ? ordenadas.find((o) =>
+    ? visible.find((o) =>
         o.id === focusId ||
         o.id === `pncp-${focusId}` ||
         o.licitacaoRelacionada?.numeroControlePNCP === focusId,
       )
     : undefined
   const focusRealId = focusOpp?.id ?? null
-  const focusIndex = focusOpp ? ordenadas.indexOf(focusOpp) : -1
   useEffect(() => {
-    if (!focusRealId || loading || focusIndex < 0) return
-    setPagina(Math.floor(focusIndex / pageSize) + 1) // vai para a página onde o lead está
+    if (!focusRealId || isLoading) return
     setExpanded((p) => new Set(p).add(focusRealId))
     setHighlightId(focusRealId)
     const t = setTimeout(() => {
@@ -452,7 +443,7 @@ function OportunidadesInner() {
     }, 220)
     const t2 = setTimeout(() => setHighlightId(null), 2800)
     return () => { clearTimeout(t); clearTimeout(t2) }
-  }, [focusRealId, loading, focusIndex, pageSize])
+  }, [focusRealId, isLoading])
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -460,7 +451,7 @@ function OportunidadesInner() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Topbar
           title={tipo === 'todos' ? 'Análise de Licitações' : `Licitações · ${TIPO_LABEL[tipo] ?? tipo}`}
-          subtitle={loading
+          subtitle={isFetching
             ? 'Carregando…'
             : `${totalLic} no filtro${itensTotal > 0 && itensProntos < itensTotal ? ' · indexando itens…' : ''}`}
         />
@@ -498,7 +489,7 @@ function OportunidadesInner() {
                 <span className="ml-1.5 text-[10px] text-faint">
                   {porTipo
                     ? (t.key === 'todos' ? Object.values(porTipo).reduce((a, b) => a + b, 0) : (porTipo[t.key] ?? 0))
-                    : (t.key === 'todos' ? opps.length : opps.filter((o) => (o.tipoFornecimento ?? 'outros') === t.key).length)}
+                    : (t.key === 'todos' ? visible.length : visible.filter((o) => (o.tipoFornecimento ?? 'outros') === t.key).length)}
                 </span>
               </button>
             ))}
@@ -578,7 +569,7 @@ function OportunidadesInner() {
             </button>
 
             <ExportButton
-              data={filtered}
+              data={visible}
               filename="licitacoes"
               title="Licitações GovHealth AI"
               columns={[
@@ -671,11 +662,11 @@ function OportunidadesInner() {
           </div>
 
           {/* ── Content ──────────────────────────────────────────────────── */}
-          {loading ? (
+          {isLoading ? (
             <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">
-              Carregando dados de 2023–2025… pode levar até 25 segundos na primeira vez.
+              Carregando…
             </div>
-          ) : filtered.length === 0 ? (
+          ) : visible.length === 0 ? (
             <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">
               Nenhuma oportunidade encontrada com os filtros aplicados.
             </div>
@@ -710,7 +701,7 @@ function OportunidadesInner() {
                           className={clsx('border-b border-subtle transition-colors cursor-pointer',
                             highlightId === opp.id ? 'ring-2 ring-accent ring-inset bg-accent/5' : isExpanded ? 'bg-bg3' : 'hover:bg-bg3')}
                           onClick={() => toggle(opp.id)}>
-                          <td className="px-3 py-2.5 text-[10px] text-faint font-mono-custom">{idx + 1}</td>
+                          <td className="px-3 py-2.5 text-[10px] text-faint font-mono-custom">{(pagina - 1) * pageSize + idx + 1}</td>
                           <td className="px-4 py-2.5">
                             <div className="text-[12px] font-medium text-strong">{opp.hospital ?? opp.municipio}</div>
                             <div className="text-[9px] text-faint font-mono-custom">{opp.municipio} / {opp.uf}
@@ -1020,9 +1011,9 @@ function OportunidadesInner() {
             </div>
           )}
 
-          {!loading && (
+          {!isLoading && (
             <Paginacao
-              pagina={pagina} totalItens={filtered.length} porPagina={pageSize}
+              pagina={pagina} totalItens={totalLic} porPagina={pageSize}
               onPagina={setPagina} rotuloItens="licitações"
               className="mt-4 bg-bg2 border border-subtle2 rounded-lg"
             />

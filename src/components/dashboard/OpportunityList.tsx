@@ -55,10 +55,11 @@ export default function OpportunityList({ data, loading, error, limit = 6, produ
     return ids
   }, [produtos, data])
 
-  // Recorta score >= 40 (relevantes) e ordena por: casa com portfólio > órgão favorito
-  // > (score, já vindo ordenado da API). Sort estável preserva a ordem dentro de cada grupo.
+  // A API já filtra score >= 40 no servidor (minScore=40 no fetch do DashboardView).
+  // Aqui só ordena por: casa com portfólio > órgão favorito > (score, já vindo
+  // ordenado da API). Sort estável preserva a ordem dentro de cada grupo.
   const opps: Oportunidade[] = (data?.oportunidades ?? [])
-    .filter((o) => o.score >= 40)
+    .slice()
     .sort((a, b) =>
       (Number(casaPortfolio.has(b.id)) - Number(casaPortfolio.has(a.id))) ||
       (Number(isFav(b.hospital)) - Number(isFav(a.hospital))),
