@@ -12,6 +12,10 @@
 // XSS); 'wasm-unsafe-eval' cobre o WASM do MapLibre sem reabrir eval de JS. Protecao XSS
 // de inline permanece limitada — nonce pleno exigiria renderizacao dinamica app-wide
 // (custo de perf); tratado como follow-up.
+const scriptSrc = process.env.NODE_ENV === 'production'
+  ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
+
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -21,7 +25,7 @@ const csp = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  scriptSrc,
   "worker-src 'self' blob:",
   "connect-src 'self' https://tiles.openfreemap.org",
   "upgrade-insecure-requests",
