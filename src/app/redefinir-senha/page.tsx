@@ -60,7 +60,9 @@ function Redefinir() {
     <div className="min-h-screen bg-bg flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-[380px]">
         <div className="flex flex-col items-center gap-2 mb-8">
-          <Image src="/logo-govhealth.png" alt="GovHealth" width={170} height={77} priority className="h-9 w-auto" />
+          <Link href="/inicio" aria-label="Voltar para a página inicial" className="rounded-md">
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={170} height={77} priority className="h-9 w-auto" />
+          </Link>
           <span className="font-mono-custom text-[11px] text-faint tracking-wide">Sales Intelligence</span>
         </div>
 

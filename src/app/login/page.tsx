@@ -8,7 +8,7 @@ import { useState, useEffect, Suspense, FormEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { clsx } from 'clsx'
-import { Loader2, Check, Eye, EyeOff } from 'lucide-react'
+import { Loader2, Check, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
 
 type Modo = 'entrar' | 'criar'
@@ -38,10 +38,21 @@ function Auth() {
         <div className="absolute -top-32 -left-24 w-[420px] h-[420px] rounded-full bg-accent/[0.08] blur-3xl" />
         <div className="absolute -bottom-32 -right-24 w-[440px] h-[440px] rounded-full bg-[#17b8a6]/[0.08] blur-3xl" />
       </div>
+
+      {/* Saída para o site. Sem isto, quem faz logout cai aqui e fica preso: a
+          tela não tinha nenhum caminho de volta para a landing, e o middleware
+          só devolve para "/" quem JÁ está logado. */}
+      <Link href="/inicio"
+        className="absolute top-5 left-5 inline-flex items-center gap-1.5 text-[12.5px] text-muted hover:text-strong transition-colors">
+        <ArrowLeft size={14} /> Voltar ao site
+      </Link>
+
       <div className={clsx('w-full', modo === 'criar' ? 'max-w-[860px]' : 'max-w-[380px]')}>
         {/* Logo */}
         <div className="flex flex-col items-center gap-2 mb-8">
-          <Image src="/logo-govhealth.png" alt="GovHealth" width={170} height={77} priority className="h-9 w-auto" />
+          <Link href="/inicio" aria-label="Voltar para a página inicial" className="rounded-md">
+            <Image src="/logo-govhealth.png" alt="GovHealth" width={170} height={77} priority className="h-9 w-auto" />
+          </Link>
           <span className="font-mono-custom text-[11px] text-faint tracking-wide">Sales Intelligence</span>
         </div>
 
