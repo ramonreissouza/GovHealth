@@ -9,9 +9,8 @@ import type { Metadata } from 'next'
 import { clsx } from 'clsx'
 import { ArrowRight, ShieldCheck, Check, Radar, Swords, Globe, MessageSquare, Tag, Wallet } from 'lucide-react'
 import { PLANOS, precoLabel, orcamentoHref } from '@/lib/planos'
-import { resolverPortal, ePortalDeDisputa, nomePortal } from '@/lib/portais'
-import { query } from '@/lib/db'
 import { siteUrl } from '@/lib/site'
+import { getStats, getPortaisDisputa, num, bilhoes } from './dados'
 
 export const revalidate = 3600 // ISR: números atualizam a cada hora
 
@@ -29,85 +28,6 @@ export const metadata: Metadata = {
   },
   twitter: { card: 'summary_large_image', images: ['/shots/dashboard.png'] },
 }
-
-// Números reais (com fallback truthful medido no banco, caso a query falhe no build).
-//
-// `valor_total_estimado >= 10000` corta contratação simbólica. O teto de valor
-// impossível NÃO é filtrado aqui de propósito: já é NULL no banco (ver
-// scripts/limpar-ruido.mjs) e SUM ignora NULL. Antes daquele conserto esta página
-// publicava R$ 2.680 bi — os 6 erros de digitação do PNCP somavam 10x a base real.
-interface Stats {
-  valor: number; total: number; munis: number; ufs: number; ult: string
-  abertas: number; portais: number; fornecedores: number; capag: number; capagFraca: number
-}
-async function getStats(): Promise<Stats> {
-  const fallback: Stats = {
-    valor: 269_002_698_794, total: 63_867, munis: 4_420, ufs: 27, ult: '04/08/2026',
-    abertas: 76_320, portais: 101, fornecedores: 14_668, capag: 4_774, capagFraca: 2_209,
-  }
-  try {
-    const [r] = await query<Stats>(
-      `SELECT sum(c.valor_total_estimado)::float8 AS valor, count(*)::int AS total,
-              count(distinct c.municipio)::int AS munis, count(distinct c.uf)::int AS ufs,
-              to_char(max(c.data_publicacao),'DD/MM/YYYY') AS ult,
-              -- "Abertas" = sem resultado homologado. O situacao_id do PNCP fica velho,
-              -- então a ausência de resultado é a fonte de verdade (ver memória do
-              -- status aberto/encerrado).
-              count(*) FILTER (WHERE NOT EXISTS (
-                SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = c.numero_controle_pncp))::int AS abertas,
-              (SELECT count(distinct usuario_nome)::int FROM contratacoes WHERE usuario_nome IS NOT NULL) AS portais,
-              (SELECT count(distinct ni_fornecedor)::int FROM resultados WHERE ni_fornecedor IS NOT NULL) AS fornecedores,
-              (SELECT count(*)::int FROM capag) AS capag,
-              -- Nota C ou D = capacidade de pagamento fraca. É o número que
-              -- justifica olhar CAPAG antes de dar lance, então vem do banco.
-              (SELECT count(*)::int FROM capag WHERE nota IN ('C','D')) AS "capagFraca"
-         FROM contratacoes c
-        WHERE c.valor_total_estimado >= 10000 AND c.objeto_compra IS NOT NULL`,
-    )
-    return r?.total ? r : fallback
-  } catch {
-    return fallback
-  }
-}
-
-/**
- * Portais de DISPUTA com licitação de saúde na base, do maior para o menor.
- *
- * Só entra `tipo: 'disputa'`. Metade do catálogo é portal de transparência (o
- * PNCP manda essa URL em `linkSistemaOrigem` igual), e ali o link leva à leitura
- * do edital, não à sessão — nomear isso como portal de disputa numa página de
- * venda é o tipo de exagero que o cliente derruba na primeira demo.
- *
- * Agrupa por (host, sistema) e resolve em TS com o MESMO `resolverPortal` da
- * tela, em vez de reescrever o catálogo em SQL: duas cópias da regra divergem, e
- * a divergência apareceria justamente na landing. São ~1.100 hosts × ~100
- * sistemas publicadores, então a consulta é barata.
- */
-async function getPortaisDisputa(): Promise<{ nome: string; n: number }[]> {
-  try {
-    const rows = await query<{ host: string; sistema: string; n: number }>(
-      `SELECT lower(split_part(split_part(regexp_replace(coalesce(link_externo,''), '^https?://', ''), '/', 1), ':', 1)) AS host,
-              coalesce(usuario_nome, '') AS sistema, count(*)::int AS n
-         FROM contratacoes
-        WHERE link_externo IS NOT NULL OR usuario_nome IS NOT NULL
-        GROUP BY 1, 2`)
-
-    const soma = new Map<string, number>()
-    for (const r of rows) {
-      const id = resolverPortal({ linkExterno: r.host || null, usuarioNome: r.sistema || null })
-      if (!ePortalDeDisputa(id)) continue
-      soma.set(id, (soma.get(id) ?? 0) + Number(r.n))
-    }
-    return [...soma.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([id, n]) => ({ nome: nomePortal(id), n }))
-  } catch {
-    return []
-  }
-}
-
-const num = (n: number) => n.toLocaleString('pt-BR')
-const bilhoes = (v: number) => `R$ ${(v / 1e9).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} bi`
 
 // Os 6 cards seguem o eixo DESCUBRA → DISPUTE → RECEBA (2 cards para cada etapa).
 // A landing anterior tinha 3 cards e todos os três eram descoberta — que é
@@ -141,7 +61,9 @@ export default async function InicioPage() {
   // concorrência mapeada. Município/UF descem para o bloco do mapa.
   const PROVAS = [
     { v: bilhoes(s.valor), l: 'em licitações de saúde mapeadas' },
-    { v: num(s.abertas), l: 'abertas agora, esperando proposta' },
+    // ABERTAS DO ANO, não todas as sem-resultado: "aberta" sozinha inclui edital de
+    // 2025 sem homologação lançada, e chamar aquilo de "esperando proposta" é falso.
+    { v: num(s.abertasAno), l: `abertas em ${new Date().getFullYear()}, esperando proposta` },
     // ANTES era `count(distinct usuario_nome)` = 101, com este mesmo rótulo. Mas
     // aquilo conta SISTEMAS PUBLICADORES (IPM, Betha, Fiorilli…), não portais de
     // disputa — o rótulo era falso. `portais.length` sai do catálogo, é menor e é
@@ -190,7 +112,7 @@ export default async function InicioPage() {
                 Ache a licitação.<br />Ganhe a disputa.<br /><span className="text-gradient-brand">Receba o pagamento.</span>
               </h1>
               <p className="reveal text-[17px] text-muted leading-relaxed max-w-[520px] mt-5" style={{ '--d': '0.1s' } as React.CSSProperties}>
-                <strong className="text-strong">{num(s.abertas)} licitações de saúde abertas agora</strong>, espalhadas por{' '}
+                <strong className="text-strong">{num(s.abertasAno)} licitações de saúde abertas em {new Date().getFullYear()}</strong>, espalhadas por{' '}
                 {num(portais.length || s.portais)} portais diferentes. A GovHealth mostra onde disputar, vigia o chat do
                 pregão por você e diz se o município tem capacidade de pagar — antes do seu lance.
               </p>
@@ -234,8 +156,8 @@ export default async function InicioPage() {
                     entra a contagem de abertas, que combina com o ponto pulsando e
                     muda de valor a cada revalidação. */}
                 <div className="leading-tight">
-                  <div className="font-mono-custom font-semibold text-[15px] text-strong tracking-tight">{num(s.abertas)}</div>
-                  <div className="text-[10.5px] text-faint">licitações abertas agora</div>
+                  <div className="font-mono-custom font-semibold text-[15px] text-strong tracking-tight">{num(s.abertasAno)}</div>
+                  <div className="text-[10.5px] text-faint">abertas em {new Date().getFullYear()}</div>
                 </div>
               </div>
             </div>
@@ -416,7 +338,7 @@ export default async function InicioPage() {
               </Frame>
               <h3 className="font-heading font-semibold text-[16px] mt-5 mb-1.5">A lista inteira, do seu jeito</h3>
               <p className="text-[13.5px] text-muted leading-relaxed">
-                As <strong className="text-strong">{num(s.abertas)} abertas</strong> ordenadas por valor ou por
+                As <strong className="text-strong">{num(s.abertasAno)} abertas de {new Date().getFullYear()}</strong> ordenadas por valor ou por
                 score no clique do cabeçalho, separadas nas 14 categorias de saúde — de OPME a odontologia — com
                 filtro por estado, por ano e por aberta/encerrada. Exportável em um clique.
               </p>
@@ -500,7 +422,7 @@ export default async function InicioPage() {
                 correndo. "Comece antes do próximo edital" era abstrato — havia
                 sempre um próximo, então não havia motivo para ser hoje. */}
             <h2 className="font-heading font-bold text-[26px] sm:text-[30px] text-white relative">
-              {num(s.abertas)} licitações estão abertas neste momento
+              {num(s.abertasAno)} licitações de saúde já abriram em {new Date().getFullYear()}
             </h2>
             <p className="text-[14.5px] text-white/85 mt-2 mb-7 relative max-w-[480px] mx-auto">
               Veja quais são da sua categoria, em qual portal disputar e se o município paga.

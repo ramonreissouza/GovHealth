@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
 import { classificarTipo } from '@/lib/score-engine'
 import { query } from '@/lib/db'
+import { ABERTA, UNIVERSO } from '@/lib/licitacoes/universo'
 import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
@@ -67,6 +68,10 @@ function montarOportunidade(input: {
   hospital: string
   valor: number
   aberto: boolean
+  /** Só quem tem a tabela de resultados à mão preenche: o fallback ao vivo do PNCP
+   *  não tem, e ali o cliente volta para a heurística de prazo — que é melhor que o
+   *  situacaoCompraId de onde sai o `aberto` daquele caminho. */
+  abertaConfirmada?: boolean
   categoria?: Oportunidade['categoria']
   tipo?: TipoFornecimento
   agora: string
@@ -84,6 +89,7 @@ function montarOportunidade(input: {
     descricao: objeto.substring(0, 140),
     score,
     subScores: { convenio: 80, historico: 65, orgao: 75, competicao: 60 },
+    aberta: input.abertaConfirmada,
     tipoFornecimento: input.tipo ?? classificarTipo(objeto),
     valorEstimado: valor,
     janelaEmDias: aberto ? 0 : 30,
@@ -135,11 +141,9 @@ interface ContratacaoRow {
   aberto: boolean
 }
 
-// aberto = ainda SEM resultado homologado; encerrada = já tem vencedor definido.
-// (situacao_id do PNCP é desatualizado no banco; a presença de resultado é o sinal
-// confiável de que a licitação encerrou.)
-const abertoExpr = (ref: string) =>
-  `NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = ${ref}.numero_controle_pncp)`
+// A definição de aberta/encerrada e o universo vêm de um lugar só — ver o
+// cabeçalho de src/lib/licitacoes/universo.ts para o porquê e para os números.
+const abertoExpr = (ref: string) => ABERTA(ref)
 
 // Filtros SQL compartilhados por buscarDoBanco / totaisDoBanco (mesmo universo).
 interface FiltroBanco {
@@ -152,18 +156,11 @@ interface FiltroBanco {
   categoria?: string
 }
 function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {}): { whereSql: string; args: unknown[] } {
-  // Fontes fora do PNCP (ex.: Licitações-e/BB) não expõem valor na listagem pública,
-  // então o piso de R$10k não se aplica a elas — senão sumiriam por terem valor nulo.
-  // Ao filtrar por CIDADE específica (deep-link do mapa) o piso é dispensado: o usuário
-  // quer ver TODAS as licitações daquela cidade e a contagem bate com o mapa.
-  const where: string[] = ["objeto_compra IS NOT NULL"]
-  // O piso corta o que SABIDAMENTE é pequeno — não o que está sem valor informado.
-  // Medido na base: das 331.177 contratações, 238.036 (72%) não têm valor porque a
-  // API de busca do PNCP não devolve o campo; só 29.274 são de fato < R$ 10 mil. Com
-  // o NULL caindo no piso, Licitações escondia 72% da base e contradizia o Mapa
-  // (306.975 abertas lá contra 50.241 aqui) — e uma licitação relevante ficava
-  // invisível por um dado que faltou na coleta, não por ser irrelevante.
-  if (!params.municipio) where.unshift("(valor_total_estimado IS NULL OR valor_total_estimado >= 10000 OR fonte <> 'pncp')")
+  // O universo é o MESMO do mapa, do dashboard, dos alertas e da landing.
+  // A exceção antiga ("ao filtrar por cidade, dispensa o piso, senão não bate com o
+  // mapa") saiu: o mapa passou a usar este mesmo universo, então a exceção agora
+  // CRIA a divergência que existia para consertar.
+  const where: string[] = [UNIVERSO('contratacoes')]
   const args: unknown[] = []
   if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
   else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }
@@ -311,6 +308,7 @@ async function buscarDoBanco(params: {
       hospital: r.razao_social_orgao ?? 'N/D',
       valor: r.valor_total_estimado ?? 0,
       aberto: r.aberto,
+      abertaConfirmada: r.aberto,   // veio do banco: é a regra canônica
       categoria: catBanco && CATEGORIAS_VALIDAS.has(catBanco) ? catBanco : undefined,
       tipo: isTipoFornecimento(r.tipo_fornecimento) ? r.tipo_fornecimento : undefined,
       agora: params.agora,
@@ -333,7 +331,8 @@ async function agregadosDoBanco(params: { uf?: string; ufs?: string[]; tipo?: Ti
   const cached = getCached<{ serieMensal: SerieMensalRow[]; porCategoria: PorCategoriaRow[] }>(cacheKey)
   if (cached) return cached
 
-  const where: string[] = ['valor_total_estimado >= 10000']
+  // Mesmo universo das listas: o gráfico e o KPI não podem contar bases diferentes.
+  const where: string[] = [UNIVERSO('contratacoes')]
   const args: unknown[] = []
   if (params.ufs?.length) { args.push(params.ufs); where.push(`uf = ANY($${args.length})`) }
   else if (params.uf) { args.push(params.uf.toUpperCase()); where.push(`uf = $${args.length}`) }

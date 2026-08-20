@@ -1,10 +1,12 @@
 // src/app/api/mapa/route.ts — dados agregados por MUNICÍPIO p/ o mapa de calor.
-// Agrega TODAS as contratações abertas (sem resultado homologado) por município e
+// Agrega as contratações abertas DO MESMO UNIVERSO das listas (ver
+// src/lib/licitacoes/universo.ts) por município e
 // categoria, junta com as coordenadas IBGE e devolve ~4,6k pontos (não os ~69k
 // individuais). O cliente monta o heatmap (zoom baixo) e os círculos (zoom alto).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { ABERTA, UNIVERSO } from '@/lib/licitacoes/universo'
 import { coordMunicipio } from '@/lib/geo/municipios'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
@@ -27,8 +29,10 @@ export async function GET(req: NextRequest) {
 
     {
       const params: unknown[] = []
-      const cond = [`NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = c.numero_controle_pncp)`,
-        `c.municipio IS NOT NULL`, `c.uf IS NOT NULL`]
+      // Sem o UNIVERSO aqui, o mapa contava 319.377 abertas contra 231.650 da tela
+      // de Licitações — 87 mil de diferença no mesmo conceito, em duas telas do
+      // mesmo produto (as abaixo de R$ 10 mil, que as listas cortam).
+      const cond = [ABERTA('c'), UNIVERSO('c'), `c.municipio IS NOT NULL`, `c.uf IS NOT NULL`]
       if (anoNum) { params.push(anoNum); cond.push(`c.ano = $${params.length}`) }
 
       const rows = await query<AggRow>(

@@ -6,6 +6,7 @@
 // de "nova licitação" por e-mail ao endereço cadastrado do fornecedor.
 
 import { query, queryOne } from '@/lib/db'
+import { ABERTA } from '@/lib/licitacoes/universo'
 import { normalizeText } from '@/lib/text'
 import { CONECTORES, licitacaoDoPortal } from '@/lib/radar/conectores'
 
@@ -116,7 +117,7 @@ export async function sincronizarSelecao(
 
   // Candidatos: contratações ABERTAS (sem resultado homologado) filtradas por
   // UF / categoria / faixa de valor / TEXTO, recentes.
-  const cond: string[] = [`NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = c.numero_controle_pncp)`]
+  const cond: string[] = [ABERTA('c')]
   const params: unknown[] = []
   if (ufs.length) { params.push(ufs); cond.push(`c.uf = ANY($${params.length})`) }
   if (categorias.length) { params.push(categorias); cond.push(`c.categoria_saude = ANY($${params.length})`) }

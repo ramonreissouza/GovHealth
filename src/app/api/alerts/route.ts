@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
 import { buscarEmendasSaudeAno, parseValorBR, type EmendaParlamentar } from '@/lib/emendas'
 import { query } from '@/lib/db'
+import { UNIVERSO } from '@/lib/licitacoes/universo'
 import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { Alert } from '@/lib/types'
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
 
   // Alertas de editais recentes — banco (ETL) primeiro; PNCP ao vivo como fallback.
   try {
-    const where: string[] = ["(valor_total_estimado >= 10000 OR fonte <> 'pncp')", 'objeto_compra IS NOT NULL']
+    const where: string[] = [UNIVERSO('contratacoes')]
     const args: unknown[] = []
     if (ufs?.length) { args.push(ufs); where.push(`uf = ANY($${args.length})`) }
     else if (uf) { args.push(uf.toUpperCase()); where.push(`uf = $${args.length}`) }

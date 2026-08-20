@@ -68,10 +68,17 @@ function parsePNCPNum(num?: string): { cnpj: string; ano: number; seq: number } 
   return { cnpj: parts[0], ano, seq }
 }
 
-// "Em aberto" = prazo de proposta ainda no futuro. O PNCP às vezes mantém
-// situacaoCompraId=1 mesmo após o prazo vencer, então a data de encerramento
-// (quando existe) é a fonte de verdade. Usada tanto no filtro quanto no KPI.
+// "Em aberto" = sem resultado homologado, a MESMA regra do resto da plataforma
+// (src/lib/licitacoes/universo.ts). O flag vem do banco junto com a oportunidade.
+//
+// Antes esta função decidia por prazo de proposta — e como o KPI já contava por
+// homologação, a mesma tela dava duas respostas: a lista filtrada por "Em aberto"
+// não tinha o número que o KPI "Em aberto" mostrava logo acima dela.
+//
+// A heurística de prazo continua, só como último recurso: no fallback ao vivo do
+// PNCP não existe tabela de resultados para consultar.
 function estaAberta(o: Oportunidade): boolean {
+  if (typeof o.aberta === 'boolean') return o.aberta
   const lic = o.licitacaoRelacionada
   return lic?.dataEncerramentoProposta
     ? new Date(lic.dataEncerramentoProposta) > new Date()

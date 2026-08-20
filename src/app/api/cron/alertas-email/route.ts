@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { query } from '@/lib/db'
+import { ABERTA, UNIVERSO } from '@/lib/licitacoes/universo'
 import { matchItem, type AlertaConfig, type AlertaNotificacao, type ItemParaMatch } from '@/lib/alertas'
 import { buildAlertaDigestHtml } from '@/lib/alerta-email'
 // DESATIVADO (a pedido) — Cofre de Documentos. Reativar: descomentar o import e o bloco (0) abaixo.
@@ -73,9 +74,8 @@ export async function GET(req: NextRequest) {
       `SELECT numero_controle_pncp n, razao_social_orgao orgao, municipio mun, uf, objeto_compra obj,
               categoria_saude cat, valor_total_estimado::float8 v
          FROM contratacoes c
-        WHERE (valor_total_estimado >= 10000 OR fonte <> 'pncp') AND objeto_compra IS NOT NULL
+        WHERE ${UNIVERSO('c')} AND ${ABERTA('c')}
           AND coletado_em > now() - interval '2 days'
-          AND NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = c.numero_controle_pncp)
         ORDER BY coletado_em DESC LIMIT 800`,
     )
     const editais: ItemParaMatch[] = editaisRows.map((e) => ({

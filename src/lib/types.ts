@@ -79,6 +79,10 @@ export interface Oportunidade {
   urgencia: 'urgente' | 'alta' | 'media' | 'normal'
   status: 'quente' | 'morno' | 'frio'
   probabilidadeEdital: number
+  /** Aberta pela regra canônica (sem resultado homologado) — ver
+   *  src/lib/licitacoes/universo.ts. Opcional porque o fallback ao vivo do PNCP
+   *  não tem a tabela de resultados à mão; ali sobra a heurística de prazo. */
+  aberta?: boolean
   concorrentes: string[]
   indiceConcorrencia: 'baixo' | 'medio' | 'alto'
   acaoRecomendada: string

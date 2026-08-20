@@ -10,6 +10,7 @@
 // (client-safe) para tipos/constantes.
 
 import { query } from './db'
+import { ABERTA, UNIVERSO } from './licitacoes/universo'
 import { inferirCategoria } from './score-engine'
 import {
   PORTAIS_CONFIG,
@@ -33,7 +34,7 @@ const RE_ENTIDADE_ESTADUAL =
 // (situacao_id do PNCP está desatualizado no banco; presença de resultado é o
 // sinal confiável de encerramento.)
 const abertoExpr = (ref: string) =>
-  `NOT EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = ${ref}.numero_controle_pncp)`
+  ABERTA(ref)
 
 interface ContratacaoDBRow {
   numero_controle_pncp: string
@@ -107,7 +108,7 @@ async function buscarResumoEstadosDB(): Promise<ResumoEstados | null> {
             COALESCE(sum(valor_total_estimado), 0)::float8 AS valor,
             count(*) FILTER (WHERE razao_social_orgao ~* $2)::int AS entidades
        FROM contratacoes c
-      WHERE uf = ANY($1)
+      WHERE uf = ANY($1) AND ${UNIVERSO('c')}
       GROUP BY uf`,
     [TODAS_UFS, RE_ENTIDADE_ESTADUAL],
   )
@@ -135,7 +136,7 @@ async function buscarLicitacoesEstadoDB(
             count(*) FILTER (WHERE ${abertoExpr('c')})::int AS abertas,
             COALESCE(sum(valor_total_estimado), 0)::float8 AS valor,
             count(*) FILTER (WHERE razao_social_orgao ~* $2)::int AS entidades
-       FROM contratacoes c WHERE uf = $1`,
+       FROM contratacoes c WHERE uf = $1 AND ${UNIVERSO('c')}`,
     [uf, RE_ENTIDADE_ESTADUAL],
   ))[0]
   if (!agg || agg.total === 0) return null
@@ -155,7 +156,7 @@ async function buscarLicitacoesEstadoDB(
             situacao_id, categoria_saude,
             ${abertoExpr('contratacoes')} AS aberto
        FROM contratacoes
-      WHERE uf = $1${statusWhere}
+      WHERE uf = $1 AND ${UNIVERSO()}${statusWhere}
       ORDER BY aberto DESC, data_publicacao DESC NULLS LAST
       LIMIT 500`,
     [uf],
