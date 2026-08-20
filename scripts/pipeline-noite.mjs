@@ -14,8 +14,16 @@
 // Substitui o harvest-noite.mjs enquanto roda (não suba os dois).
 //
 // Uso:
-//   node scripts/pipeline-noite.mjs
+//   node scripts/pipeline-noite.mjs                 # ordem 1,2,3
+//   node scripts/pipeline-noite.mjs --fases=2,1     # valores primeiro, portais depois
 //   npm run pipeline:noite
+//
+// A ORDEM É ARGUMENTO porque a fase de portais tem cauda longa: medido em
+// 20/08/2026, os 20 primeiros pares (dia × modalidade) casaram 1.088 registros, os
+// pares 20-30 casaram 409 e os pares 30-40 casaram 21 — a fila caiu de 4.352 para
+// 2.834 em 1h30 e depois passou a resolver ~35 por hora. Ficar 19h moendo cauda
+// enquanto 37 mil contratações seguem sem valor na tela é a prioridade errada, e
+// trocar isso não deveria exigir editar o script.
 //
 // Ctrl+C é seguro em qualquer ponto: o harvest guarda o cursor por par
 // (dia, modalidade) e o enriquecedor guarda checkpoint por (mês, modalidade).
@@ -27,6 +35,12 @@ import pg from 'pg'
 const ESPERA_RECUSA = 15 * 60 * 1000   // PNCP recusando: espera longa
 const ESPERA_NORMAL = 60 * 1000        // rodada produtiva que parou por outro motivo
 const PASSADAS_VALOR = 3               // passadas do enriquecedor por janela
+const RODADAS_SEM_AVANCO = 3           // portais: desiste da fase depois disto
+
+const arg = (nome) => {
+  const m = process.argv.slice(2).find((a) => a.startsWith(`--${nome}=`))
+  return m ? m.split('=').slice(1).join('=') : undefined
+}
 
 const JANELAS = [
   { de: '2025-01', ate: '2025-12' },   // 2025 primeiro: é onde está o passivo
@@ -145,6 +159,15 @@ async function colherPortais(soAbertas) {
   const alvo = soAbertas ? 'portaisAbertas' : 'portaisTotal'
   const rotulo = soAbertas ? 'FASE 1 · portais das abertas' : 'FASE 3 · portais do histórico'
   let rodadas = 0
+  // A fila PODE NÃO ZERAR: parte dos pendentes simplesmente não aparece nas páginas
+  // de /publicacao dos pares (dia, modalidade) que o harvest varre — número de
+  // controle antigo, dia fora da janela, modalidade que mudou. Sem esta desistência
+  // a fase gira para sempre em rodadas de zero e o pipeline nunca chega nas
+  // seguintes. A sonda antes de cada rodada é o que torna a regra honesta: se o PNCP
+  // estivesse fora, esperaríamos DENTRO de esperarPncp e a rodada nem começaria —
+  // então rodada que rodou e não resolveu nada é evidência de fila irresolvível
+  // nesta passada, não de servidor fora.
+  let semAvanco = 0
 
   for (;;) {
     const antes = await medirOuEsperar()
@@ -166,6 +189,13 @@ async function colherPortais(soAbertas) {
     // Rodada que não andou = PNCP recusando. Insistir em seguida só queima limite.
     const espera = avanco > 0 ? ESPERA_NORMAL : ESPERA_RECUSA
     log(`${rotulo}: rodada ${rodadas} +${avanco} resolvidos | restam ${depois[alvo]} | esperando ${espera / 60000}min`)
+
+    semAvanco = avanco > 0 ? 0 : semAvanco + 1
+    if (semAvanco >= RODADAS_SEM_AVANCO) {
+      log(`${rotulo}: ${semAvanco} rodadas seguidas sem resolver nada — desistindo da fase `
+        + `com ${depois[alvo]} pendentes. O que sobrou é trabalho do refresh (ETL Refresh).`)
+      return
+    }
     await sleep(espera)
   }
 }
@@ -192,15 +222,25 @@ async function enriquecerValores() {
 }
 
 // ── Execução ────────────────────────────────────────────────────────────────
+const FASES = {
+  '1': { nome: 'portais das abertas', rodar: () => colherPortais(true) },
+  '2': { nome: 'valores 2025/2026', rodar: () => enriquecerValores() },
+  '3': { nome: 'portais do histórico', rodar: () => colherPortais(false) },
+}
+const ordem = (arg('fases') ?? '1,2,3').split(',').map((s) => s.trim()).filter(Boolean)
+const invalidas = ordem.filter((n) => !FASES[n])
+if (invalidas.length) {
+  console.error(`[pipeline] fase desconhecida: ${invalidas.join(', ')} (use 1, 2 e/ou 3)`)
+  process.exit(2)
+}
+
 const inicio = await medirOuEsperar()
-log('iniciando — fase 1 portais (abertas), fase 2 valores, fase 3 portais (histórico).')
+log(`iniciando — ordem ${ordem.join(' → ')}: ${ordem.map((n) => `${n}) ${FASES[n].nome}`).join(', ')}.`)
 if (inicio) {
   log(`estado: ${inicio.portaisAbertas} abertas sem portal | ${inicio.portaisTotal} no total | `
     + `${inicio.comSistema} com portal | ${inicio.semValor} sem valor desde jan/2025`)
 }
 
-await colherPortais(true)
-await enriquecerValores()
-await colherPortais(false)
+for (const n of ordem) await FASES[n].rodar()
 
-log('FIM — as três fases terminaram.')
+log(`FIM — fases ${ordem.join(',')} terminaram.`)
