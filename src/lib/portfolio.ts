@@ -83,7 +83,7 @@ export function toggleAtivo(id: string): void {
  * oportunidade. Prioriza termos explícitos (palavras-chave, nome, marca/modelo);
  * a descrição CATMAT não entra como needle por ser verbosa e gerar ruído.
  */
-function needlesDoProduto(p: ProdutoPortfolio): string[] {
+export function needlesDoProduto(p: ProdutoPortfolio): string[] {
   const fontes = [...p.palavrasChave, p.nome, p.marca ?? '', p.modelo ?? '']
   const needles = new Set<string>()
   for (const f of fontes) {
@@ -119,6 +119,20 @@ export function casaComPortfolio(produtos: ProdutoPortfolio[], opp: Oportunidade
   if (produtos.length === 0) return false
   const texto = textoOportunidade(opp)
   return produtos.some((p) => p.ativo && produtoMatchTexto(p, texto))
+}
+
+/**
+ * Agulhas (já normalizadas) de todos os produtos ATIVOS do portfólio — para mandar
+ * ao servidor filtrar "Meu Portfólio" em SQL (o servidor não recalcula quais agulhas
+ * valem, isso é dado do client/localStorage; só filtra pelo que recebe).
+ */
+export function needlesPortfolioAtivo(produtos: ProdutoPortfolio[]): string[] {
+  const vistos = new Set<string>()
+  for (const p of produtos) {
+    if (!p.ativo) continue
+    for (const n of needlesDoProduto(p)) vistos.add(n)
+  }
+  return [...vistos]
 }
 
 // ── Seed de demonstração: portfólio Siemens Healthineers ──────────────────────

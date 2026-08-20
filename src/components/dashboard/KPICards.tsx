@@ -53,11 +53,17 @@ const CARDS = [
 
 export default function KPICards({ data, loading, tipo }: { data: OpportunitiesData | null; loading: boolean; tipo?: string }) {
   const opps = data?.oportunidades ?? []
+  // valorTotalEstimado/editaisPrevisos60d/municipiosMonitorados vêm do agregado do
+  // servidor (`totais`), que é SQL sobre o universo completo do filtro — não depende
+  // de quantas oportunidades o dashboard carregou. `oportunidadesQuentes` (score ≥ 75)
+  // segue vindo da amostra carregada: o score mistura CAPAG por órgão e calculá-lo
+  // pro universo inteiro exigiria escanear o banco todo por request.
+  const totais = data?.totais
   const kpis: KPIs = {
     oportunidadesQuentes: opps.filter((o) => o.score >= 75).length,
-    valorTotalEstimado: opps.reduce((s, o) => s + o.valorEstimado, 0),
-    editaisPrevisos60d: opps.filter((o) => o.janelaEmDias <= 60 && o.janelaEmDias > 0).length,
-    municipiosMonitorados: new Set(opps.map((o) => `${o.municipio}-${o.uf}`)).size,
+    valorTotalEstimado: totais?.valorTotal ?? opps.reduce((s, o) => s + o.valorEstimado, 0),
+    editaisPrevisos60d: totais ? totais.total - totais.abertas : opps.filter((o) => o.janelaEmDias <= 60 && o.janelaEmDias > 0).length,
+    municipiosMonitorados: totais?.municipios ?? new Set(opps.map((o) => `${o.municipio}-${o.uf}`)).size,
   }
 
   // Publica o status da fonte (selo de proveniência) quando os dados chegam.

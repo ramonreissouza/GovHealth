@@ -4,7 +4,8 @@
 // Ao clicar num fornecedor, mostra o que ele vendeu por estado, categoria e item.
 // Lê /api/resultados/fornecedores (resultados homologados do PNCP via ETL).
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
@@ -39,6 +40,9 @@ interface ApiResponse {
   categoria: string | null
   kpis: { valorTotal: number; fornecedores: number; itens: number; convenios: number }
   ranking: Ranking[]
+  /** Empresas no ranking DESTE filtro, busca por nome inclusa — régua de páginas.
+   *  `kpis.fornecedores` não serve: ele é o escopo (UF/ano/categoria) e ignora a busca. */
+  rankingTotal?: number
   categorias?: CatCount[]
   ufsComDados: string[]
   detalhe: Detalhe | null
@@ -46,6 +50,16 @@ interface ApiResponse {
   fonte?: string
   error?: string
   instrucoes?: string
+}
+
+// Carrega `instrucoes` (ex.: "rode npm run db:setup") junto da mensagem de erro
+// da API, pra sobreviver ao throw dentro do queryFn do React Query.
+class ApiError extends Error {
+  instrucoes?: string
+  constructor(message: string, instrucoes?: string) {
+    super(message)
+    this.instrucoes = instrucoes
+  }
 }
 
 const COLS_EXPORT: ExportColumn<Ranking>[] = [
@@ -71,10 +85,6 @@ const COLS_ITENS: ExportColumn<BreakdownItem>[] = [
 ]
 
 export default function FornecedoresPage() {
-  const [data, setData] = useState<ApiResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [erro, setErro] = useState<{ msg: string; instrucoes?: string } | null>(null)
-
   const [ufsAtivos, setUfsAtivos] = useState<Set<string>>(new Set())
   // Pré-filtra pelos estados do Setup da Empresa (item 4).
   const { marcarTocado: marcarUFTocado } = useSetupUFDefault((ufs) => setUfsAtivos(new Set(ufs)))
@@ -128,33 +138,39 @@ export default function FornecedoresPage() {
     finally { setExpItens(false) }
   }, [filtrosParams, buscaQuery])
 
-  // Sequenciador de requisições: descarta respostas fora de ordem. Sem isso, a busca
-  // inicial (sem filtro) podia chegar DEPOIS da filtrada e sobrescrevê-la — o filtro do
-  // Setup "se perdia" e só voltava no F5.
-  const reqIdRef = useRef(0)
-  const load = useCallback(async () => {
-    const myId = ++reqIdRef.current
-    setLoading(true); setErro(null)
-    try {
-      const params = filtrosParams()
-      if (buscaQuery) params.set('q', buscaQuery)
-      const res = await fetch(`/api/resultados/fornecedores?${params}`)
-      const json: ApiResponse = await res.json()
-      if (myId !== reqIdRef.current) return // resposta obsoleta — ignora
-      if (!res.ok) { setErro({ msg: json.error ?? 'Erro', instrucoes: json.instrucoes }); setData(null) }
-      else { setData(json); publishDataStatus(json) }
-    } catch (e) { if (myId === reqIdRef.current) { setErro({ msg: String(e) }); setData(null) } }
-    finally { if (myId === reqIdRef.current) setLoading(false) }
-  }, [filtrosParams, buscaQuery])
-
-  // Debounce dos filtros: cada clique (UF/categoria/ano) recria `load` e reinicia o
-  // timer. Sem isto, remover 4 filtros disparava 4 queries pesadas (~2s cada) em fila.
-  // Agora só dispara ~250ms depois que o usuário para de mexer. A busca por nome já tem
-  // seu próprio debounce (busca→buscaQuery), então os dois se somam de forma suave.
-  useEffect(() => { const t = setTimeout(() => { load() }, 250); return () => clearTimeout(t) }, [load])
+  // Debounce dos filtros: cada clique (UF/categoria/ano/página) atualiza `filtrosParams`
+  // e reinicia o timer. Sem isto, remover 4 filtros disparava 4 queries pesadas (~2s
+  // cada) em fila. Agora só assenta ~250ms depois que o usuário para de mexer — vira
+  // a queryKey do React Query, então voltar a uma combinação já buscada não refaz o
+  // fetch (cache do QueryProvider). A busca por nome já tem seu próprio debounce
+  // (busca→buscaQuery), então os dois se somam de forma suave.
+  const [queryParamsKey, setQueryParamsKey] = useState(() => filtrosParams().toString())
+  useEffect(() => {
+    const t = setTimeout(() => setQueryParamsKey(filtrosParams().toString()), 250)
+    return () => clearTimeout(t)
+  }, [filtrosParams])
 
   // debounce da busca por nome (server-side): acha qualquer fornecedor, não só o top 100.
   useEffect(() => { const t = setTimeout(() => setBuscaQuery(busca.trim()), 350); return () => clearTimeout(t) }, [busca])
+
+  // Sem placeholderData/keepPreviousData de propósito: numa combinação de filtros AINDA
+  // não visitada, `data` fica undefined e o loading reaparece — melhor do que deixar a
+  // página anterior parada na tela enquanto busca a nova (mesma escolha de Licitações).
+  // Uma combinação JÁ visitada continua instantânea, vindo do cache.
+  const { data, isLoading, error } = useQuery<ApiResponse, ApiError>({
+    queryKey: ['fornecedores', queryParamsKey, buscaQuery],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams(queryParamsKey)
+      if (buscaQuery) params.set('q', buscaQuery)
+      const res = await fetch(`/api/resultados/fornecedores?${params}`, { signal })
+      const json: ApiResponse = await res.json()
+      if (!res.ok) throw new ApiError(json.error ?? 'Erro', json.instrucoes)
+      publishDataStatus(json)
+      return json
+    },
+  })
+  const erro = error ? { msg: error.message, instrucoes: error.instrucoes } : null
+  const loading = isLoading
 
   // Drill-down do fornecedor selecionado (respeita UF/ano; ignora categoria no back).
   useEffect(() => {
@@ -343,7 +359,7 @@ export default function FornecedoresPage() {
                 )}
                 {!loading && !erro && (
                   <Paginacao
-                    pagina={pagina} totalItens={kpis?.fornecedores ?? 0} porPagina={pageSize}
+                    pagina={pagina} totalItens={data?.rankingTotal ?? kpis?.fornecedores ?? 0} porPagina={pageSize}
                     onPagina={setPagina} rotuloItens="fornecedores"
                     className="border-t border-subtle"
                   />

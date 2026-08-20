@@ -3,6 +3,7 @@ import type { Metadata } from 'next'
 import { DM_Sans, Syne, DM_Mono } from 'next/font/google'
 import './globals.css'
 import SessionProvider from '@/components/providers/SessionProvider'
+import QueryProvider from '@/components/providers/QueryProvider'
 import NotificationsWatcher from '@/components/NotificationsWatcher'
 import PageViewTracker from '@/components/PageViewTracker'
 import FeedbackWidget from '@/components/feedback/FeedbackWidget'
@@ -44,12 +45,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR" className={`${dmSans.variable} ${syne.variable} ${dmMono.variable}`}>
       <body className="bg-bg text-strong antialiased font-sans">
+          <QueryProvider>
           <SessionProvider>
           <NotificationsWatcher />
           <PageViewTracker />
           {children}
           <FeedbackWidget />
         </SessionProvider>
+        </QueryProvider>
         </body>
     </html>
   )

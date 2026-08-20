@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [ranking, kpiRows, catCounts, ufsComDados] = await Promise.all([
+    const [ranking, rankTotalRows, kpiRows, catCounts, ufsComDados] = await Promise.all([
       query<RankingRow>(
         `SELECT ${FNOME} AS fornecedor,
                 ${FKEY} AS chave,
@@ -136,6 +136,15 @@ export async function GET(req: NextRequest) {
          ORDER BY valor DESC NULLS LAST
          LIMIT $${rankParams.length + 1} OFFSET $${rankParams.length + 2}`,
         [...rankParams, limit, offset],
+      ),
+      // Total do RANKING — exatamente o mesmo WHERE da lista (rankWhereSql, ou seja,
+      // COM a busca por nome). É este número que a régua de páginas precisa: o
+      // n_fornecedores dos KPIs sai do escopo UF/ano/categoria e IGNORA a busca, então
+      // pesquisar "hospital" mostrava 1 linha e um paginador anunciando 40 mil
+      // empresas, com páginas 2..800 garantidamente vazias.
+      query<{ n: number }>(
+        `SELECT COUNT(DISTINCT ${FKEY})::int AS n FROM resultados r ${rankWhereSql}`,
+        rankParams,
       ),
       query<KpiRow>(
         `SELECT COALESCE(SUM(r.valor_total_homologado), 0)::float8 AS valor_total,
@@ -188,6 +197,8 @@ export async function GET(req: NextRequest) {
         convenios: kpi?.n_convenios ?? 0,
       },
       ranking,
+      /** Quantas empresas o ranking tem NESTE filtro (com busca) — régua de páginas. */
+      rankingTotal: rankTotalRows[0]?.n ?? 0,
       categorias: catCounts,
       ufsComDados: ufsComDados.map((u) => u.uf),
       detalhe,

@@ -20,6 +20,7 @@ function getPool(): Pool {
       connectionString,
       ssl: { rejectUnauthorized: false }, // Neon exige SSL
       max: 5,
+      connectionTimeoutMillis: 5000,
     })
   }
   return pool

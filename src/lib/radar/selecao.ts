@@ -8,6 +8,7 @@
 import { query, queryOne } from '@/lib/db'
 import { ABERTA } from '@/lib/licitacoes/universo'
 import { normalizeText } from '@/lib/text'
+import { needlesDoProduto } from '@/lib/portfolio-servidor'
 import { CONECTORES, licitacaoDoPortal } from '@/lib/radar/conectores'
 
 const CONECTOR_PADRAO = 'comprasgov'
@@ -55,14 +56,6 @@ export async function filtrosDoSetup(
     ufs: (perfil.ufs ?? []).map((u) => u.toUpperCase()),
     categorias: perfil.categorias ?? [],
   }
-}
-
-/** Frases-alvo (normalizadas) de um produto do portfólio. */
-function needlesDoProduto(p: ProdutoLike): string[] {
-  const fontes = [...(p.palavrasChave ?? []), p.nome ?? '', p.marca ?? '', p.modelo ?? '']
-  const out = new Set<string>()
-  for (const f of fontes) { const n = normalizeText(f); if (n.length >= 3) out.add(n) }
-  return [...out]
 }
 
 interface Candidato {

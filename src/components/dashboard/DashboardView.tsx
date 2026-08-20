@@ -38,6 +38,9 @@ import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 export interface OpportunitiesData {
   oportunidades: Oportunidade[]
   kpis: { total: number; quentes: number; valorTotal: number; scoreMedio: number }
+  // Totais REAIS do filtro (universo completo no banco), independentes do `limit`
+  // pedido — usados pelo KPICards em vez de somar só as oportunidades carregadas.
+  totais?: { total: number; valorTotal: number; abertas: number; estados: number; municipios: number; universo: number; comValor: number }
   serieMensal: { mes: string; count: number; valor: number }[]
   porCategoria: { categoria: string; count: number; valor: number }[]
   fonte?: string
@@ -123,7 +126,11 @@ export default function DashboardView() {
     let cancelado = false
     setOppLoading(true)
     setOppError(false)
-    const params = new URLSearchParams({ limit: '300', minScore: '0' })
+    // limit: buffer p/ o OpportunityList reordenar por portfólio/favorito (dados só
+    // no client) antes de cortar as 6 exibidas — não os 6 direto, senão a reordenação
+    // não teria de onde promover um lead. minScore=40 já filtra no servidor o mesmo
+    // corte que a lista aplicava localmente, então o payload já chega enxuto.
+    const params = new URLSearchParams({ limit: '50', minScore: '40' })
     if (ufsKey) params.set('ufs', ufsKey)
     if (tipoParam) params.set('tipo', tipoParam)
     fetch(`/api/opportunities?${params}`)

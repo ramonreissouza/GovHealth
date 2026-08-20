@@ -4,6 +4,18 @@
 
 import type { AlertaNotificacao } from '@/lib/alertas'
 
+/**
+ * O que o template REALMENTE usa de uma notificação. Existe para o caminho de
+ * entrada não confiável (/api/alertas/email recebe as notifs do client): ali as
+ * notificações são reconstruídas campo a campo depois da validação, e exigir uma
+ * `AlertaNotificacao` completa forçaria inventar id/alertaId/lida/criadoEm que o
+ * e-mail nem lê. Uma `AlertaNotificacao` continua servindo (é um supertipo), então
+ * o cron diário não muda.
+ */
+export type NotificacaoEmail =
+  Pick<AlertaNotificacao, 'titulo' | 'descricao' | 'urgencia' | 'alertaNome'>
+  & { link?: string; uf?: string }
+
 const URGENCIA_COLOR: Record<string, string> = {
   alta: '#f87171',
   media: '#f59e0b',
@@ -14,28 +26,39 @@ export function appBaseUrl(): string {
   return (process.env.NEXT_PUBLIC_APP_URL ?? 'https://gov-health.vercel.app').replace(/\/$/, '')
 }
 
+// Mesmo padrão de escape já usado em src/lib/documentos-alertas.ts — não há um
+// util de HTML compartilhado no projeto, então replica a mesma implementação.
+// Necessário porque titulo/descricao/uf/alertaNome/link entram no HTML do
+// e-mail (via /api/alertas/email, que aceita notifs do client) sem passar por
+// nenhum template engine que escape automaticamente.
+function esc(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))
+}
+
 // Monta uma linha do resumo. Se houver link, o título vira âncora para o lead.
-function linha(n: AlertaNotificacao, base: string): string {
+function linha(n: NotificacaoEmail, base: string): string {
   const cor = URGENCIA_COLOR[n.urgencia] ?? URGENCIA_COLOR.normal
-  const href = n.link ? (n.link.startsWith('http') ? n.link : `${base}${n.link}`) : null
+  // Só protocolo http(s) vira link de verdade — barra 'javascript:'/'data:' etc.
+  let href: string | null = null
+  if (n.link) href = n.link.startsWith('http') ? n.link : `${base}${n.link}`
   const titulo = href
-    ? `<a href="${href}" style="color:#00ff9d;text-decoration:none;">${n.titulo} →</a>`
-    : `<span style="color:#fff;">${n.titulo}</span>`
+    ? `<a href="${esc(href)}" style="color:#00ff9d;text-decoration:none;">${esc(n.titulo)} →</a>`
+    : `<span style="color:#fff;">${esc(n.titulo)}</span>`
   return `
     <tr>
       <td style="padding:10px 16px;border-bottom:1px solid #2a2a4a;">
         <div style="margin-bottom:4px;">
-          <span style="background:${cor}20;color:${cor};border:1px solid ${cor}40;font-size:10px;font-family:monospace;padding:2px 6px;border-radius:999px;text-transform:uppercase;">${n.urgencia}</span>
-          ${n.uf ? `<span style="font-size:10px;color:#888;font-family:monospace;margin-left:6px;">${n.uf}</span>` : ''}
-          <span style="font-size:10px;color:#666;font-family:monospace;margin-left:6px;">via ${n.alertaNome}</span>
+          <span style="background:${cor}20;color:${cor};border:1px solid ${cor}40;font-size:10px;font-family:monospace;padding:2px 6px;border-radius:999px;text-transform:uppercase;">${esc(n.urgencia)}</span>
+          ${n.uf ? `<span style="font-size:10px;color:#888;font-family:monospace;margin-left:6px;">${esc(n.uf)}</span>` : ''}
+          <span style="font-size:10px;color:#666;font-family:monospace;margin-left:6px;">via ${esc(n.alertaNome)}</span>
         </div>
         <div style="font-size:13px;font-weight:600;margin-bottom:4px;">${titulo}</div>
-        <div style="font-size:12px;color:#aaa;line-height:1.5;">${n.descricao}</div>
+        <div style="font-size:12px;color:#aaa;line-height:1.5;">${esc(n.descricao)}</div>
       </td>
     </tr>`
 }
 
-export function buildAlertaDigestHtml(notifs: AlertaNotificacao[], destinatario: string): string {
+export function buildAlertaDigestHtml(notifs: NotificacaoEmail[], destinatario: string): string {
   const base = appBaseUrl()
   const rows = notifs.slice(0, 30).map((n) => linha(n, base)).join('')
   return `<!DOCTYPE html>
@@ -55,7 +78,7 @@ export function buildAlertaDigestHtml(notifs: AlertaNotificacao[], destinatario:
       </td></tr>
       <tr><td><table width="100%" cellpadding="0" cellspacing="0">${rows}</table></td></tr>
       <tr><td style="padding:16px 24px;background:#131324;border-top:1px solid #2a2a4a;">
-        <div style="font-size:11px;color:#555;font-family:monospace;">Enviado para ${destinatario} · GovHealth AI</div>
+        <div style="font-size:11px;color:#555;font-family:monospace;">Enviado para ${esc(destinatario)} · GovHealth AI</div>
       </td></tr>
     </table>
   </td></tr></table>

@@ -1,12 +1,20 @@
 // src/app/api/opportunities/route.ts
 // Oportunidades de saúde para o dashboard.
 // Fonte PRIMÁRIA: banco (contratacoes coletadas pelo ETL) — resiliente e rápido.
-// Fallback: PNCP ao vivo, usado só quando o banco está indisponível/vazio
-// (ex.: DATABASE_URL ausente ou tabela ainda não populada). Assim o dashboard
-// não fica em branco quando o PNCP está fora do ar.
+// Fallback: PNCP ao vivo, usado só quando o banco está INDISPONÍVEL (DATABASE_URL
+// ausente, timeout de conexão) ou quando a base está VAZIA de verdade — instalação
+// nova, ETL nunca rodou. Assim o dashboard não fica em branco quando o banco cai.
+//
+// "Filtrei e não achei nada" NÃO é caso de fallback: o PNCP ao vivo não conhece os
+// filtros da tela (busca livre, proponente, portfólio, status, ordenação, página), e
+// responder com ele a uma busca sem correspondência mostra oportunidades alheias ao
+// filtro. Zero linha do banco é resposta válida — a lista vem vazia. Ver o bloco de
+// decisão no GET.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getToken } from 'next-auth/jwt'
 import { buscarComprasSaude, normalizarLicitacao } from '@/lib/pncp'
+import { needlesDoPortfolio } from '@/lib/portfolio-servidor'
 import { classificarTipo } from '@/lib/score-engine'
 import { query } from '@/lib/db'
 import { ABERTA, UNIVERSO } from '@/lib/licitacoes/universo'
@@ -14,6 +22,7 @@ import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 import { carregarIndiceCapag, type IndiceCapag } from '@/lib/capacidade-pagamento'
+import { normalizeText } from '@/lib/text'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
 export const runtime = 'nodejs'
@@ -145,6 +154,45 @@ interface ContratacaoRow {
 // cabeçalho de src/lib/licitacoes/universo.ts para o porquê e para os números.
 const abertoExpr = (ref: string) => ABERTA(ref)
 
+// Busca textual tolerante a acento SEM a extensão `unaccent` (não instalada) — mesmo
+// padrão de src/lib/radar/selecao.ts. `objeto_compra` tem índice trigram sobre ESTA
+// expressão exata (idx_contratacoes_objeto_trgm, scripts/migrate-trgm.mjs) — mudar o
+// mapa de acentos aqui exige recriar o índice lá.
+const SEM_ACENTO_DE = 'áàâãäéèêëíìîïóòôõöúùûüçñ'
+const SEM_ACENTO_PARA = 'aaaaaeeeeiiiiooooouuuucn'
+const semAcento = (expr: string) => `translate(lower(${expr}), '${SEM_ACENTO_DE}', '${SEM_ACENTO_PARA}')`
+
+// Score em SQL, espelhando montarOportunidade+aplicarCapacidade (route.ts) e a nota
+// CAPAG (src/lib/capacidade-pagamento.ts: SCORE_POR_NOTA, NEUTRO_SCORE=60,
+// resolvePublico — município, senão estado, senão neutro). Permite ORDER BY/WHERE
+// por score sobre o universo inteiro, não só a amostra carregada. ATENÇÃO: mudar a
+// fórmula do score em qualquer um dos dois lados (JS ou aqui) exige mudar o outro —
+// mesmo risco de deriva já aceito para a expressão de acento acima.
+const scoreExprSql = (ref: string) => `ROUND(
+  0.85 * (CASE WHEN ${abertoExpr(ref)} THEN 85 ELSE 70 END)
+  + 0.15 * COALESCE(
+      (SELECT CASE cap_m.nota WHEN 'A' THEN 100 WHEN 'B' THEN 70 WHEN 'C' THEN 40 WHEN 'D' THEN 10 END
+         FROM capag cap_m
+        WHERE cap_m.ente_tipo = 'municipio' AND cap_m.uf = ${ref}.uf
+          AND cap_m.municipio_key = UPPER(${semAcento(`${ref}.municipio`)})
+        LIMIT 1),
+      (SELECT CASE cap_e.nota WHEN 'A' THEN 100 WHEN 'B' THEN 70 WHEN 'C' THEN 40 WHEN 'D' THEN 10 END
+         FROM capag cap_e WHERE cap_e.ente_tipo = 'estado' AND cap_e.uf = ${ref}.uf LIMIT 1),
+      60
+    )
+)`
+
+// Tokeniza a busca livre como matchesTermo (src/lib/text.ts): por espaço, tolerante a
+// plural simples. Teto de 8 termos — corte defensivo contra input patológico.
+function termosBusca(q: string): string[] {
+  return normalizeText(q).split(/\s+/).filter(Boolean).slice(0, 8)
+}
+function variantesTermo(termo: string): string[] {
+  const vs = new Set([termo])
+  if (termo.endsWith('s') && termo.length > 1) vs.add(termo.slice(0, -1))
+  return [...vs].map((v) => `%${v}%`)
+}
+
 // Filtros SQL compartilhados por buscarDoBanco / totaisDoBanco (mesmo universo).
 interface FiltroBanco {
   uf?: string
@@ -154,6 +202,18 @@ interface FiltroBanco {
   status?: 'aberto' | 'encerrado' | 'todos'
   ano?: string
   categoria?: string
+  /** Busca livre (proponente/município/objeto/CNPJ/PNCP/itens) — cada termo AND. */
+  q?: string
+  /** Busca só pelo nome do proponente (razão social). */
+  proponente?: string
+  /** Busca pelo nº de controle PNCP / convênio. */
+  convenio?: string
+  /** Palavras-chave do portfólio ativo, resolvidas na CONTA (portfolio-servidor.ts). */
+  portfolioNeedles?: string[]
+  /** "Meu Portfólio" ligado mas sem nenhum produto ativo na conta. */
+  portfolioVazio?: boolean
+  /** Score mínimo (calculado em SQL — ver scoreExprSql). */
+  minScore?: number
 }
 function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {}): { whereSql: string; args: unknown[] } {
   // O universo é o MESMO do mapa, do dashboard, dos alertas e da landing.
@@ -170,6 +230,53 @@ function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {
   if (params.ano && /^\d{4}$/.test(params.ano)) { args.push(Number(params.ano)); where.push(`EXTRACT(YEAR FROM data_publicacao) = $${args.length}`) }
   if (params.status === 'aberto') where.push(abertoExpr('contratacoes'))
   else if (params.status === 'encerrado') where.push(`NOT ${abertoExpr('contratacoes')}`)
+  // Busca livre: cada termo precisa aparecer em ALGUM campo (objeto/proponente/
+  // município/CNPJ/PNCP/itens) — AND entre termos, OR entre campos. Mesmo
+  // tolerante-a-plural de matchesTermo (src/lib/text.ts).
+  if (params.q) {
+    for (const termo of termosBusca(params.q)) {
+      args.push(variantesTermo(termo))
+      const p = args.length
+      where.push(`(
+        ${semAcento('objeto_compra')} LIKE ANY($${p})
+        OR ${semAcento('razao_social_orgao')} LIKE ANY($${p})
+        OR ${semAcento('municipio')} LIKE ANY($${p})
+        OR cnpj_orgao ILIKE ANY($${p})
+        OR numero_controle_pncp ILIKE ANY($${p})
+        OR EXISTS (SELECT 1 FROM itens i WHERE i.numero_controle_pncp = contratacoes.numero_controle_pncp
+                   AND ${semAcento('i.descricao')} LIKE ANY($${p}))
+      )`)
+    }
+  }
+  if (params.proponente) {
+    args.push([`%${normalizeText(params.proponente)}%`])
+    where.push(`${semAcento('razao_social_orgao')} LIKE ANY($${args.length})`)
+  }
+  if (params.convenio) {
+    args.push(`%${params.convenio}%`)
+    where.push(`numero_controle_pncp ILIKE $${args.length}`)
+  }
+  // Portfólio: mesma lógica do texto livre (objeto OU itens), com as agulhas dos
+  // produtos ATIVOS da conta (resolvidas em src/lib/portfolio-servidor.ts).
+  //
+  // Sem nenhum produto ativo, o filtro fica IMPOSSÍVEL em vez de sumir: "só o que
+  // casa com meu portfólio" quando o portfólio está vazio é o conjunto vazio, não a
+  // base inteira. Se o filtro simplesmente não fosse aplicado, a tela mostraria
+  // licitação de qualquer coisa como se casasse com o catálogo do cliente.
+  if (params.portfolioVazio) where.push('FALSE')
+  else if (params.portfolioNeedles?.length) {
+    args.push(params.portfolioNeedles.slice(0, 100).map((n) => `%${n}%`))
+    const p = args.length
+    where.push(`(
+      ${semAcento('objeto_compra')} LIKE ANY($${p})
+      OR EXISTS (SELECT 1 FROM itens i WHERE i.numero_controle_pncp = contratacoes.numero_controle_pncp
+                 AND ${semAcento('i.descricao')} LIKE ANY($${p}))
+    )`)
+  }
+  if (params.minScore && params.minScore > 0) {
+    args.push(params.minScore)
+    where.push(`${scoreExprSql('contratacoes')} >= $${args.length}`)
+  }
   return { whereSql: where.join(' AND '), args }
 }
 
@@ -179,9 +286,12 @@ export interface TotaisBanco {
   total: number; valorTotal: number; abertas: number; estados: number; universo: number
   /** Quantas do filtro têm valor informado — denominador honesto do ticket médio. */
   comValor: number
+  /** Municípios distintos do filtro — universo real, não só os N carregados.
+   *  Conta o PAR (uf, município): "Bom Jesus" existe em 8 estados e são 8 cidades. */
+  municipios: number
 }
 async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
-  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
+  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}`
   const cached = getCached<TotaisBanco>(cacheKey)
   if (cached) return cached
   // O WHERE sai SEM o filtro de status; o status vira um FILTER. Assim `total` segue
@@ -199,18 +309,26 @@ async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
             COALESCE(sum(valor_total_estimado) FILTER (WHERE ${statusSql}), 0)::float8 AS "valorTotal",
             count(*) FILTER (WHERE ${abertoExpr('contratacoes')})::int AS abertas,
             count(DISTINCT uf) FILTER (WHERE ${statusSql})::int AS estados,
+            -- O PAR (uf, município), não o nome sozinho: há 8 "Bom Jesus", 5 "Bonito"
+            -- e 4 "Santa Maria" em UFs diferentes, e contar por nome funde as cidades
+            -- num município só. Mesma normalização do filtro por cidade
+            -- (UPPER(TRIM(...)) em construirWhere), para "São Paulo " e "SÃO PAULO"
+            -- não virarem duas. Linha sem uf/município não conta como cidade.
+            count(DISTINCT (uf, UPPER(TRIM(municipio)))) FILTER (
+              WHERE ${statusSql} AND uf IS NOT NULL AND municipio IS NOT NULL
+            )::int AS municipios,
             count(*)::int AS universo,
             count(*) FILTER (WHERE ${statusSql} AND valor_total_estimado IS NOT NULL)::int AS "comValor"
        FROM contratacoes WHERE ${whereSql}`,
     args,
   )
-  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0, universo: 0, comValor: 0 }, TTL.SHORT)
+  return setCached(cacheKey, row ?? { total: 0, valorTotal: 0, abertas: 0, estados: 0, municipios: 0, universo: 0, comValor: 0 }, TTL.SHORT)
 }
 
 // Contagem por tipo de fornecimento (para as abas), SEM o filtro de tipo — assim
 // todas as abas mostram seu total dentro do filtro de status/ano/categoria.
 async function porTipoDoBanco(params: FiltroBanco): Promise<Record<string, number>> {
-  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}`
+  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}`
   const cached = getCached<Record<string, number>>(cacheKey)
   if (cached) return cached
   const { whereSql, args } = construirWhere(params, { incluirTipo: false })
@@ -224,7 +342,88 @@ async function porTipoDoBanco(params: FiltroBanco): Promise<Record<string, numbe
   return setCached(cacheKey, map, TTL.SHORT)
 }
 
-// Fonte primária: banco. Retorna null quando indisponível/vazio (sinal p/ fallback PNCP).
+// Colunas ordenáveis por ThSort (src/components/ui/ThSort.tsx) — whitelist: nunca
+// interpolar o `sort` do usuário direto no SQL.
+const SORT_COLUMNS: Record<string, string> = {
+  valor: 'valor_total_estimado',
+  ano: 'data_publicacao',
+  proponente: 'razao_social_orgao',
+  item: 'objeto_compra',
+  status: abertoExpr('contratacoes'),
+  score: scoreExprSql('contratacoes'),
+}
+
+// Ordenação canônica da listagem — SEMPRE terminada por um desempate ÚNICO.
+//
+// POR QUE O DESEMPATE: com LIMIT/OFFSET, ordenar só pela coluna pedida não é
+// determinístico. status é booleano, score assume poucos valores discretos, ano e
+// valor repetem à vontade — dentro de um empate o Postgres pode devolver as linhas
+// em ordem diferente entre dois requests (plano paralelo, ordem física, cache), e aí
+// a mesma licitação aparece na página 2 e na 3 enquanto outra não aparece em nenhuma.
+// `numero_controle_pncp` é a PK: acrescentado no fim, toda ordenação passa a ser
+// total, e a paginação para de embaralhar.
+//
+// Uma função só (em vez de montar o ORDER BY em cada lugar) porque o localizarId
+// (deep-link ?opp=) precisa da MESMA ordem da listagem: se as duas divergirem, o
+// link leva o usuário para a página errada — o item não está onde ele foi mandado.
+function ordemSql(sort: string | undefined, dir: 'asc' | 'desc'): string {
+  const col = sort ? SORT_COLUMNS[sort] : undefined
+  const d = dir === 'asc' ? 'ASC' : 'DESC'
+  return col
+    ? `${col} ${d} NULLS LAST, numero_controle_pncp ASC`
+    : `${scoreExprSql('contratacoes')} DESC, data_publicacao DESC NULLS LAST, numero_controle_pncp ASC`
+}
+
+// Ordenação em memória — só para o fallback do PNCP, que não tem SQL para ordenar.
+//
+// POR QUE ISTO EXISTE: o fallback CORTA em `limit` depois de ordenar. Ordenar por
+// score e cortar não devolve "as mesmas linhas em outra ordem": com
+// sort=valor&dir=asc&limit=50 o usuário pede as 50 mais baratas e recebe as 50 de
+// maior score. O corte transforma ordem em CONTEÚDO — é resposta errada, não
+// apresentação errada.
+//
+// As chaves são as mesmas de SORT_COLUMNS, lidas dos campos que montarOportunidade
+// produz. `status` sai de situacaoCompraId===1 porque é disso que a coluna Status da
+// tela é desenhada (page.tsx: `situacaoId = lic?.situacaoCompraId ?? 4`): ordenar a
+// coluna por um critério diferente do que ela mostra seria outra mentira pequena.
+const CHAVES_ORDEM: Record<string, (o: Oportunidade) => number | string | boolean | null | undefined> = {
+  valor: (o) => o.valorEstimado,
+  ano: (o) => o.licitacaoRelacionada?.dataPublicacaoPncp,
+  proponente: (o) => o.hospital,
+  item: (o) => o.descricao,
+  status: (o) => o.licitacaoRelacionada?.situacaoCompraId === 1,
+  score: (o) => o.score,
+}
+
+function ordenarEmMemoria(ops: Oportunidade[], sort: string | undefined, dir: 'asc' | 'desc'): Oportunidade[] {
+  const chave = sort ? CHAVES_ORDEM[sort] : undefined
+  // Sem ordenação pedida (ou chave desconhecida): comportamento de sempre.
+  if (!chave) {
+    return [...ops].sort((a, b) => b.score - a.score
+      || (b.licitacaoRelacionada?.dataPublicacaoPncp ?? '').localeCompare(a.licitacaoRelacionada?.dataPublicacaoPncp ?? '')
+      || a.id.localeCompare(b.id))
+  }
+  const sinal = dir === 'asc' ? 1 : -1
+  return [...ops].sort((a, b) => {
+    const va = chave(a)
+    const vb = chave(b)
+    // Ausente vai para o fim nas DUAS direções, igual ao `NULLS LAST` do ordemSql.
+    const na = va === undefined || va === null
+    const nb = vb === undefined || vb === null
+    if (na || nb) return na && nb ? a.id.localeCompare(b.id) : na ? 1 : -1
+    let cmp: number
+    if (typeof va === 'string' && typeof vb === 'string') cmp = va.localeCompare(vb, 'pt-BR')
+    else if (typeof va === 'boolean' && typeof vb === 'boolean') cmp = (va ? 1 : 0) - (vb ? 1 : 0)
+    else cmp = Number(va) - Number(vb)
+    // Desempate ÚNICO pelo id, mesma razão do numero_controle_pncp no SQL: sem ele,
+    // score (2 valores no fallback) e status (booleano) deixam o corte instável.
+    return cmp !== 0 ? cmp * sinal : a.id.localeCompare(b.id)
+  })
+}
+
+// Fonte primária: banco. Uma consulta que não casou nada devolve [] — resposta
+// VÁLIDA, não sinal de fallback. Banco indisponível LANÇA (quem chama trata), e é
+// só isso que autoriza cair para o PNCP ao vivo: ver o bloco de decisão no GET.
 async function buscarDoBanco(params: {
   uf?: string
   ufs?: string[]
@@ -234,10 +433,19 @@ async function buscarDoBanco(params: {
   status?: 'aberto' | 'encerrado' | 'todos'
   ano?: string
   categoria?: string
+  q?: string
+  proponente?: string
+  convenio?: string
+  portfolioNeedles?: string[]
+  portfolioVazio?: boolean
+  minScore?: number
   limit?: number
+  offset?: number
+  sort?: string
+  dir?: 'asc' | 'desc'
   agora: string
-}): Promise<Oportunidade[] | null> {
-  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.limit ?? ''}`
+}): Promise<Oportunidade[]> {
+  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}:${params.limit ?? ''}:${params.offset ?? ''}:${params.sort ?? ''}:${params.dir ?? ''}`
   const cached = getCached<Oportunidade[]>(cacheKey)
   if (cached) return cached
 
@@ -250,20 +458,21 @@ async function buscarDoBanco(params: {
             situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo,
             usuario_nome`
   const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
+  const off = Math.max(0, Math.floor(params.offset ?? 0))
+  // Sem coluna válida: mesmo default de sempre (score desc, data, e a PK no fim).
+  const orderBySql = `ORDER BY ${ordemSql(params.sort, params.dir ?? 'desc')}`
 
   // Modo mapa: top-N por UF (janela) → toda UF com dado aparece, sem viés de recência.
-  // Caso contrário: os N mais recentes (o dashboard/lista querem prioridade temporal).
+  // Caso contrário: paginado, ordenado pela coluna pedida (ou o default de relevância).
   const sql = params.porUf
     ? `SELECT ${cols}, aberto FROM (
          SELECT *, ${abertoExpr('contratacoes')} AS aberto,
-                ROW_NUMBER() OVER (PARTITION BY uf ORDER BY valor_total_estimado DESC NULLS LAST) AS rn
+                ROW_NUMBER() OVER (PARTITION BY uf ORDER BY valor_total_estimado DESC NULLS LAST, numero_controle_pncp ASC) AS rn
          FROM contratacoes WHERE ${whereSql}
        ) c WHERE rn <= ${Math.min(Math.max(Math.floor(params.porUf), 1), 100)}`
-    : `SELECT ${cols}, ${abertoExpr('contratacoes')} AS aberto FROM contratacoes WHERE ${whereSql} ORDER BY data_publicacao DESC NULLS LAST LIMIT ${lim}`
+    : `SELECT ${cols}, ${abertoExpr('contratacoes')} AS aberto FROM contratacoes WHERE ${whereSql} ${orderBySql} LIMIT ${lim} OFFSET ${off}`
 
   const rows = await query<ContratacaoRow>(sql, args)
-
-  if (!rows.length) return null
 
   const ops = rows.map((r) => {
     const uf = r.uf ?? 'N/D'
@@ -402,7 +611,68 @@ export async function GET(req: NextRequest) {
     const anoParam = searchParams.get('ano') ?? undefined
     const ano = anoParam && /^\d{4}$/.test(anoParam) ? anoParam : undefined
     const limit = Number(searchParams.get('limit') ?? 100)
+    const offset = Math.max(0, Number(searchParams.get('offset') ?? 0) || 0)
+    const q = searchParams.get('q')?.trim() || undefined
+    const proponente = searchParams.get('proponente')?.trim() || undefined
+    const convenio = searchParams.get('convenio')?.trim() || undefined
+    // Filtro "Meu Portfólio": INTERRUPTOR, não conteúdo. As palavras-chave (nomes,
+    // marcas e modelos do que o cliente vende) são resolvidas no servidor a partir
+    // da conta — ver src/lib/portfolio-servidor.ts para o porquê de não virem na URL.
+    // Ligado sem portfólio na conta = filtro que não casa nada (NÃO "sem filtro"):
+    // devolver a base inteira aqui mostraria justamente o ruído que o filtro existe
+    // para eliminar. O aviso diz ao usuário o que aconteceu.
+    const portfolioLigado = !!(searchParams.get('portfolio')?.trim())
+    let portfolioNeedles: string[] | undefined
+    const avisosPortfolio: string[] = []
+    if (portfolioLigado) {
+      const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+      const uid = ((token?.id as string | undefined) ?? token?.sub)?.toLowerCase()
+      try {
+        portfolioNeedles = uid ? await needlesDoPortfolio(uid) : []
+      } catch (err) {
+        // Banco fora: sem ele não há como saber o que o cliente vende. O fallback
+        // do PNCP ao vivo NÃO serve aqui — ele não sabe filtrar por portfólio, e
+        // devolver a base inteira num filtro de portfólio é justamente o que não
+        // se pode fazer. Melhor dizer que o filtro está indisponível.
+        console.warn('[opportunities] portfólio indisponível (banco):', String(err))
+        return NextResponse.json(
+          { error: 'Filtro "Meu Portfólio" indisponível agora (banco de dados fora do ar). Desligue o filtro para ver as licitações.' },
+          { status: 503 },
+        )
+      }
+      if (!portfolioNeedles.length) {
+        avisosPortfolio.push('Meu Portfólio: nenhum produto ativo encontrado na sua conta — cadastre produtos no Setup da Empresa (/perfil).')
+      }
+    }
+    // Filtro pedido e nenhuma agulha: o WHERE tem que ficar IMPOSSÍVEL, não
+    // desaparecer (ver construirWhere) — senão o filtro vira "sem filtro".
+    const portfolioVazio = portfolioLigado && !portfolioNeedles?.length
+    const sortParam = searchParams.get('sort')?.trim() || undefined
+    const dirParam: 'asc' | 'desc' = searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
     const agora = new Date().toISOString()
+
+    // Deep-link (?opp=): localiza em qual página (do filtro/ordenação atuais) o item
+    // cai, sem carregar o universo inteiro no client para procurar o índice.
+    const localizarId = searchParams.get('localizarId')?.trim() || undefined
+    if (localizarId) {
+      const idAlvo = localizarId.startsWith('pncp-') ? localizarId.slice(5) : localizarId
+      const { whereSql, args } = construirWhere({ uf, ufs, municipio, tipo, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore })
+      args.push(idAlvo)
+      try {
+        const [row] = await query<{ posicao: number }>(
+          `SELECT posicao FROM (
+             SELECT numero_controle_pncp, ROW_NUMBER() OVER (ORDER BY ${ordemSql(sortParam, dirParam)}) - 1 AS posicao
+             FROM contratacoes WHERE ${whereSql}
+           ) t WHERE numero_controle_pncp = $${args.length}`,
+          args,
+        )
+        const paginaAlvo = row ? Math.floor(row.posicao / Math.max(1, limit)) + 1 : null
+        return NextResponse.json({ pagina: paginaAlvo })
+      } catch (error) {
+        console.error('[opportunities:localizar]', error)
+        return NextResponse.json({ pagina: null })
+      }
+    }
 
     // 1) Banco (primário). 2) PNCP ao vivo (fallback) se o banco vier vazio/indisponível.
     let oportunidades: Oportunidade[] = []
@@ -413,29 +683,99 @@ export async function GET(req: NextRequest) {
     // Totais REAIS do filtro (todo o universo, não só as N linhas carregadas).
     let totais: TotaisBanco | null = null
     let porTipo: Record<string, number> | null = null
+    // true quando a listagem veio do banco (já ordenada/paginada em SQL) — o re-sort
+    // em JS mais abaixo só deve rodar no fallback PNCP (que não ordena/pagina em SQL).
+    let viaBanco = false
+    // true quando a conexão com o banco falhou (não só "sem linhas") — usado pra NÃO
+    // tentar de novo mais abaixo (CAPAG). Sem isto, uma queda de conexão pagava o
+    // timeout (connectionTimeoutMillis) duas vezes na mesma requisição: uma aqui,
+    // outra no enriquecimento de CAPAG — dobrando a espera à toa por algo que já
+    // sabíamos que ia falhar de novo.
+    let bancoIndisponivel = false
+
+    // Um filtro está ATIVO? Decide o que fazer com "zero linhas" logo abaixo.
+    const comFiltro = !!(uf || ufs?.length || municipio || tipo || status || ano || categoria
+      || q || proponente || convenio || portfolioLigado || minScore > 0 || offset > 0)
+
+    // FILTROS QUE O FALLBACK NÃO SABE REPRODUZIR — predicado diferente do de cima, e
+    // são dois de propósito: `comFiltro` responde "o usuário pediu recorte?", este
+    // responde "o PNCP ao vivo consegue entregar ESTE recorte?".
+    //
+    // O que ele entrega: `uf` (vai na consulta) e `tipo`/`categoria`/`regiao`/
+    // `minScore`, que são reaplicados em JS sobre o que voltou. O resto não existe no
+    // caminho do PNCP, e responder com ele é mostrar licitação que ninguém pediu —
+    // inclusive rotulada como "casa com o meu portfólio".
+    //
+    // `ufs` (território multi-UF) está na lista porque só `uf` é repassado a
+    // buscarDoPNCP: um pedido de três estados voltaria nacional. `offset` está porque
+    // devolver a página 1 rotulada de página 5 é mentira sobre a posição.
+    //
+    // `sortParam` também está, e eu o tinha deixado de fora com o argumento errado de
+    // que "lista fora de ordem não é falsa sobre o conteúdo". É falsa: o fallback
+    // ordena e depois CORTA em `limit`, então sort=valor&dir=asc&limit=50 devolve as
+    // 50 de maior score no lugar das 50 mais baratas — outro conjunto, não a mesma
+    // página noutra ordem. Aqui o banco EXISTE (só está inalcançável), então a
+    // resposta honesta é 503; no caminho de base vazia, onde não há universo nenhum
+    // para comparar, ordenamos a janela do PNCP pelo que foi pedido (ordenarEmMemoria).
+    const semEquivalenteNoPncp = !!(
+      ufs?.length || municipio || status || ano || q || proponente || convenio
+      || portfolioLigado || offset > 0 || sortParam
+    )
+    const erro503Banco = () => NextResponse.json({
+      error: 'Banco de dados indisponível neste momento. Os filtros ativos (busca, portfólio, '
+        + 'status, ano, cidade, território, ordenação ou página) não podem ser reproduzidos pela '
+        + 'consulta ao vivo do PNCP — tente de novo em instantes, ou tire os filtros para ver o '
+        + 'que está aberto agora.',
+    }, { status: 503 })
 
     try {
       const [doBanco, tot, pt] = await Promise.all([
-        buscarDoBanco({ uf, ufs, municipio, tipo, porUf, status, ano, categoria, limit, agora }),
-        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, municipio, tipo, status, ano, categoria }),
-        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, municipio, status, ano, categoria }),
+        buscarDoBanco({ uf, ufs, municipio, tipo, porUf, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, limit, offset, sort: sortParam, dir: dirParam, agora }),
+        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, municipio, tipo, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore }),
+        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, municipio, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore }),
       ])
       totais = tot
       porTipo = pt
-      if (doBanco && doBanco.length) {
-        oportunidades = doBanco
-        const agg = await agregadosDoBanco({ uf, ufs, tipo }) // gráficos sobre o dataset completo
-        serieMensal = agg.serieMensal
-        porCategoria = agg.porCategoria
-      } else {
+
+      // ZERO LINHAS NÃO É FALHA DO BANCO. Busca sem correspondência, página além do
+      // fim, portfólio que não casa nada — todos são respostas VÁLIDAS e a resposta
+      // certa é a lista vazia. Antes qualquer um deles caía no PNCP ao vivo, que não
+      // conhece q/proponente/convênio/portfólio/status/offset/ordenação: a tela
+      // mostrava oportunidades ALHEIAS ao filtro enquanto os totais diziam zero.
+      //
+      // O fallback continua existindo para o que ele foi feito: banco sem NADA (ex.:
+      // instalação nova, ETL ainda não rodou). Isso é reconhecível — nenhum filtro
+      // ativo E o universo do recorte é zero — e não se confunde com "filtrei e não
+      // achei". Banco fora do ar cai no catch, abaixo.
+      const baseVazia = !comFiltro && (tot ? tot.universo === 0 : doBanco.length === 0)
+      if (baseVazia) {
         const pncp = await buscarDoPNCP({ uf, agora })
         oportunidades = tipo ? pncp.ops.filter((o) => o.tipoFornecimento === tipo) : pncp.ops
         fonte = 'PNCP (tempo real)'
         avisos = pncp.erros
+      } else {
+        oportunidades = doBanco
+        viaBanco = true
+        // Gráfico é acessório: se o agregado falhar, a LISTAGEM já está boa na mão e
+        // jogá-la fora para servir o PNCP seria trocar dado certo por dado errado por
+        // causa de um painel. Série vazia cai no cálculo em memória mais abaixo.
+        try {
+          const agg = await agregadosDoBanco({ uf, ufs, tipo })
+          serieMensal = agg.serieMensal
+          porCategoria = agg.porCategoria
+        } catch (aggErr) {
+          console.warn('[opportunities] agregados indisponíveis:', String(aggErr))
+        }
       }
     } catch (dbErr) {
-      // Banco indisponível (ex.: DATABASE_URL ausente) → cai para o PNCP ao vivo.
-      console.warn('[opportunities] banco indisponível, usando PNCP ao vivo:', String(dbErr))
+      // Banco indisponível (ex.: DATABASE_URL ausente, timeout de conexão) → cai
+      // para o PNCP ao vivo. MAS só quando o PNCP consegue responder o que foi
+      // pedido: com filtro que ele não reproduz, a resposta honesta é 503 — servir
+      // uma lista que ignora a busca/portfólio/status é pior que não servir nada,
+      // porque a tela não tem como saber que aquilo não é o recorte pedido.
+      console.warn('[opportunities] banco indisponível:', String(dbErr))
+      if (semEquivalenteNoPncp) return erro503Banco()
+      bancoIndisponivel = true
       const pncp = await buscarDoPNCP({ uf, agora })
       oportunidades = tipo ? pncp.ops.filter((o) => o.tipoFornecimento === tipo) : pncp.ops
       fonte = 'PNCP (tempo real)'
@@ -460,13 +800,17 @@ export async function GET(req: NextRequest) {
     }
 
     // Capacidade de pagamento (CAPAG): enriquece o score de cada lead com a saúde
-    // fiscal do órgão pagador. Índice carregado em lote (cacheado) para as UFs presentes.
-    try {
-      const ufsPresentes = [...new Set(oportunidades.map((o) => o.uf).filter((u) => u && u !== 'N/D'))]
-      const capagIdx = await carregarIndiceCapag(ufsPresentes.length ? ufsPresentes : undefined)
-      oportunidades = oportunidades.map((o) => aplicarCapacidade(o, capagIdx))
-    } catch (capErr) {
-      console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
+    // fiscal do órgão pagador. Índice carregado em lote (cacheado) para as UFs
+    // presentes. Pulado quando o banco já falhou acima — tentar de novo aqui só
+    // pagaria o mesmo timeout de conexão uma segunda vez, sem chance de dar certo.
+    if (!bancoIndisponivel) {
+      try {
+        const ufsPresentes = [...new Set(oportunidades.map((o) => o.uf).filter((u) => u && u !== 'N/D'))]
+        const capagIdx = await carregarIndiceCapag(ufsPresentes.length ? ufsPresentes : undefined)
+        oportunidades = oportunidades.map((o) => aplicarCapacidade(o, capagIdx))
+      } catch (capErr) {
+        console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
+      }
     }
 
     // Dedup pelo ID REAL da licitação (nº de controle PNCP). Antes deduplicava por
@@ -485,9 +829,13 @@ export async function GET(req: NextRequest) {
     if (categoria) resultado = resultado.filter((o) => o.categoria === categoria)
     if (regiao) resultado = resultado.filter((o) => o.regiao === regiao)
 
-    resultado = resultado
-      .sort((a, b) => b.score - a.score || (b.licitacaoRelacionada?.dataPublicacaoPncp ?? '').localeCompare(a.licitacaoRelacionada?.dataPublicacaoPncp ?? ''))
-      .slice(0, limit)
+    // Via banco: já veio ordenado/paginado em SQL (inclusive por sort=/dir= do
+    // usuário) — reordenar aqui por score jogaria fora a ordenação pedida. Via PNCP
+    // (fallback, sem SQL): ordena pelo que foi pedido ANTES de cortar em `limit`,
+    // senão o corte devolve outro conjunto de linhas — ver ordenarEmMemoria.
+    resultado = viaBanco
+      ? resultado.slice(0, limit)
+      : ordenarEmMemoria(resultado, sortParam, dirParam).slice(0, limit)
 
     // Totais do filtro: preferir o agregado do banco (universo completo). Sem ele
     // (PNCP/porUf), cai para os totais do conjunto carregado.
@@ -496,6 +844,9 @@ export async function GET(req: NextRequest) {
       valorTotal: resultado.reduce((s, o) => s + o.valorEstimado, 0),
       abertas: resultado.filter((o) => o.licitacaoRelacionada?.situacaoCompraId === 1).length,
       estados: new Set(resultado.map((o) => o.uf)).size,
+      // Par UF+município, igual ao count(DISTINCT (uf, municipio)) do SQL — pelo nome
+      // sozinho, os 8 "Bom Jesus" do país contavam como uma cidade só.
+      municipios: new Set(resultado.map((o) => `${o.uf}|${o.municipio}`)).size,
       universo: resultado.length,
       comValor: resultado.filter((o) => o.valorEstimado > 0).length,
     }
@@ -515,7 +866,7 @@ export async function GET(req: NextRequest) {
       serieMensal,
       porCategoria,
       fonte,
-      avisos,
+      avisos: [...avisosPortfolio, ...avisos],
       // Selo de proveniência: quando vem do banco, usa a data REAL da última coleta
       // do ETL (não a hora do request) — corrige o "atualizado agora" genérico.
       atualizadoEm: fonte.startsWith('Banco') ? ((await ultimaColetaResultados()) ?? agora) : agora,
