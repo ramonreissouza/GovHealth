@@ -581,7 +581,19 @@ export async function GET(req: NextRequest) {
     if (portfolioLigado) {
       const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
       const uid = ((token?.id as string | undefined) ?? token?.sub)?.toLowerCase()
-      portfolioNeedles = uid ? await needlesDoPortfolio(uid) : []
+      try {
+        portfolioNeedles = uid ? await needlesDoPortfolio(uid) : []
+      } catch (err) {
+        // Banco fora: sem ele não há como saber o que o cliente vende. O fallback
+        // do PNCP ao vivo NÃO serve aqui — ele não sabe filtrar por portfólio, e
+        // devolver a base inteira num filtro de portfólio é justamente o que não
+        // se pode fazer. Melhor dizer que o filtro está indisponível.
+        console.warn('[opportunities] portfólio indisponível (banco):', String(err))
+        return NextResponse.json(
+          { error: 'Filtro "Meu Portfólio" indisponível agora (banco de dados fora do ar). Desligue o filtro para ver as licitações.' },
+          { status: 503 },
+        )
+      }
       if (!portfolioNeedles.length) {
         avisosPortfolio.push('Meu Portfólio: nenhum produto ativo encontrado na sua conta — cadastre produtos no Setup da Empresa (/perfil).')
       }
