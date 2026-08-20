@@ -34,6 +34,11 @@ export interface PNCPSearchParams {
   tamanhoPagina?: number
   maxPaginasPorModalidade?: number
   budgetMs?: number // teto de tempo de parede da coleta (best-effort); usado pelo cron
+  // Pula o Data Cache do Next. As telas QUEREM o cache de 15min (menos latência e menos
+  // carga no PNCP); o cron diário não: ele existe para ver o que acabou de ser publicado,
+  // e uma resposta guardada de 15 minutos atrás não serve para isso. Em produção esse
+  // cache também mete a infraestrutura da Vercel no meio da chamada ao PNCP.
+  semCache?: boolean
 }
 
 /**
@@ -45,7 +50,8 @@ async function buscarPagina(
   dataFinal: string,
   pagina: number,
   tamanhoPagina: number,
-  uf?: string
+  uf?: string,
+  semCache = false,
 ): Promise<PNCPContratacoesResponse> {
   const sp = new URLSearchParams({
     dataInicial,
@@ -59,7 +65,7 @@ async function buscarPagina(
 
   const res = await fetch(`${PNCP_BASE}/contratacoes/publicacao?${sp}`, {
     headers: buildHeaders(),
-    next: { revalidate: 900 },
+    ...(semCache ? { cache: 'no-store' as const } : { next: { revalidate: 900 } }),
     signal: AbortSignal.timeout(15_000), // PNCP às vezes pendura; evita travar a função
   })
   if (!res.ok) throw new Error(`PNCP ${res.status} mod ${modalidade} p${pagina}`)
@@ -94,7 +100,8 @@ export async function buscarComprasSaude(params: PNCPSearchParams = {}) {
       for (let pagina = 1; pagina <= maxPaginas; pagina++) {
         if (Date.now() - inicioMs > budgetMs) break
         try {
-          const resp = await buscarPagina(mod, dataInicial, dataFinal, pagina, tamanhoPagina, params.uf)
+          const resp = await buscarPagina(mod, dataInicial, dataFinal, pagina, tamanhoPagina, params.uf,
+            params.semCache)
           const dados = resp.data ?? []
           todas.push(...dados.filter((c) => isSaudeRelated(c.objetoCompra ?? '')))
           if (dados.length < tamanhoPagina || pagina >= (resp.totalPaginas ?? 1)) break
@@ -136,7 +143,7 @@ export function isSaudeRelated(texto: string): boolean {
 // somam ~80s — mais do que o teto da função. Passado o prazo, desiste em vez de insistir.
 async function fetchPncpJson(
   url: string,
-  { timeoutMs = 25_000, maxRetry = 2, deadline = Number.POSITIVE_INFINITY } = {},
+  { timeoutMs = 25_000, maxRetry = 2, deadline = Number.POSITIVE_INFINITY, semCache = false } = {},
 ): Promise<PNCPContratacoesResponse | null> {
   const rota = url.split('?')[0].replace(PNCP_BASE, '')
   let ultimo = 'sem tentativa (prazo esgotado antes de começar)'
@@ -145,7 +152,7 @@ async function fetchPncpJson(
     try {
       const res = await fetch(url, {
         headers: buildHeaders(),
-        next: { revalidate: 900 },
+        ...(semCache ? { cache: 'no-store' as const } : { next: { revalidate: 900 } }),
         signal: AbortSignal.timeout(timeoutMs),
       })
       if (res.ok) return res.json()
@@ -198,6 +205,7 @@ export async function buscarLicitacoesAbertas(params: PNCPSearchParams = {}): Pr
         if (params.uf) sp.set('uf', params.uf)
         const resp = await fetchPncpJson(`${PNCP_BASE}/contratacoes/proposta?${sp}`, {
           deadline: inicio + budgetMs,
+          semCache: params.semCache,
         })
         if (!resp) break // falha persistente nesta página → encerra só esta modalidade
         const dados = resp.data ?? []

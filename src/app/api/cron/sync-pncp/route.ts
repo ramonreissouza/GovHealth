@@ -52,17 +52,30 @@ export async function GET(req: NextRequest) {
       return toPncpDate(dt)
     })
 
-    // 1) ABERTAS (prioridade) + 2) publicações recentes — todas em paralelo, cada uma
-    // com orçamento de tempo próprio. Os orçamentos são apertados de propósito: como
-    // rodam em paralelo, o tempo de parede é o do MAIOR (25s) mais, no pior caso, uma
-    // requisição já em voo (25s) — ~50s, folgado para qualquer teto de função. O que não
-    // couber hoje entra amanhã ou no refresh periódico; ser morto no meio, não.
-    const [abertas, ...recentesPorDia] = await Promise.all([
-      buscarLicitacoesAbertas({ maxPaginasPorModalidade: 10, budgetMs: 25_000 }),
-      ...dias.map((dia) =>
-        buscarComprasSaude({ dataInicial: dia, dataFinal: dia, maxPaginasPorModalidade: 5, budgetMs: 12_000 }),
-      ),
-    ])
+    // CONCORRÊNCIA BAIXA, de propósito. Medido em 20/08: o PNCP responde uma página de
+    // /publicacao em ~6s e uma de /proposta em ~17s, e limita por cliente — com as quatro
+    // janelas disparadas de uma vez (8 requisições simultâneas) TODAS estouram o timeout
+    // e a rodada volta vazia, que foi o que aconteceu nas duas primeiras execuções em
+    // produção. Aqui ficam só DUAS correntes: as abertas em voo e os dias em série, do
+    // mais novo para o mais velho.
+    const abertasEmVoo = buscarLicitacoesAbertas({
+      maxPaginasPorModalidade: 6, budgetMs: 25_000, semCache: true,
+    })
+
+    const prazoRecentes = Date.now() + 40_000
+    const recentesPorDia: Awaited<ReturnType<typeof buscarComprasSaude>>[] = []
+    for (const dia of dias) {
+      const resta = prazoRecentes - Date.now()
+      if (resta < 6_000) {
+        // Sem tempo para uma página inteira: registra e sai. O dia mais novo já foi.
+        recentesPorDia.push({ data: [], totalRegistros: 0, erros: ['pulado: sem tempo na janela'] })
+        continue
+      }
+      recentesPorDia.push(await buscarComprasSaude({
+        dataInicial: dia, dataFinal: dia, maxPaginasPorModalidade: 5, budgetMs: resta, semCache: true,
+      }))
+    }
+    const abertas = await abertasEmVoo
 
     const recentes = recentesPorDia.flatMap((r) => r.data)
     const candidatas = [...abertas, ...recentes]
