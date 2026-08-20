@@ -651,6 +651,29 @@ export async function GET(req: NextRequest) {
     const comFiltro = !!(uf || ufs?.length || municipio || tipo || status || ano || categoria
       || q || proponente || convenio || portfolioLigado || minScore > 0 || offset > 0)
 
+    // FILTROS QUE O FALLBACK NÃO SABE REPRODUZIR — predicado diferente do de cima, e
+    // são dois de propósito: `comFiltro` responde "o usuário pediu recorte?", este
+    // responde "o PNCP ao vivo consegue entregar ESTE recorte?".
+    //
+    // O que ele entrega: `uf` (vai na consulta) e `tipo`/`categoria`/`regiao`/
+    // `minScore`, que são reaplicados em JS sobre o que voltou. O resto não existe no
+    // caminho do PNCP, e responder com ele é mostrar licitação que ninguém pediu —
+    // inclusive rotulada como "casa com o meu portfólio".
+    //
+    // `ufs` (território multi-UF) está na lista porque só `uf` é repassado a
+    // buscarDoPNCP: um pedido de três estados voltaria nacional. `offset` está porque
+    // devolver a página 1 rotulada de página 5 é mentira sobre a posição. Ordenação
+    // ficou FORA: lista fora de ordem é ruim, não é falsa sobre o conteúdo.
+    const semEquivalenteNoPncp = !!(
+      ufs?.length || municipio || status || ano || q || proponente || convenio
+      || portfolioLigado || offset > 0
+    )
+    const erro503Banco = () => NextResponse.json({
+      error: 'Banco de dados indisponível neste momento. Os filtros ativos (busca, portfólio, '
+        + 'status, ano, cidade, território ou página) não podem ser reproduzidos pela consulta ao '
+        + 'vivo do PNCP — tente de novo em instantes, ou tire os filtros para ver o que está aberto agora.',
+    }, { status: 503 })
+
     try {
       const [doBanco, tot, pt] = await Promise.all([
         buscarDoBanco({ uf, ufs, municipio, tipo, porUf, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, limit, offset, sort: sortParam, dir: dirParam, agora }),
@@ -679,14 +702,25 @@ export async function GET(req: NextRequest) {
       } else {
         oportunidades = doBanco
         viaBanco = true
-        const agg = await agregadosDoBanco({ uf, ufs, tipo }) // gráficos sobre o dataset completo
-        serieMensal = agg.serieMensal
-        porCategoria = agg.porCategoria
+        // Gráfico é acessório: se o agregado falhar, a LISTAGEM já está boa na mão e
+        // jogá-la fora para servir o PNCP seria trocar dado certo por dado errado por
+        // causa de um painel. Série vazia cai no cálculo em memória mais abaixo.
+        try {
+          const agg = await agregadosDoBanco({ uf, ufs, tipo })
+          serieMensal = agg.serieMensal
+          porCategoria = agg.porCategoria
+        } catch (aggErr) {
+          console.warn('[opportunities] agregados indisponíveis:', String(aggErr))
+        }
       }
     } catch (dbErr) {
       // Banco indisponível (ex.: DATABASE_URL ausente, timeout de conexão) → cai
-      // para o PNCP ao vivo.
-      console.warn('[opportunities] banco indisponível, usando PNCP ao vivo:', String(dbErr))
+      // para o PNCP ao vivo. MAS só quando o PNCP consegue responder o que foi
+      // pedido: com filtro que ele não reproduz, a resposta honesta é 503 — servir
+      // uma lista que ignora a busca/portfólio/status é pior que não servir nada,
+      // porque a tela não tem como saber que aquilo não é o recorte pedido.
+      console.warn('[opportunities] banco indisponível:', String(dbErr))
+      if (semEquivalenteNoPncp) return erro503Banco()
       bancoIndisponivel = true
       const pncp = await buscarDoPNCP({ uf, agora })
       oportunidades = tipo ? pncp.ops.filter((o) => o.tipoFornecimento === tipo) : pncp.ops
