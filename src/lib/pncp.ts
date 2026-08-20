@@ -138,8 +138,10 @@ async function fetchPncpJson(
   url: string,
   { timeoutMs = 25_000, maxRetry = 2, deadline = Number.POSITIVE_INFINITY } = {},
 ): Promise<PNCPContratacoesResponse | null> {
+  const rota = url.split('?')[0].replace(PNCP_BASE, '')
+  let ultimo = 'sem tentativa (prazo esgotado antes de começar)'
   for (let tentativa = 0; tentativa <= maxRetry; tentativa++) {
-    if (Date.now() > deadline) return null
+    if (Date.now() > deadline) break
     try {
       const res = await fetch(url, {
         headers: buildHeaders(),
@@ -147,13 +149,17 @@ async function fetchPncpJson(
         signal: AbortSignal.timeout(timeoutMs),
       })
       if (res.ok) return res.json()
+      ultimo = `HTTP ${res.status}`
       // 4xx não-transitório (exceto 429): não adianta repetir.
-      if (res.status !== 429 && res.status < 500) return null
-    } catch {
-      /* timeout/rede — cai no backoff abaixo */
+      if (res.status !== 429 && res.status < 500) break
+    } catch (e) {
+      ultimo = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
     }
     if (tentativa < maxRetry) await new Promise((r) => setTimeout(r, 1500 * (tentativa + 1)))
   }
+  // Falhar em silêncio é como a regressão do sync diário passou um mês invisível: sem
+  // isto, "0 licitações" no PNCP e "o PNCP nos recusou" são a mesma resposta vazia.
+  console.warn(`[pncp] desisti de ${rota}: ${ultimo}`)
   return null
 }
 

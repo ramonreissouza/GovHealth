@@ -6,9 +6,10 @@
 //
 //   1) ABERTAS (prioridade): /contratacoes/proposta — licitações recebendo proposta
 //      neste momento. São as oportunidades vivas que o usuário não pode perder.
-//   2) PUBLICAÇÕES RECENTES (últimas 48h): /contratacoes/publicacao — pega o que
-//      entrou nos últimos dias (abertas e as que já nascem/foram encerradas),
-//      cobrindo folga p/ publicações atrasadas do PNCP.
+//   2) PUBLICAÇÕES RECENTES: /contratacoes/publicacao, UMA JANELA POR DIA nos últimos
+//      três dias, do mais novo para o mais velho (o porquê está no corpo da função) —
+//      pega o que entrou (aberta ou já encerrada), com folga para o atraso de
+//      publicação do próprio PNCP.
 //
 // Só grava o CABEÇALHO (a oportunidade). O enriquecimento caro (itens + resultados
 // homologados → status encerrada) continua no refresh periódico, que roda sem o
@@ -70,11 +71,16 @@ export async function GET(req: NextRequest) {
     // teste de vida deste cron (`novas` no lugar de "gravadas" — ver marcarColeta).
     await marcarColeta(resumo.novas)
 
+    // Erros do PNCP viajam junto: sem eles, "não há licitação nova" e "o PNCP nos
+    // recusou" chegam como a mesma resposta vazia — e foi essa ambiguidade que deixou
+    // o sync quebrado por um mês sem ninguém ver.
+    const erros = [...new Set(recentesPorDia.flatMap((r) => r.erros ?? []))]
     const porDia = dias.map((d, i) => `${d}:${recentesPorDia[i].data.length}`).join(' ')
     const msg = `[cron:sync-pncp] abertas=${abertas.length} recentes=${recentes.length} (${porDia}) `
       + `→ ${resumo.novas} novas + ${resumo.atualizadas} atualizadas de ${resumo.recebidas} `
       + `(${resumo.falhas} falhas) em ${Date.now() - inicio}ms`
     console.log(msg)
+    if (erros.length) console.warn('[cron:sync-pncp] PNCP recusou:', erros.join(' | '))
 
     return NextResponse.json({
       ok: true,
@@ -86,6 +92,7 @@ export async function GET(req: NextRequest) {
       atualizadas: resumo.atualizadas,
       gravadas: resumo.gravadas,
       falhas: resumo.falhas,
+      erros: erros.length ? erros : undefined,
       duracaoMs: Date.now() - inicio,
       rodarEm: new Date().toISOString(),
     })
