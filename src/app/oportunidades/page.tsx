@@ -9,7 +9,7 @@ import Topbar from '@/components/layout/Topbar'
 import { Oportunidade } from '@/lib/types'
 import type { ItemPNCP } from '@/lib/pncp'
 import { clsx } from 'clsx'
-import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target, MapPin, X } from 'lucide-react'
+import { Search, ExternalLink, Calendar, Hash, ChevronDown, ChevronUp, LayoutList, Table2, Package, Building2, Newspaper, Target, MapPin, X, AlertTriangle, Database } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { Paginacao } from '@/components/ui/Paginacao'
@@ -169,10 +169,21 @@ const TIPOS: { key: string; label: string }[] =
 // antes do download em vez de descobrir contando linhas na planilha.
 const EXPORT_MAX = 4000
 
+// Erro da API com a MENSAGEM do servidor preservada. Mesmo padrão de
+// fornecedores/page.tsx: o `throw` dentro do queryFn perde tudo que não estiver na
+// exceção, e aqui a mensagem é o conteúdo — o 503 de banco fora explica o que fazer,
+// e transformá-la em "HTTP 503" apagava justamente isso.
+class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
+
 interface OpportunitiesResponse {
   oportunidades: Oportunidade[]
   totais: { total: number; valorTotal: number; abertas: number; estados: number; municipios: number; universo: number; comValor: number } | null
   porTipo: Record<string, number> | null
+  /** Recados do servidor sobre o próprio recorte (ex.: portfólio sem produto ativo). */
+  avisos?: string[]
 }
 
 function OportunidadesInner() {
@@ -339,24 +350,46 @@ function OportunidadesInner() {
   // a página anterior na tela enquanto a nova carregava (confuso com o load lento
   // de agora). `enabled` espera o Setup resolver (evita 1 busca nacional jogada
   // fora antes das UFs do Setup chegarem).
-  const { data, isLoading, isFetching } = useQuery<OpportunitiesResponse>({
+  const { data, isLoading, isFetching, error } = useQuery<OpportunitiesResponse, ApiError>({
     queryKey: ['oportunidades', filtrosParams().toString()],
     queryFn: async ({ signal }) => {
       const params = filtrosParams()
       const res = await fetch(`/api/opportunities?${params}`, { signal })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        // A mensagem do servidor vem primeiro: o 503 de "banco fora com filtro que o
+        // PNCP não reproduz" diz ao usuário o que fazer. Corpo não-JSON (proxy, gateway)
+        // cai no texto genérico.
+        let msg = `Não foi possível carregar as licitações (HTTP ${res.status}).`
+        try {
+          const j = await res.json()
+          if (typeof j?.error === 'string' && j.error) msg = j.error
+        } catch { /* resposta sem JSON */ }
+        throw new ApiError(msg, res.status)
+      }
       const json = await res.json()
       publishDataStatus(json)
       return json
     },
     enabled: setupResolvido,
+    // O 503 é um veredito, não um soluço: ele diz "o banco está fora E os filtros
+    // ativos não têm equivalente no PNCP". Repetir 3x (o padrão do React Query) só
+    // faria o usuário olhar "Carregando…" por ~7s antes de ler a explicação — e cada
+    // tentativa ainda paga o timeout de conexão do banco. Falha de rede continua
+    // tendo uma segunda chance.
+    retry: (tentativas, err) => err.status !== 503 && tentativas < 1,
   })
+  // Sem isto a falha virava lista vazia: `data` fica undefined, `visible` vira [] e a
+  // tela dizia "Nenhuma oportunidade encontrada com os filtros aplicados" — ou seja,
+  // banco fora do ar era indistinguível de filtro sem resultado, que é exatamente o
+  // engano que os fixes deste PR foram feitos para eliminar no servidor.
+  const erroApi = error?.message ?? null
   // Memoizado: sem isto, `data?.oportunidades ?? []` cria um array [] novo a cada
   // render quando não há dados, e o efeito de pré-carga de itens (que depende de
   // `visible`) rodaria de novo a cada render em vez de só quando a página muda.
   const visible = useMemo(() => data?.oportunidades ?? [], [data])
   const totais = data?.totais
   const porTipo = data?.porTipo ?? null
+  const avisos = data?.avisos ?? []
 
   // Export do FILTRO, não da página. Com a paginação de verdade a tela só tem ~50
   // linhas em memória; passar `visible` para o ExportButton entregava essas 50 como
@@ -690,8 +723,27 @@ function OportunidadesInner() {
             ))}
           </div>
 
+          {/* Recados do servidor sobre o recorte (ex.: "Meu Portfólio" sem produto
+              ativo na conta). Ficam ACIMA do conteúdo porque explicam por que a lista
+              está do jeito que está — em especial a lista vazia logo abaixo. */}
+          {avisos.length > 0 && (
+            <div className="mb-3 bg-amber/5 border border-amber/30 rounded-xl px-4 py-3 flex flex-col gap-1.5">
+              {avisos.map((a) => (
+                <div key={a} className="flex items-start gap-2 text-[12px] text-amber">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>{a}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── Content ──────────────────────────────────────────────────── */}
-          {isLoading ? (
+          {erroApi ? (
+            <div className="bg-bg2 border border-amber/30 rounded-xl p-10 text-center">
+              <Database size={28} className="text-amber mx-auto mb-3" />
+              <div className="text-[13px] text-strong">{erroApi}</div>
+            </div>
+          ) : isLoading ? (
             <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">
               Carregando…
             </div>
@@ -1040,7 +1092,7 @@ function OportunidadesInner() {
             </div>
           )}
 
-          {!isLoading && (
+          {!isLoading && !erroApi && (
             <Paginacao
               pagina={pagina} totalItens={totalLic} porPagina={pageSize}
               onPagina={setPagina} rotuloItens="licitações"
