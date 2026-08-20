@@ -99,16 +99,24 @@ async function medirOuEsperar() {
  *
  *  204 conta como vivo: é a resposta legítima do PNCP para dia/modalidade sem
  *  nada publicado, e tratá-la como queda faria a sonda barrar o pipeline num dia
- *  vazio. */
-async function pncpVivo() {
+ *  vazio.
+ *
+ *  TRÊS TENTATIVAS, não uma. Medido em 20/08/2026 às 12:15, três requisições
+ *  idênticas em sequência: timeout de 40s, HTTP 500 em 31s, e HTTP 200 em 1,3s.
+ *  O PNCP não cai — ele pisca. Com sonda de tiro único, dois terços das vezes o
+ *  veredito é "fora" e cada falso negativo custa 15 minutos de máquina parada
+ *  enquanto o servidor atende. Três tentativas custam no pior caso ~1min. */
+async function pncpVivo(tentativas = 3) {
   const url = 'https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao'
     + '?dataInicial=20260805&dataFinal=20260805&codigoModalidadeContratacao=6&pagina=1&tamanhoPagina=50'
-  try {
-    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
-    return r.status === 200 || r.status === 204
-  } catch {
-    return false
+  for (let t = 1; t <= tentativas; t++) {
+    try {
+      const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000) })
+      if (r.status === 200 || r.status === 204) return true
+    } catch { /* timeout/rede: conta como tentativa perdida, não como veredito */ }
+    if (t < tentativas) await sleep(5000)
   }
+  return false
 }
 
 /** Espera o PNCP voltar antes de gastar uma rodada. Não desiste: quem decide
