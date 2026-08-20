@@ -1,8 +1,29 @@
-// src/app/api/cron/sync-pncp/route.ts
+// src/app/api/cron/sync-pncp/route.ts — SINCRONIZAÇÃO DIÁRIA (Vercel Cron, 3h).
+//
+// Objetivo: manter a base 100% representativa do que está acontecendo AGORA, sem
+// depender de máquina local. Antes esta rota só CONTAVA (buscava e descartava) — a
+// base só era atualizada pelo ETL local a cada dias. Agora ela GRAVA:
+//
+//   1) ABERTAS (prioridade): /contratacoes/proposta — licitações recebendo proposta
+//      neste momento. São as oportunidades vivas que o usuário não pode perder.
+//   2) PUBLICAÇÕES RECENTES (últimas 48h): /contratacoes/publicacao — pega o que
+//      entrou nos últimos dias (abertas e as que já nascem/foram encerradas),
+//      cobrindo folga p/ publicações atrasadas do PNCP.
+//
+// Só grava o CABEÇALHO (a oportunidade). O enriquecimento caro (itens + resultados
+// homologados → status encerrada) continua no refresh periódico, que roda sem o
+// limite de tempo de uma função serverless. Uma contratação nova sem resultado
+// aparece naturalmente como "Em aberto" nas telas — exatamente o que se quer.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { buscarComprasSaude } from '@/lib/pncp'
+import { buscarComprasSaude, buscarLicitacoesAbertas, toPncpDate } from '@/lib/pncp'
+import { upsertContratacoes, marcarColeta } from '@/lib/pncp-ingest'
 
 export const runtime = 'nodejs'
+// Fetches de LISTAGEM apenas (sem chamadas por item). O /proposta do PNCP é lento nas
+// modalidades grandes; damos folga (120s, dentro do teto atual da Vercel) e a busca de abertas se auto-limita
+// por orçamento de tempo (budgetMs) para nunca estourar.
+export const maxDuration = 120
 
 export async function GET(req: NextRequest) {
   // Vercel Cron autentica via CRON_SECRET
@@ -11,18 +32,61 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const inicio = Date.now()
   try {
-    const ontem = new Date()
-    ontem.setDate(ontem.getDate() - 1)
-    const dataInicial = ontem.toISOString().split('T')[0]
+    // Publicações recentes: UMA JANELA POR DIA, do mais novo para o mais velho.
+    //
+    // Medido em 20/08/2026: com a janela única de 3 dias, esta perna trouxe 105
+    // registros e TODOS do dia mais antigo — o /publicacao pagina em ordem
+    // crescente de data e o teto de páginas por modalidade se esgotava antes de
+    // chegar no dia de hoje. Ou seja: a perna que existe para pegar o que acabou de
+    // ser publicado era estruturalmente incapaz de pegar o dia mais novo.
+    // Uma janela por dia (dataInicial = dataFinal) gasta o mesmo número de pedidos e
+    // garante que o dia de hoje seja o primeiro a ser servido. O rabo antigo (e as
+    // publicações atrasadas do PNCP) continua sendo trabalho do refresh periódico,
+    // que roda horas e não tem limite de função serverless.
+    const dias = [0, 1, 2].map((d) => {
+      const dt = new Date()
+      dt.setDate(dt.getDate() - d)
+      return toPncpDate(dt)
+    })
 
-    const resultado = await buscarComprasSaude({ dataInicial, tamanhoPagina: 200 })
+    // 1) ABERTAS (prioridade) + 2) publicações recentes — todas em paralelo, cada uma
+    // com orçamento de tempo próprio. Os orçamentos são apertados de propósito: como
+    // rodam em paralelo, o tempo de parede é o do MAIOR (25s) mais, no pior caso, uma
+    // requisição já em voo (25s) — ~50s, folgado para qualquer teto de função. O que não
+    // couber hoje entra amanhã ou no refresh periódico; ser morto no meio, não.
+    const [abertas, ...recentesPorDia] = await Promise.all([
+      buscarLicitacoesAbertas({ maxPaginasPorModalidade: 10, budgetMs: 25_000 }),
+      ...dias.map((dia) =>
+        buscarComprasSaude({ dataInicial: dia, dataFinal: dia, maxPaginasPorModalidade: 5, budgetMs: 12_000 }),
+      ),
+    ])
 
-    console.log(`[cron:sync-pncp] ${resultado.data.length} compras de saúde sincronizadas`)
+    const recentes = recentesPorDia.flatMap((r) => r.data)
+    const candidatas = [...abertas, ...recentes]
+    const resumo = await upsertContratacoes(candidatas)
+    // Deixa rastro em etl_checkpoint: alimenta o selo de "coletado há Xh" e serve de
+    // teste de vida deste cron (`novas` no lugar de "gravadas" — ver marcarColeta).
+    await marcarColeta(resumo.novas)
+
+    const porDia = dias.map((d, i) => `${d}:${recentesPorDia[i].data.length}`).join(' ')
+    const msg = `[cron:sync-pncp] abertas=${abertas.length} recentes=${recentes.length} (${porDia}) `
+      + `→ ${resumo.novas} novas + ${resumo.atualizadas} atualizadas de ${resumo.recebidas} `
+      + `(${resumo.falhas} falhas) em ${Date.now() - inicio}ms`
+    console.log(msg)
 
     return NextResponse.json({
       ok: true,
-      sincronizados: resultado.data.length,
+      abertas: abertas.length,
+      recentes: recentes.length,
+      recentesPorDia: Object.fromEntries(dias.map((d, i) => [d, recentesPorDia[i].data.length])),
+      recebidas: resumo.recebidas,
+      novas: resumo.novas,
+      atualizadas: resumo.atualizadas,
+      gravadas: resumo.gravadas,
+      falhas: resumo.falhas,
+      duracaoMs: Date.now() - inicio,
       rodarEm: new Date().toISOString(),
     })
   } catch (error) {

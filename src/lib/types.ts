@@ -100,7 +100,8 @@ export interface Oportunidade {
 // As seis primeiras são as originais. As sete seguintes nasceram para drenar o
 // balde 'outros', que sozinho guardava 61.211 dos 93.595 registros (65%) e ficava
 // invisível para quem filtra por categoria no Setup da Empresa.
-// A ordem de classificação vive em scripts/saude-filter.mjs (categoria()).
+// A ordem de classificação vive em scripts/saude-filter.mjs (categoria()) e no espelho
+// em TS de src/lib/saude-filter.ts, que o cron diário usa.
 export type CategoriaEquipamento =
   | 'imagem'
   | 'uti'
@@ -394,6 +395,10 @@ export interface PNCPContratacao {
   situacaoCompraId: number
   situacaoCompraNome: string
   linkSistemaOrigem: string
+  // SISTEMA que publicou (IPM, Betha, BLL, Licitanet…) — vem na resposta de LISTA em
+  // ~100% dos registros, contra ~44% do linkSistemaOrigem. É o que identifica o portal
+  // quando o link falta (ver lib/portais.ts). Mesmo campo já tipado em Contratacao.
+  usuarioNome?: string
   sequencialCompra: number
   anoCompra: number
   processo?: string
