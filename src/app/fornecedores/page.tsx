@@ -40,6 +40,9 @@ interface ApiResponse {
   categoria: string | null
   kpis: { valorTotal: number; fornecedores: number; itens: number; convenios: number }
   ranking: Ranking[]
+  /** Empresas no ranking DESTE filtro, busca por nome inclusa — régua de páginas.
+   *  `kpis.fornecedores` não serve: ele é o escopo (UF/ano/categoria) e ignora a busca. */
+  rankingTotal?: number
   categorias?: CatCount[]
   ufsComDados: string[]
   detalhe: Detalhe | null
@@ -356,7 +359,7 @@ export default function FornecedoresPage() {
                 )}
                 {!loading && !erro && (
                   <Paginacao
-                    pagina={pagina} totalItens={kpis?.fornecedores ?? 0} porPagina={pageSize}
+                    pagina={pagina} totalItens={data?.rankingTotal ?? kpis?.fornecedores ?? 0} porPagina={pageSize}
                     onPagina={setPagina} rotuloItens="fornecedores"
                     className="border-t border-subtle"
                   />
