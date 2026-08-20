@@ -63,7 +63,9 @@
     "categoria:migrate": "node --experimental-strip-types scripts/migrate-categoria-mercado.mjs",
     "radar:migrate-saude": "node scripts/migrate-radar-saude-publica.mjs",
     "etl:enriquecer": "node scripts/etl-enriquecer.mjs",
-    "ia:migrate": "node scripts/migrate-ia-conversas.mjs"
+    "ia:migrate": "node scripts/migrate-ia-conversas.mjs",
+    "deck:numeros": "npx tsx --env-file=.env.local scripts/deck/numeros.ts",
+    "deck": "python scripts/deck/montar.py"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",

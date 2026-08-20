@@ -50,3 +50,6 @@ _v-*.png
 
 # PID do pipeline relancado destacado (runtime, nao versionar)
 .pipeline-pid
+
+# Apresentacao comercial gerada (binario de 2,5 MB + recortes derivados dos prints)
+scripts/deck/out/
