@@ -25,7 +25,7 @@ import { ThSort, useOrdenacao } from '@/components/ui/ThSort'
 // import { AbrirDossieButton } from '@/components/ui/AbrirDossieButton'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, CATEGORIA_COLOR, TIPO_LABEL as TIPO_LABEL_BASE } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
-import { getProdutos, needlesPortfolioAtivo, type ProdutoPortfolio } from '@/lib/portfolio'
+import { getProdutos, type ProdutoPortfolio } from '@/lib/portfolio'
 import { getTerritorio } from '@/lib/territorio'
 import { getPreferences } from '@/lib/preferences'
 import { useSetupFiltro } from '@/lib/use-setup-filtro'
@@ -163,6 +163,12 @@ const TIPO_LABEL: Record<string, string> = { todos: 'Todos', ...TIPO_LABEL_BASE 
 const TIPOS: { key: string; label: string }[] =
   Object.entries(TIPO_LABEL).map(([key, label]) => ({ key, label }))
 
+// Teto de linhas por export. É o MESMO teto que /api/opportunities aplica por
+// requisição (buscarDoBanco: LIMIT máx. 4000) — pedir mais devolveria 4.000 de
+// qualquer forma, calado. Quando o filtro passa disso, o usuário é avisado do corte
+// antes do download em vez de descobrir contando linhas na planilha.
+const EXPORT_MAX = 4000
+
 interface OpportunitiesResponse {
   oportunidades: Oportunidade[]
   totais: { total: number; valorTotal: number; abertas: number; estados: number; municipios: number; universo: number; comValor: number } | null
@@ -262,13 +268,6 @@ function OportunidadesInner() {
   // Carrega o portfólio do fornecedor (localStorage) para o filtro "Meu Portfólio".
   useEffect(() => { setProdutos(getProdutos()) }, [])
   const temPortfolio = produtos.some((p) => p.ativo)
-  // Agulhas do portfólio ativo, para o servidor filtrar em SQL — só recalcula quando
-  // o portfólio muda (o servidor não sabe o que é "meu portfólio", só filtra pelo
-  // que recebe já normalizado — ver needlesPortfolioAtivo/produtoMatchTexto).
-  const portfolioNeedles = useMemo(
-    () => (soPortfolio ? needlesPortfolioAtivo(produtos) : []),
-    [soPortfolio, produtos],
-  )
 
   // Deep-link vindo do dashboard (?opp=<id>): a licitação clicada é expandida, a lista
   // salta para a PÁGINA em que ela está (localizada no servidor — ver efeito abaixo),
@@ -323,10 +322,15 @@ function OportunidadesInner() {
     if (queryDebounced) params.set('q', queryDebounced)
     if (queryProponenteDebounced) params.set('proponente', queryProponenteDebounced)
     if (queryConvenioDebounced) params.set('convenio', queryConvenioDebounced)
-    if (soPortfolio && portfolioNeedles.length) params.set('portfolio', JSON.stringify(portfolioNeedles))
+    // "Meu Portfólio" vai como INTERRUPTOR, não como conteúdo: quem resolve os
+    // produtos é o servidor, pela conta (ver src/lib/portfolio-servidor.ts). Antes as
+    // palavras-chave — nomes, marcas e modelos do que o cliente vende — iam serializadas
+    // na query string, e catálogo de cliente não pode passear por log de proxy/CDN/APM
+    // (fora que com muitos produtos a URL estourava e virava HTTP 414).
+    if (soPortfolio) params.set('portfolio', '1')
     if (ordem.chave) { params.set('sort', ordem.chave); params.set('dir', ordem.dir) }
     return params
-  }, [pageSize, pagina, minScore, categoria, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, soPortfolio, portfolioNeedles, ordem])
+  }, [pageSize, pagina, minScore, categoria, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, soPortfolio, ordem])
 
   // Uma query por combinação de filtros+página — o React Query cacheia cada uma
   // (staleTime/gcTime em QueryProvider), então voltar a uma página JÁ vista não
@@ -353,6 +357,30 @@ function OportunidadesInner() {
   const visible = useMemo(() => data?.oportunidades ?? [], [data])
   const totais = data?.totais
   const porTipo = data?.porTipo ?? null
+
+  // Export do FILTRO, não da página. Com a paginação de verdade a tela só tem ~50
+  // linhas em memória; passar `visible` para o ExportButton entregava essas 50 como
+  // se fossem o resultado da busca — regressão silenciosa contra o comportamento
+  // anterior (que exportava todo o conjunto filtrado). Aqui a mesma busca é refeita
+  // sem offset e com o teto explícito, e o corte é declarado quando existe.
+  const exportarFiltro = useCallback(async (): Promise<Oportunidade[] | null> => {
+    const total = totais?.total ?? 0
+    if (total > EXPORT_MAX) {
+      const ok = window.confirm(
+        `O filtro atual tem ${total.toLocaleString('pt-BR')} licitações. `
+        + `O arquivo leva as primeiras ${EXPORT_MAX.toLocaleString('pt-BR')} na ordenação da tela — `
+        + `estreite o filtro para levar tudo.\n\nBaixar assim?`,
+      )
+      if (!ok) return null
+    }
+    const params = filtrosParams()
+    params.set('limit', String(EXPORT_MAX))
+    params.set('offset', '0')
+    const res = await fetch(`/api/opportunities?${params}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json: OpportunitiesResponse = await res.json()
+    return json.oportunidades ?? []
+  }, [filtrosParams, totais])
 
   // Pré-carrega os itens (equipamentos) só da PÁGINA atual (≤ pageSize, não mais até
   // 1.500) — habilita a pré-análise expandida sem abrir o PNCP.
@@ -570,6 +598,7 @@ function OportunidadesInner() {
 
             <ExportButton
               data={visible}
+              fetchAll={exportarFiltro}
               filename="licitacoes"
               title="Licitações GovHealth AI"
               columns={[
