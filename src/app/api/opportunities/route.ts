@@ -377,6 +377,53 @@ function ordemSql(sort: string | undefined, dir: 'asc' | 'desc'): string {
     : `${scoreExprSql('contratacoes')} DESC, data_publicacao DESC NULLS LAST, numero_controle_pncp ASC`
 }
 
+// Ordenação em memória — só para o fallback do PNCP, que não tem SQL para ordenar.
+//
+// POR QUE ISTO EXISTE: o fallback CORTA em `limit` depois de ordenar. Ordenar por
+// score e cortar não devolve "as mesmas linhas em outra ordem": com
+// sort=valor&dir=asc&limit=50 o usuário pede as 50 mais baratas e recebe as 50 de
+// maior score. O corte transforma ordem em CONTEÚDO — é resposta errada, não
+// apresentação errada.
+//
+// As chaves são as mesmas de SORT_COLUMNS, lidas dos campos que montarOportunidade
+// produz. `status` sai de situacaoCompraId===1 porque é disso que a coluna Status da
+// tela é desenhada (page.tsx: `situacaoId = lic?.situacaoCompraId ?? 4`): ordenar a
+// coluna por um critério diferente do que ela mostra seria outra mentira pequena.
+const CHAVES_ORDEM: Record<string, (o: Oportunidade) => number | string | boolean | null | undefined> = {
+  valor: (o) => o.valorEstimado,
+  ano: (o) => o.licitacaoRelacionada?.dataPublicacaoPncp,
+  proponente: (o) => o.hospital,
+  item: (o) => o.descricao,
+  status: (o) => o.licitacaoRelacionada?.situacaoCompraId === 1,
+  score: (o) => o.score,
+}
+
+function ordenarEmMemoria(ops: Oportunidade[], sort: string | undefined, dir: 'asc' | 'desc'): Oportunidade[] {
+  const chave = sort ? CHAVES_ORDEM[sort] : undefined
+  // Sem ordenação pedida (ou chave desconhecida): comportamento de sempre.
+  if (!chave) {
+    return [...ops].sort((a, b) => b.score - a.score
+      || (b.licitacaoRelacionada?.dataPublicacaoPncp ?? '').localeCompare(a.licitacaoRelacionada?.dataPublicacaoPncp ?? '')
+      || a.id.localeCompare(b.id))
+  }
+  const sinal = dir === 'asc' ? 1 : -1
+  return [...ops].sort((a, b) => {
+    const va = chave(a)
+    const vb = chave(b)
+    // Ausente vai para o fim nas DUAS direções, igual ao `NULLS LAST` do ordemSql.
+    const na = va === undefined || va === null
+    const nb = vb === undefined || vb === null
+    if (na || nb) return na && nb ? a.id.localeCompare(b.id) : na ? 1 : -1
+    let cmp: number
+    if (typeof va === 'string' && typeof vb === 'string') cmp = va.localeCompare(vb, 'pt-BR')
+    else if (typeof va === 'boolean' && typeof vb === 'boolean') cmp = (va ? 1 : 0) - (vb ? 1 : 0)
+    else cmp = Number(va) - Number(vb)
+    // Desempate ÚNICO pelo id, mesma razão do numero_controle_pncp no SQL: sem ele,
+    // score (2 valores no fallback) e status (booleano) deixam o corte instável.
+    return cmp !== 0 ? cmp * sinal : a.id.localeCompare(b.id)
+  })
+}
+
 // Fonte primária: banco. Uma consulta que não casou nada devolve [] — resposta
 // VÁLIDA, não sinal de fallback. Banco indisponível LANÇA (quem chama trata), e é
 // só isso que autoriza cair para o PNCP ao vivo: ver o bloco de decisão no GET.
@@ -662,16 +709,24 @@ export async function GET(req: NextRequest) {
     //
     // `ufs` (território multi-UF) está na lista porque só `uf` é repassado a
     // buscarDoPNCP: um pedido de três estados voltaria nacional. `offset` está porque
-    // devolver a página 1 rotulada de página 5 é mentira sobre a posição. Ordenação
-    // ficou FORA: lista fora de ordem é ruim, não é falsa sobre o conteúdo.
+    // devolver a página 1 rotulada de página 5 é mentira sobre a posição.
+    //
+    // `sortParam` também está, e eu o tinha deixado de fora com o argumento errado de
+    // que "lista fora de ordem não é falsa sobre o conteúdo". É falsa: o fallback
+    // ordena e depois CORTA em `limit`, então sort=valor&dir=asc&limit=50 devolve as
+    // 50 de maior score no lugar das 50 mais baratas — outro conjunto, não a mesma
+    // página noutra ordem. Aqui o banco EXISTE (só está inalcançável), então a
+    // resposta honesta é 503; no caminho de base vazia, onde não há universo nenhum
+    // para comparar, ordenamos a janela do PNCP pelo que foi pedido (ordenarEmMemoria).
     const semEquivalenteNoPncp = !!(
       ufs?.length || municipio || status || ano || q || proponente || convenio
-      || portfolioLigado || offset > 0
+      || portfolioLigado || offset > 0 || sortParam
     )
     const erro503Banco = () => NextResponse.json({
       error: 'Banco de dados indisponível neste momento. Os filtros ativos (busca, portfólio, '
-        + 'status, ano, cidade, território ou página) não podem ser reproduzidos pela consulta ao '
-        + 'vivo do PNCP — tente de novo em instantes, ou tire os filtros para ver o que está aberto agora.',
+        + 'status, ano, cidade, território, ordenação ou página) não podem ser reproduzidos pela '
+        + 'consulta ao vivo do PNCP — tente de novo em instantes, ou tire os filtros para ver o '
+        + 'que está aberto agora.',
     }, { status: 503 })
 
     try {
@@ -777,12 +832,11 @@ export async function GET(req: NextRequest) {
 
     // Via banco: já veio ordenado/paginado em SQL (inclusive por sort=/dir= do
     // usuário) — reordenar aqui por score jogaria fora a ordenação pedida. Via PNCP
-    // (fallback, sem SQL): mantém o comportamento de sempre.
+    // (fallback, sem SQL): ordena pelo que foi pedido ANTES de cortar em `limit`,
+    // senão o corte devolve outro conjunto de linhas — ver ordenarEmMemoria.
     resultado = viaBanco
       ? resultado.slice(0, limit)
-      : resultado
-          .sort((a, b) => b.score - a.score || (b.licitacaoRelacionada?.dataPublicacaoPncp ?? '').localeCompare(a.licitacaoRelacionada?.dataPublicacaoPncp ?? ''))
-          .slice(0, limit)
+      : ordenarEmMemoria(resultado, sortParam, dirParam).slice(0, limit)
 
     // Totais do filtro: preferir o agregado do banco (universo completo). Sem ele
     // (PNCP/porUf), cai para os totais do conjunto carregado.
