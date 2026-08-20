@@ -4,6 +4,18 @@
 
 import type { AlertaNotificacao } from '@/lib/alertas'
 
+/**
+ * O que o template REALMENTE usa de uma notificação. Existe para o caminho de
+ * entrada não confiável (/api/alertas/email recebe as notifs do client): ali as
+ * notificações são reconstruídas campo a campo depois da validação, e exigir uma
+ * `AlertaNotificacao` completa forçaria inventar id/alertaId/lida/criadoEm que o
+ * e-mail nem lê. Uma `AlertaNotificacao` continua servindo (é um supertipo), então
+ * o cron diário não muda.
+ */
+export type NotificacaoEmail =
+  Pick<AlertaNotificacao, 'titulo' | 'descricao' | 'urgencia' | 'alertaNome'>
+  & { link?: string; uf?: string }
+
 const URGENCIA_COLOR: Record<string, string> = {
   alta: '#f87171',
   media: '#f59e0b',
@@ -24,7 +36,7 @@ function esc(s: string): string {
 }
 
 // Monta uma linha do resumo. Se houver link, o título vira âncora para o lead.
-function linha(n: AlertaNotificacao, base: string): string {
+function linha(n: NotificacaoEmail, base: string): string {
   const cor = URGENCIA_COLOR[n.urgencia] ?? URGENCIA_COLOR.normal
   // Só protocolo http(s) vira link de verdade — barra 'javascript:'/'data:' etc.
   let href: string | null = null
@@ -46,7 +58,7 @@ function linha(n: AlertaNotificacao, base: string): string {
     </tr>`
 }
 
-export function buildAlertaDigestHtml(notifs: AlertaNotificacao[], destinatario: string): string {
+export function buildAlertaDigestHtml(notifs: NotificacaoEmail[], destinatario: string): string {
   const base = appBaseUrl()
   const rows = notifs.slice(0, 30).map((n) => linha(n, base)).join('')
   return `<!DOCTYPE html>
