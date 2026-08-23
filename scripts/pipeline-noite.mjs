@@ -31,6 +31,7 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import pg from 'pg'
+import { estado as estadoLockPncp } from './pncp-lock.mjs'
 
 const ESPERA_RECUSA = 15 * 60 * 1000   // PNCP recusando: espera longa
 const ESPERA_NORMAL = 60 * 1000        // rodada produtiva que parou por outro motivo
@@ -133,16 +134,32 @@ async function pncpVivo(tentativas = 3) {
   return false
 }
 
-/** Espera o PNCP voltar antes de gastar uma rodada. Não desiste: quem decide
- *  parar é você, e a tarefa de logon religa depois de reboot. */
+/** O refresh (etl-refresh-loop.mjs) marca a pista como ocupada, e aqui a gente
+ *  respeita. Disputar o PNCP com ele não acelera nada: em 21/08/2026 os dois juntos
+ *  renderam 18× HTTP 429 e 14× 503; em 22/08, um de cada vez, foram 4 quedas em 485
+ *  páginas. É o mesmo "UM DONO SÓ" do topo deste arquivo — só que agora o outro
+ *  dono é outro processo. Quem decide se o lock ainda vale (PID vivo + idade) é o
+ *  pncp-lock.mjs: lock órfão não segura ninguém, senão a espera fica eterna. */
+function refreshOcupado() {
+  const e = estadoLockPncp()
+  if (e.motivo) log(`lock do PNCP: ${e.motivo}`)
+  return e.ocupado
+}
+
+/** Espera a vez antes de gastar uma rodada: ou o PNCP está fora, ou o refresh está
+ *  com a pista. Não desiste: quem decide parar é você, e a tarefa de logon religa
+ *  depois de reboot. */
 async function esperarPncp(rotulo) {
   let tentativa = 0
-  while (!(await pncpVivo())) {
+  // Ordem importa: se o refresh está com a pista, nem sondamos o PNCP — a sonda são
+  // 3 requisições que só somariam à disputa que estamos justamente evitando.
+  while (refreshOcupado() || !(await pncpVivo())) {
     tentativa++
-    log(`${rotulo}: PNCP fora — sonda ${tentativa}, esperando ${ESPERA_RECUSA / 60000}min`)
+    const motivo = refreshOcupado() ? 'refresh varrendo as UFs' : 'PNCP fora'
+    log(`${rotulo}: ${motivo} — sonda ${tentativa}, esperando ${ESPERA_RECUSA / 60000}min`)
     await sleep(ESPERA_RECUSA)
   }
-  if (tentativa) log(`${rotulo}: PNCP respondeu depois de ${tentativa} sonda(s) — retomando`)
+  if (tentativa) log(`${rotulo}: pista liberada depois de ${tentativa} sonda(s) — retomando`)
 }
 
 function rodar(script, args = []) {

@@ -26,6 +26,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { ocupado as pncpOcupado } from './pncp-lock.mjs'
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const [k, v] = a.replace(/^--/, '').split('=')
@@ -261,6 +262,16 @@ console.log(`[harvest] ${trabalho.reduce((a, p) => a + p.n, 0)} registros nossos
 try {
   for (const par of trabalho) {
     if (paresFeitos >= LIMITE_PARES) break
+
+    // O refresh das 27 UFs avisa por arquivo que está com a pista. A espera é ENTRE
+    // PARES porque o cursor de página já está gravado neste ponto — parar aqui não
+    // perde nada. Checar só na largada deixaria o lock decorativo: o harvest de
+    // 21/08/2026 rodou 12h25 numa única invocação, e o refresh começou no meio dela.
+    while (pncpOcupado()) {
+      console.log(`[harvest] refresh varrendo as UFs — esperando 5min`
+        + ` (${paresFeitos}/${trabalho.length} pares feitos)`)
+      await sleep(5 * 60 * 1000)
+    }
 
     const { rows: [cur] } = await consultar(
       `INSERT INTO harvest_portais (dia, modalidade) VALUES ($1, $2)
