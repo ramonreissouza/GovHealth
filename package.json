@@ -65,6 +65,7 @@
     "etl:enriquecer": "node scripts/etl-enriquecer.mjs",
     "etl:itens": "node scripts/backfill-itens.mjs",
     "etl:antigos": "node scripts/backfill-antigos.mjs",
+    "pncp:lock:teste": "node scripts/pncp-lock.teste.mjs",
     "ia:migrate": "node scripts/migrate-ia-conversas.mjs",
     "deck:numeros": "npx tsx --env-file=.env.local scripts/deck/numeros.ts",
     "deck": "python scripts/deck/montar.py"
