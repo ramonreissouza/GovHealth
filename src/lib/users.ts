@@ -278,8 +278,14 @@ export async function resolverTitular(userId: string): Promise<string> {
   return u?.titular_id ?? norm(userId)
 }
 
-/** Assentos mínimos garantidos pelo plano (a coluna `assentos` só serve para subir). */
-const PISO_ASSENTOS: Record<string, number> = { empresa: 5 }
+/**
+ * Assentos que o PLANO inclui — o teto de quem não negociou nada além dele.
+ * A coluna `assentos` só serve para SUBIR: cada assento acima do que o plano inclui é
+ * vendido em negociação própria, e é essa coluna que registra o que foi vendido.
+ * Empresa passou de 5 para 3 em 26/08/2026, a pedido: 3 é o que a assinatura inclui.
+ * Contas com a coluna já acima de 3 são negociações existentes e continuam valendo.
+ */
+const PISO_ASSENTOS: Record<string, number> = { empresa: 3 }
 
 export interface EquipeInfo {
   titularId: string
