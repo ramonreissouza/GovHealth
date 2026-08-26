@@ -45,6 +45,12 @@ const SEM_LOCK = process.argv.includes('--sem-lock')
 // 0 = sem teto.
 const ORCAMENTO_MIN = Number(arg('orcamento', '0'))
 
+// ESPERA-MAX: se a pista estiver ocupada, NÃO fica de plantão indefinidamente. Esta
+// tarefa roda todo dia; desistir hoje e voltar amanhã custa quase nada, enquanto
+// esperar 20h faz o agendador matá-la no meio da espera — parece que quebrou, e o dia
+// seguinte é gasto do mesmo jeito. 0 = espera para sempre.
+const ESPERA_MAX_MIN = Number(arg('espera-max', '45'))
+
 if (!process.env.DATABASE_URL) {
   const m = fs.readFileSync('.env.local', 'utf8').match(/^DATABASE_URL=(.*)$/m)
   if (m) process.env.DATABASE_URL = m[1].trim().replace(/^["']|["']$/g, '')
@@ -62,15 +68,21 @@ const brl = (n) => Number(n ?? 0).toLocaleString('pt-BR', { maximumFractionDigit
 // tempo dão 429 — medido em 21/08: 18x HTTP 429 e 14x 503 com os dois juntos, contra
 // 4 quedas em 485 páginas rodando um de cada vez.
 async function esperarPista() {
-  if (SEM_LOCK) return
+  if (SEM_LOCK) return true
+  const inicio = Date.now()
   let n = 0
   while (estado().ocupado) {
     const e = estado()
+    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
+      log(`pista ainda ocupada por "${e.dono}" — desisto de hoje, a próxima execução retoma`)
+      return false
+    }
     log(`pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
     await sleep(10 * 60 * 1000)
   }
   pegar('backfill-itens')
   soltarNaSaida()
+  return true
 }
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
@@ -172,7 +184,7 @@ async function upsertResultado(c, it, r) {
 let recusas = 0, pendurados = 0
 let pedidos = 0, totI = 0, totR = 0, feitas = 0, vazias = 0, desistidas = 0
 
-await esperarPista()
+if (!(await esperarPista())) process.exit(0)
 
 const { rows: fila } = await dbQuery(
   `SELECT numero_controle_pncp, cnpj_orgao, ano_compra, sequencial_compra, uf, valor_total_estimado
@@ -188,8 +200,11 @@ const { rows: fila } = await dbQuery(
 
 const t0 = Date.now()
 log(`início ${ts()} — ${fila.length} contratações sem itens, valor >= R$ ${brl(MIN)}, desde ${DESDE}`)
-log(`estimativa: ~${Math.round(fila.length * 2.7).toLocaleString('pt-BR')} pedidos`
-  + ` · ~${(fila.length * 2.7 / 2 / 3600).toFixed(1)}h a 2 req/s`)
+// 7,2 pedidos por contratação e 0,30/s efetivos foram MEDIDOS no corte >= R$ 10 mi
+// (1.150 contratações, 8.283 pedidos). Não são 2 req/s: o PNCP pendura ~48% das
+// chamadas e o timeout de 3s de cada uma dessas entra na conta.
+log(`estimativa: ~${Math.round(fila.length * 7.2).toLocaleString('pt-BR')} pedidos`
+  + ` · ~${(fila.length * 7.2 / 0.3 / 3600).toFixed(1)}h a 0,30/s`)
 
 let porOrcamento = false
 for (const c of fila) {
