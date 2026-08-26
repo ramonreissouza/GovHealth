@@ -171,18 +171,40 @@ const lista = meses(DE, ATE)
 // levariam DIAS. O gargalo é espera de rede, não taxa.
 const pares = lista.flatMap((mes) => MODALIDADES.map((mod) => ({ mes, mod })))
 console.log(`[enriq] ${lista.length} mês(es) × ${MODALIDADES.length} modalidades = ${pares.length} frentes · ${DE} → ${ATE} · ${CONC} em paralelo · pausa ${PAUSA}ms`)
-let reqs = 0, vistos = 0, gravados = 0, furos = 0, feitas = 0
+let reqs = 0, vistos = 0, gravados = 0, furos = 0, feitas = 0, pulos = []
 const t0 = Date.now()
 
 async function varrer({ mes, mod }) {
   const chave = `enriq:${mes}:${mod}`
   let pag = await lerCp(chave)
   if (pag === -1) return                           // já concluído
+  let seguidos = 0
   for (;;) {
     pag++
     const j = await pagina(mes, mod, pag)
     reqs++
-    if (j === null) { furos++; break }              // desistiu após 5 tentativas
+    if (j === null) {
+      furos++
+      // PULAR, não abandonar. Uma página que morre após 5 tentativas costuma ser
+      // PERMANENTE: o endpoint de lista devolve 500 em offset fundo (pág 379 = registro
+      // 18.950) e devolve para sempre. Até 26/08/2026 isto dava `break` com o checkpoint
+      // parado na página ruim — então a execução seguinte lia o mesmo número, tomava o
+      // mesmo 500 e desistia de novo. Quatro frentes de Pregão Eletrônico estavam
+      // congeladas assim: 2025-02 na pág 771 (desde 20/08), 2025-04 na 378 (19/08),
+      // 2026-03 na 1008 (20/08), 2025-11 na 78 — 15.483 contratações sem valor que
+      // NENHUMA execução futura ia buscar, porque o script relatava "✓ Fim" e 0 furos
+      // fatais. Agora anda por cima da página ruim; só encerra se várias seguidas
+      // furarem, aí é fim de dados de verdade ou o PNCP fora do ar.
+      await salvarCp(chave, pag)
+      pulos.push(`${mes}/mod${mod}:${pag}`)
+      if (++seguidos >= 5) {
+        console.warn(`[enriq] ${mes}/mod${mod}: 5 páginas seguidas furaram na ${pag} — encerrando a frente`)
+        break
+      }
+      await sleep(PAUSA)
+      continue
+    }
+    seguidos = 0
     const itens = j.data ?? []
     if (!itens.length) { await salvarCp(chave, -1); break }
     vistos += itens.length
@@ -218,4 +240,7 @@ await Promise.all(Array.from({ length: CONC }, async () => {
 
 const falta = (await db(`SELECT count(*)::int n FROM contratacoes WHERE valor_total_estimado IS NULL`)).rows[0].n
 console.log(`✓ Fim: ${gravados.toLocaleString('pt-BR')} contratações ganharam valor. Ainda sem valor: ${falta.toLocaleString('pt-BR')}. Páginas que furaram: ${furos}.`)
+// as páginas puladas são ~50 registros cada que ninguém mais vai buscar: sem isso
+// impresso, o "✓ Fim" esconde o buraco. Zerar o checkpoint da frente é como retomá-las.
+if (pulos.length) console.warn(`[enriq] páginas puladas (${pulos.length}): ${pulos.join(', ')}`)
 await client?.end()
