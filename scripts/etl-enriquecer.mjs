@@ -26,6 +26,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -47,6 +48,20 @@ const PAUSA = Number(arg('pausa', '400'))
 const CONC = Number(arg('conc', '1'))
 const BASE = 'https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao'
 const UA = 'GovHealth-ETL/1.0'
+
+// A PISTA DO PNCP TEM UM DONO SÓ — E ESTE SCRIPT ERA O ÚNICO QUE NÃO PERGUNTAVA.
+// Todos os outros consumidores pesados (pipeline-noite, etl-refresh-loop,
+// harvest-portais, backfill-itens/antigos) passam pelo pncp-lock; este não passava, e
+// por isso conseguia entrar por cima de quem já estava na pista. Medido em 26/08/2026,
+// rodando junto do backfill de itens: as chamadas penduradas do backfill saltaram de
+// ~500 a cada 200 contratações para ~1.800, as desistências foram de 23 para 37, e
+// esta passada tirou ZERO de fev/2025 — cinco páginas seguidas estourando o timeout de
+// 60s, inclusive a página 1, que responde em 6-9s com a pista livre. Os dois lados
+// pioraram e nenhum dos dois avançou.
+const SEM_LOCK = process.argv.includes('--sem-lock')
+// Mesma razão do backfill-itens: ficar de plantão indefinidamente faz o agendador
+// matar a tarefa no meio da espera, e o dia é gasto do mesmo jeito. 0 = para sempre.
+const ESPERA_MAX_MIN = Number(arg('espera-max', '45'))
 
 // Modalidades da Lei 14.133 que aparecem na saúde. 8 (dispensa) e 6 (pregão) são o
 // grosso; as outras somam pouco mas custam poucas páginas.
@@ -169,6 +184,29 @@ const lista = meses(DE, ATE)
 // rodar vários ao mesmo tempo. Medido em série: ~9 req/min, porque a lista do PNCP
 // leva ~6s por página e a pausa é irrelevante perto disso; as ~50 mil páginas
 // levariam DIAS. O gargalo é espera de rede, não taxa.
+async function esperarPista() {
+  if (SEM_LOCK) return true
+  const inicio = Date.now()
+  let n = 0
+  while (estado().ocupado) {
+    const e = estado()
+    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
+      console.log(`[enriq] pista ainda ocupada por "${e.dono}" — desisto de hoje,`
+        + ` a próxima execução retoma do checkpoint`)
+      return false
+    }
+    console.log(`[enriq] pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
+    await sleep(10 * 60 * 1000)
+  }
+  pegar('etl-enriquecer')
+  soltarNaSaida()
+  return true
+}
+
+// Sair aqui é seguro e barato: o progresso está em etl_checkpoint por (mês, modalidade),
+// então a próxima execução retoma na página exata onde esta pararia.
+if (!(await esperarPista())) { await client?.end(); process.exit(0) }
+
 const pares = lista.flatMap((mes) => MODALIDADES.map((mod) => ({ mes, mod })))
 console.log(`[enriq] ${lista.length} mês(es) × ${MODALIDADES.length} modalidades = ${pares.length} frentes · ${DE} → ${ATE} · ${CONC} em paralelo · pausa ${PAUSA}ms`)
 let reqs = 0, vistos = 0, gravados = 0, furos = 0, feitas = 0, pulos = []
@@ -243,4 +281,5 @@ console.log(`✓ Fim: ${gravados.toLocaleString('pt-BR')} contratações ganhara
 // as páginas puladas são ~50 registros cada que ninguém mais vai buscar: sem isso
 // impresso, o "✓ Fim" esconde o buraco. Zerar o checkpoint da frente é como retomá-las.
 if (pulos.length) console.warn(`[enriq] páginas puladas (${pulos.length}): ${pulos.join(', ')}`)
+if (!SEM_LOCK) soltar()
 await client?.end()
