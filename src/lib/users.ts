@@ -279,13 +279,22 @@ export async function resolverTitular(userId: string): Promise<string> {
 }
 
 /**
- * Assentos que o PLANO inclui — o teto de quem não negociou nada além dele.
- * A coluna `assentos` só serve para SUBIR: cada assento acima do que o plano inclui é
- * vendido em negociação própria, e é essa coluna que registra o que foi vendido.
+ * Assentos que o PLANO inclui — o número de quem não tem nada negociado.
  * Empresa passou de 5 para 3 em 26/08/2026, a pedido: 3 é o que a assinatura inclui.
- * Contas com a coluna já acima de 3 são negociações existentes e continuam valendo.
+ *
+ * A coluna `assentos` é o número NEGOCIADO daquela conta, e vale nos dois sentidos:
+ * era só piso ("a coluna só sobe"), e isso tornava impossível o caso que apareceu em
+ * 27/08/2026 — deixar a Prime com 1 usuário. Um contrato pode incluir menos que o
+ * plano-padrão tanto quanto pode incluir mais, e o preço acompanha.
+ *
+ * NULO = "use o que o plano inclui". Preenchido = "foi negociado, respeite". É por
+ * isso que o DEFAULT da coluna é NULL (db/schema-equipe.sql): conta nova precisa nascer
+ * com o que o plano vende, não com um número que ninguém escolheu — era o bug que o
+ * piso existia para tapar ("1 assento · 0 vagas" numa conta Empresa recém-criada,
+ * contradizendo lib/planos.ts, que vende "Equipe: vários usuários / assentos").
+ * Para mudar uma conta: `npm run assentos -- --conta=<email> --assentos=N` (ou --plano).
  */
-const PISO_ASSENTOS: Record<string, number> = { empresa: 3 }
+const ASSENTOS_DO_PLANO: Record<string, number> = { empresa: 3 }
 
 export interface EquipeInfo {
   titularId: string
@@ -301,12 +310,9 @@ export async function equipeInfo(userId: string): Promise<EquipeInfo> {
   const titularId = await resolverTitular(id)
   const tit = await queryOne<{ assentos: number | null; plano: string | null }>(
     `SELECT assentos, plano FROM usuarios WHERE id=$1`, [titularId])
-  // `assentos` é preenchido à mão por conta, e nasce em 1. Uma conta Empresa criada
-  // sem esse ajuste mostrava "1 assento · 0 vagas · sem vagas disponíveis no plano" —
-  // contradizendo o próprio plano, que vende "Equipe: vários usuários / assentos"
-  // (lib/planos.ts), e travando o convite. O piso por plano evita depender da memória
-  // de quem cria a conta; para vender mais assentos, basta subir a coluna.
-  const assentos = Math.max(tit?.assentos ?? 1, PISO_ASSENTOS[tit?.plano ?? ''] ?? 1)
+  // Negociado manda; sem negociação, vale o que o plano inclui. Era `Math.max` dos
+  // dois, o que impedia vender menos que o plano-padrão (ver ASSENTOS_DO_PLANO).
+  const assentos = tit?.assentos ?? ASSENTOS_DO_PLANO[tit?.plano ?? ''] ?? 1
   const membros = await query<Usuario>(
     `SELECT ${COLS_USER} FROM usuarios WHERE (id=$1 OR titular_id=$1) AND deleted_at IS NULL ORDER BY criado_em`, [titularId])
   const convitesPendentes = await query<{ id: string; email: string; expira_em: string; token: string }>(
