@@ -22,9 +22,12 @@ import { upsertContratacoes, marcarColeta } from '@/lib/pncp-ingest'
 
 export const runtime = 'nodejs'
 // Fetches de LISTAGEM apenas (sem chamadas por item). O /proposta do PNCP é lento nas
-// modalidades grandes; damos folga (120s, dentro do teto atual da Vercel) e a busca de abertas se auto-limita
-// por orçamento de tempo (budgetMs) para nunca estourar.
-export const maxDuration = 120
+// modalidades grandes; damos folga e a busca de abertas se auto-limita por orçamento
+// de tempo (budgetMs) para nunca estourar.
+//
+// 120s → 300s (teto atual da Vercel em todos os planos) porque os 120s eram o que
+// segurava o TETO DE COLETA descrito abaixo. Não é folga de segurança: é volume.
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   // Vercel Cron autentica via CRON_SECRET
@@ -59,20 +62,43 @@ export async function GET(req: NextRequest) {
     // produção. Aqui ficam só DUAS correntes: as abertas em voo e os dias em série, do
     // mais novo para o mais velho.
     const abertasEmVoo = buscarLicitacoesAbertas({
-      maxPaginasPorModalidade: 6, budgetMs: 25_000, semCache: true,
+      maxPaginasPorModalidade: 12, budgetMs: 55_000, semCache: true,
     })
 
-    const prazoRecentes = Date.now() + 40_000
+    // TETO DE COLETA — por que estes números subiram (medido em 28/08/2026).
+    //
+    // Com 5 páginas × 4 modalidades × 50 por página, esta rota lia no MÁXIMO 1.000
+    // registros brutos por dia. Com ~12% de saúde, ~120 contratações. E o PNCP publica
+    // de 750 a 880 por dia útil. As novas por dia no banco batiam com a conta com uma
+    // fidelidade constrangedora — 106, 124, 127, 109 — porque o limite nunca era a
+    // oferta, era o teto. Sondando o PNCP no mesmo dia: só a modalidade 8, só em
+    // 27/08, tinha 3.046 contratações em 305 páginas. Líamos 5 dessas 305.
+    //
+    // O governador de verdade é o budgetMs (o maxPaginas só existe para não paginar
+    // ao infinito num dia atípico), então o que abre volume é o tempo. A CONCORRÊNCIA
+    // NÃO MUDA: continuam duas correntes, e as páginas seguem em série dentro de cada
+    // modalidade. Isso importa — foram 8 requisições simultâneas que derrubaram as
+    // duas primeiras execuções em produção, e subir profundidade não é subir paralelismo.
+    const prazoRecentes = Date.now() + 210_000
     const recentesPorDia: Awaited<ReturnType<typeof buscarComprasSaude>>[] = []
-    for (const dia of dias) {
+    for (const [i, dia] of dias.entries()) {
       const resta = prazoRecentes - Date.now()
       if (resta < 6_000) {
         // Sem tempo para uma página inteira: registra e sai. O dia mais novo já foi.
         recentesPorDia.push({ data: [], totalRegistros: 0, erros: ['pulado: sem tempo na janela'] })
         continue
       }
+      // COTA POR DIA, e não "todo o tempo que sobrou".
+      //
+      // Enquanto o teto era de 5 páginas, cada dia parava sozinho e os três eram
+      // servidos. Com 60 páginas, dar `resta` inteiro ao primeiro dia faria ele comer
+      // o orçamento e deixar ontem e anteontem em ZERO — trocaria um teto por uma fome.
+      // Dividir pelo número de dias que ainda faltam mantém a prioridade do dia mais
+      // novo (ele escolhe primeiro) sem deixar os outros sem nada, e devolve a sobra:
+      // se hoje esgotar as páginas antes da cota, ontem herda o que não foi usado.
+      const cota = Math.floor(resta / (dias.length - i))
       recentesPorDia.push(await buscarComprasSaude({
-        dataInicial: dia, dataFinal: dia, maxPaginasPorModalidade: 5, budgetMs: resta, semCache: true,
+        dataInicial: dia, dataFinal: dia, maxPaginasPorModalidade: 60, budgetMs: cota, semCache: true,
       }))
     }
     const abertas = await abertasEmVoo
