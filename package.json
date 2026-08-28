@@ -66,6 +66,7 @@
     "etl:itens": "node scripts/backfill-itens.mjs",
     "etl:antigos": "node scripts/backfill-antigos.mjs",
     "etl:residuo": "node scripts/etl-residuo.mjs",
+    "sync:cobertura": "node scripts/sync-cobertura.mjs",
     "pncp:lock:teste": "node scripts/pncp-lock.teste.mjs",
     "assentos": "node scripts/assentos-conta.mjs",
     "ia:migrate": "node scripts/migrate-ia-conversas.mjs",
