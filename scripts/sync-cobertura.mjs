@@ -43,6 +43,23 @@
 // feita do próprio estrago mede o estrago como se fosse o normal. A referência sai de
 // REF_DIAS (45 por padrão), onde os dias sãos ainda são maioria.
 //
+// A RÉGUA NÃO ENXERGA DIA INTERROMPIDO PELA METADE — por isso existe a MARCA.
+// Medido em 29/08/2026: uma execução foi morta no meio de 26/08, na 4ª de 27 UFs. O
+// dia ficou com 436 contra referência 838, e o corte de 50% (419) o deixou passar
+// como saudável — por 17 registros. Nenhuma régua estatística resolve isso, porque o
+// dia REALMENTE parece plausível; quem sabe que ele está pela metade é quem o
+// interrompeu. Então o script agora ANOTA, e a anotação entra na decisão junto com a
+// referência: um dia marcado é recolhido mesmo estando acima do limiar.
+//
+// A marca é escrita ANTES de começar o dia e apagada DEPOIS que ele termina limpo —
+// nunca o contrário. Marcar só na saída seria confiar num handler que justamente não
+// roda nos casos que importam: SIGKILL, ExecutionTimeLimit do Task Scheduler, reboot.
+// É a mesma lição que o pncp-lock.mjs já pagou para aprender ("lock que depende de
+// faxina na saída é lock que um dia fica órfão"). Sendo assim, o pior caso é uma
+// marca sobrando num dia que na verdade fechou — e o preço disso é uma recoleta a
+// mais, que os checkpoints de página do etl-pncp tornam barata: em 29/08 a retomada
+// de 26/08 custou 6min em vez do dia inteiro, porque só buscou o que faltava.
+//
 // Uso:
 //   npm run sync:cobertura                    (relata e recoleta os buracos)
 //   npm run sync:cobertura -- --ensaio        (só relata — não toca no PNCP nem no banco)
@@ -88,11 +105,42 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const log = (m) => console.log(`[cobertura] ${m}`)
 const ts = () => new Date().toLocaleString('pt-BR')
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
-// Sem este listener, um reset do PgBouncer derruba o processo inteiro sem uma linha
-// de log — a doença silenciosa recorrente deste repositório.
-client.on('error', (e) => console.warn(`[cobertura] conexão: ${e.message}`))
+// ── DB ───────────────────────────────────────────────────────────────────────
+// O listener de 'error' sozinho NÃO basta, e isso custou uma execução para aprender.
+// Ele impede que o reset do PgBouncer derrube o processo — a doença silenciosa
+// recorrente deste repositório — mas NÃO devolve o cliente ao estado utilizável: a
+// próxima query morre com "Client has encountered a connection error and is not
+// queryable". E este script segura a mesma conexão por até ORCAMENTO_MIN inteiros,
+// quase todos ociosos enquanto o etl-pncp filho trabalha, que é exatamente o perfil
+// que o PgBouncer recicla. Medido em 29/08/2026: a conexão morreu durante a coleta e
+// o processo caiu no `limparInacabado` DEPOIS de ter coletado o dia inteiro — o pior
+// lugar possível, porque o trabalho foi feito e a marca ficou dizendo que não.
+//
+// A resposta é a mesma do etl-pncp.mjs: cliente RECRIÁVEL e query que reconecta sob
+// demanda. Um drop vira reconexão, não um crash.
+function novoDb() {
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  c.on('error', (e) => console.warn(`[cobertura] evento de conexão: ${e.message} (reconecta sob demanda)`))
+  return c
+}
+let client = novoDb()
 await client.connect()
+
+async function dbQuery(text, params, tent = 0) {
+  try {
+    return await client.query(text, params)
+  } catch (e) {
+    if (tent < 5) {
+      console.warn(`[cobertura] query falhou (${e.message.slice(0, 50)}) — reconectando ${tent + 1}/5`)
+      try { await client.end() } catch { /* noop */ }
+      client = novoDb()
+      try { await client.connect() } catch { /* tentará de novo no retry */ }
+      await sleep(1500 * (tent + 1))
+      return dbQuery(text, params, tent + 1)
+    }
+    throw e
+  }
+}
 
 // ── 1. quanto cada dia tem hoje ──────────────────────────────────────────────
 /** Contagem por dia de PUBLICAÇÃO na janela, com os dias ausentes preenchidos com 0
@@ -107,7 +155,7 @@ await client.connect()
  *  foi um domingo com 764 contratações num banco onde a mediana de domingo é 7. Com o
  *  dia vindo pronto do banco, não há fuso para errar. */
 async function cobertura(janela = DIAS) {
-  const { rows } = await client.query(
+  const { rows } = await dbQuery(
     `WITH hoje AS (SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date d),
           dias AS (SELECT gs::date dia
                      FROM hoje, generate_series(hoje.d - ($1::int - 1), hoje.d, '1 day') gs)
@@ -122,6 +170,64 @@ async function cobertura(janela = DIAS) {
   return rows.map((r) => ({ iso: r.iso, n: r.n, idade: r.idade, fds: r.dow === 0 || r.dow === 6 }))
 }
 
+// ── 1b. a marca de dia inacabado ─────────────────────────────────────────────
+// Mora em etl_checkpoint para não pedir migração: a tabela já é o caderno de estado
+// do ETL, a chave é texto livre e a semântica bate ("por onde eu ia"). A EXISTÊNCIA
+// da linha é a marca; `ultima_pagina` guarda quantas contratações o dia tinha quando
+// a tentativa começou, que é o que se quer saber depois ("parou em 436").
+const MARCA = (iso) => `cobertura:inacabado:${iso}`
+
+async function marcarInacabado(iso, tinha) {
+  await dbQuery(
+    `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
+     ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`,
+    [MARCA(iso), tinha])
+}
+
+async function limparInacabado(iso) {
+  await dbQuery('DELETE FROM etl_checkpoint WHERE chave = $1', [MARCA(iso)])
+}
+
+/** A marca é ESCRITURAÇÃO, não o trabalho. Ela existe para a PRÓXIMA execução decidir
+ *  melhor; deixar uma falha de escrituração derrubar a coleta inverteria a prioridade —
+ *  e foi assim que a rodada de 29/08 morreu depois de já ter coletado o dia inteiro.
+ *  Falhar aqui degrada para o comportamento antigo (a régua decide sozinha), que é
+ *  ruim e conhecido, em vez de perder a coleta, que é pior. */
+async function tentar(oQue, fn) {
+  try { return await fn() } catch (e) { log(`aviso: ${oQue} falhou (${e.message.slice(0, 60)}) — sigo sem`) }
+}
+
+/** Data ISO de verdade, não só com cara de uma. `2026-13-99` casa com qualquer regex
+ *  de formato e mesmo assim estoura num `::date` — validar forma não é validar data. */
+const isoValido = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`))
+
+async function lerInacabados() {
+  const { rows } = await dbQuery(
+    `SELECT replace(chave, 'cobertura:inacabado:', '') iso, ultima_pagina tinha
+       FROM etl_checkpoint WHERE chave LIKE 'cobertura:inacabado:%'`)
+  return new Map(rows.filter((r) => isoValido(r.iso)).map((r) => [r.iso, r.tinha]))
+}
+
+/** Marca de dia que já saiu da janela nunca mais será olhada — vira lixo permanente
+ *  na tabela. Poda pela janela da REFERÊNCIA (não a do conserto), que é a maior.
+ *
+ *  O RECORTE É FEITO EM JS, de propósito. Um `::date` em cima da chave derrubaria a
+ *  RODADA INTEIRA por causa de uma linha de lixo — perder a coleta do dia para limpar
+ *  a casa seria o pior negócio possível, e nem CASE resolve, porque uma chave pode ter
+ *  forma de data e ainda assim não ser data. Aqui nada é convertido: o banco só diz
+ *  qual é o corte (ancorado em São Paulo, como todo o resto), a comparação é entre
+ *  textos ISO — que ordenam certo — e chave inválida cai fora por não ser data. */
+async function podarInacabados() {
+  const { rows } = await dbQuery(
+    `SELECT chave, replace(chave, 'cobertura:inacabado:', '') iso,
+            to_char((now() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int, 'YYYY-MM-DD') limite
+       FROM etl_checkpoint WHERE chave LIKE 'cobertura:inacabado:%'`, [REF_DIAS])
+  const mortas = rows.filter((r) => !isoValido(r.iso) || r.iso < r.limite).map((r) => r.chave)
+  if (!mortas.length) return
+  await dbQuery('DELETE FROM etl_checkpoint WHERE chave = ANY($1)', [mortas])
+  log(`${mortas.length} marca(s) de dia inacabado fora da janela ou malformada(s) — podadas`)
+}
+
 const mediana = (xs) => {
   if (!xs.length) return 0
   const s = [...xs].sort((a, b) => a - b)
@@ -129,7 +235,7 @@ const mediana = (xs) => {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2)
 }
 
-function buracos(dias, referencia) {
+function buracos(dias, referencia, inacabados) {
   // O dia de HOJE fica fora da régua: ele ainda está sendo publicado e entraria como
   // um zero permanente, puxando a mediana para baixo todo dia.
   const base = referencia.filter((d) => d.idade > 0)
@@ -142,17 +248,24 @@ function buracos(dias, referencia) {
     // e pagaria uma varredura nacional de 20min por eles. Abaixo do piso só o zero
     // absoluto conta como buraco.
     const faltando = d.ref < PISO_REF ? d.n === 0 : d.n < LIMIAR * d.ref
+    // A marca vence o limiar. Um dia que sabidamente ficou pela metade não precisa
+    // convencer a régua: quem o interrompeu já sabe, e a régua nunca vai saber.
+    d.inacabado = inacabados.has(d.iso)
     // Os dois mais novos entram sempre: são os que a tela mostra primeiro e o dia de
     // hoje, por definição, ainda está sendo publicado — nunca vai parecer completo.
-    d.recolher = d.idade <= 1 || faltando
-    d.motivo = d.idade <= 1 ? 'recente' : (faltando ? `${d.n} vs ref ${d.ref}` : null)
+    d.recolher = d.idade <= 1 || faltando || d.inacabado
+    d.motivo = d.idade <= 1 ? 'recente'
+      : faltando ? `${d.n} vs ref ${d.ref}`
+      : d.inacabado ? `inacabado (parou em ${inacabados.get(d.iso) ?? '?'})`
+      : null
   }
   return { refUtil, refFds }
 }
 
 const referencia = await cobertura(REF_DIAS)
 const dias = referencia.slice(0, DIAS)
-const { refUtil, refFds } = buracos(dias, referencia)
+const inacabados = await lerInacabados()
+const { refUtil, refFds } = buracos(dias, referencia, inacabados)
 
 console.log(`\n[cobertura] ${ts()} — conserta ${DIAS}d · régua de ${REF_DIAS}d:`
   + ` dia útil ${refUtil}, fim de semana ${refFds}`)
@@ -161,7 +274,10 @@ console.table(dias.map((d) => ({
   tipo: d.fds ? 'fim de semana' : 'útil',
   contratações: d.n,
   referência: d.ref,
-  recolher: d.recolher ? (d.motivo === 'recente' ? 'sim (recente)' : 'SIM — buraco') : '—',
+  recolher: !d.recolher ? '—'
+    : d.motivo === 'recente' ? 'sim (recente)'
+    : d.inacabado ? 'SIM — inacabado'
+    : 'SIM — buraco',
 })))
 
 const alvo = FORCAR.length
@@ -172,6 +288,11 @@ if (FORCAR.length && alvo.length !== FORCAR.length) {
   const faltando = FORCAR.filter((f) => !alvo.some((d) => d.iso === f))
   log(`aviso: ${faltando.join(', ')} está fora da janela de ${DIAS} dias — ignorado(s)`)
 }
+
+// Poda ANTES das saídas antecipadas. Uma marca fora da janela não vira alvo, então se
+// a poda ficasse depois do `!alvo.length` ela nunca rodaria justamente nas rodadas em
+// que não há o que fazer — que são as únicas em que sobra tempo para arrumar a casa.
+if (!ENSAIO) await tentar('podar marcas', () => podarInacabados())
 
 if (!alvo.length) {
   log('nenhum dia para recolher — cobertura está em dia.')
@@ -238,14 +359,30 @@ for (const d of alvo) {
     break
   }
   log(`\n── ${d.iso} (tinha ${d.n}) — até ${Math.round(Math.min(POR_DIA_MIN, restaMs() / 60000))}min`)
+  // MARCA ANTES. Deste ponto até o fim limpo, o dia consta como inacabado — inclusive
+  // se este processo levar SIGKILL agora, que é exatamente o caso que a marca cobre.
+  await tentar(`marcar ${d.iso}`, () => marcarInacabado(d.iso, d.n))
   const { code, cortado } = await recolherDia(d.iso)
-  feitos.push({ ...d, code, cortado })
-  if (cortado) log(`${d.iso}: tempo esgotado no meio — o checkpoint do etl-pncp guarda onde parou`)
-  else if (code !== 0) log(`${d.iso}: etl-pncp saiu com código ${code}`)
+  const inteiro = code === 0 && !cortado
+  if (inteiro) await tentar(`limpar a marca de ${d.iso}`, () => limparInacabado(d.iso))
+  feitos.push({ ...d, code, cortado, inteiro })
+  if (cortado) log(`${d.iso}: tempo esgotado no meio — marcado como inacabado;`
+    + ' o checkpoint do etl-pncp guarda onde parou e a próxima execução retoma')
+  else if (code !== 0) log(`${d.iso}: etl-pncp saiu com código ${code} — marcado como inacabado`)
 }
 
 // ── 4. fechamento que não esconde buraco ─────────────────────────────────────
-const depois = await cobertura()
+// O relatório vale menos que a coleta e menos que soltar a pista. Se o banco não
+// responder agora, o trabalho JÁ FOI FEITO e está gravado — perder o resumo é chato,
+// deixar a pista trancada até o silêncio expirar (30min) atrasaria o próximo dono.
+const depois = await tentar('reler a cobertura para o fechamento', () => cobertura())
+if (!depois) {
+  log(`fim SEM RELATÓRIO: ${feitos.length} dia(s) trabalhados — a coleta aconteceu e está`
+    + ' gravada; só o resumo se perdeu. `--ensaio` mostra como a base ficou.')
+  if (!SEM_LOCK) soltar()
+  await client.end().catch(() => {})
+  process.exit(0)
+}
 const porDia = new Map(depois.map((d) => [d.iso, d.n]))
 let ganho = 0
 console.log('')
@@ -261,15 +398,27 @@ console.table(feitos.map((f) => {
     situação: f.cortado ? 'cortado no tempo' : (f.code === 0 ? 'ok' : `saiu ${f.code}`),
     // O que importa não é ter rodado, é ter fechado: um dia que continua abaixo da
     // referência depois da coleta não foi resolvido, e dizer "ok" aqui seria mentir.
-    fechou: f.idade <= 1 ? '—' : (n >= LIMIAR * f.ref ? 'sim' : 'NÃO — segue em falta'),
+    // Passar no limiar TAMBÉM não basta — foi assim que 26/08 se declarou são com 436
+    // de 838 depois de morrer na 4ª de 27 UFs. Quem não terminou não fechou.
+    fechou: f.idade <= 1 ? '—'
+      : !f.inteiro ? 'NÃO — ficou inacabado'
+      : n >= LIMIAR * f.ref ? 'sim'
+      : 'NÃO — segue em falta',
   }
 }))
-const emFalta = feitos.filter((f) => f.idade > 1 && (porDia.get(f.iso) ?? 0) < LIMIAR * f.ref)
+const emFalta = feitos.filter((f) => f.idade > 1
+  && (!f.inteiro || (porDia.get(f.iso) ?? 0) < LIMIAR * f.ref))
 log(`fim: ${feitos.length} dia(s) trabalhados · +${ganho} contratações · ${emFalta.length} ainda em falta`
   + ` · ${Math.round((ORCAMENTO_MIN * 60 * 1000 - restaMs()) / 60000)}min`)
 if (emFalta.length) {
-  log(`ainda em falta: ${emFalta.map((f) => f.iso).join(', ')} — provável janela ruim do PNCP;`
-    + ' a próxima execução (outro horário) tenta de novo')
+  // Os dois motivos pedem explicações diferentes: quem rodou inteiro e ficou curto
+  // provavelmente pegou janela ruim do PNCP; quem não terminou tem a marca guardada e
+  // volta na próxima execução independentemente do que a régua achar dele.
+  const parou = emFalta.filter((f) => !f.inteiro).map((f) => f.iso)
+  const curto = emFalta.filter((f) => f.inteiro).map((f) => f.iso)
+  if (parou.length) log(`inacabado(s), marcado(s) para a próxima execução: ${parou.join(', ')}`)
+  if (curto.length) log(`rodou inteiro e ainda ficou curto: ${curto.join(', ')} —`
+    + ' provável janela ruim do PNCP; a próxima execução (outro horário) tenta de novo')
 }
 if (!SEM_LOCK) soltar()
-await client.end()
+await client.end().catch(() => { /* conexão já caiu; nada a fechar */ })
