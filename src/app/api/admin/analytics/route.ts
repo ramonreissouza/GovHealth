@@ -1,5 +1,6 @@
 // src/app/api/admin/analytics/route.ts — análise de acessos (quem acessa / o que
-// é mais acessado) para o dashboard do admin. Filtros: ?dias= e ?uf=. Só master.
+// é mais acessado) para o dashboard do admin. Filtros: ?dias=, ?uf= e ?usuario=
+// (e-mail; traz junto a linha do tempo dele). Só master.
 import { NextRequest, NextResponse } from 'next/server'
 import { exigirMaster } from '@/lib/admin-guard'
 import { analiseAcessos } from '@/lib/acessos'
@@ -13,7 +14,8 @@ export async function GET(req: NextRequest) {
     const sp = req.nextUrl.searchParams
     const dias = Number(sp.get('dias')) || 30
     const uf = sp.get('uf') ?? undefined
-    return NextResponse.json(await analiseAcessos({ dias, uf }))
+    const usuario = sp.get('usuario') ?? undefined
+    return NextResponse.json(await analiseAcessos({ dias, uf, usuario }))
   } catch (e) {
     console.error('[admin/analytics]', e)
     return NextResponse.json({ error: 'Erro ao carregar análise' }, { status: 500 })
