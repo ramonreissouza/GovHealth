@@ -40,8 +40,10 @@ npm run pncp:sonda -- --mensal=2025 --ufs=SP,MG --mods=6,8
 
 - Sempre **duas UFs ou mais**. SP/pregão foi o pior caso em 2025 (36%) enquanto MG ficava
   em 11-13% e BA em 0%. Extrapolar SP para a base inteira superestima.
-- A sonda **se recusa a rodar** com a pista ocupada, e está certa: sondar junto de uma
-  coleta dá 429. Espere, não passe `--sem-lock`.
+- A sonda **entra na fila** (prioridade 35) e toma a pista enquanto mede — não rode com
+  `--sem-lock`: sondar junto de uma coleta dá 429, e 429 vira consulta PARCIAL, que a
+  sonda reporta como "faltando". Medição envenenada manda mutirão onde não falta nada.
+- Ela **cede entre datas**, então uma sonda longa não segura o `sync-cobertura` das 18:00.
 - Veredito automático: ≥10% faltando = buraco relevante.
 
 **Critério de pronto:** o total da amostra fica abaixo de 5%.

@@ -49,6 +49,10 @@ export const PRIORIDADE = {
   'etl-refresh-loop': 20,
   // Terceira passada do dia: o que a paginação não alcançou.
   'etl-residuo': 30,
+  // Mede a cobertura contra a fonte. Não alimenta o cliente, então fica atrás de tudo
+  // que alimenta; mas é curta e é ela que decide se vale um mutirão de horas, então não
+  // pode ficar atrás dos próprios mutirões que ela existe para autorizar.
+  'sonda-pncp': 35,
   // Preenche campos de linhas que já existem. Adiável sem o cliente notar.
   'etl-enriquecer': 40,
   // Mutirões de período antigo: valiosos, mas nada neles é de hoje.

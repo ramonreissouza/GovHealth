@@ -26,14 +26,23 @@
 //   node scripts/sonda-pncp.mjs --datas=2024-03-12 --ufs=SP,MG,BA --mods=6,8
 //   node scripts/sonda-pncp.mjs --mensal=2024          (uma terça por mês do ano)
 //
-// CUIDADO: sonda usa a mesma pista que a coleta. Rodar isto junto de um mutirão dá 429
-// — medido em 30/08/2026, 14 sondas concorrendo com o backfill-itens levaram 429 na
-// oitava. Confira `.pncp-ocupado` antes, ou rode com a pista livre.
+// A SONDA ENTRA NA FILA COMO QUALQUER UM. Rodar isto junto de uma coleta dá 429 —
+// medido em 30/08/2026, 14 sondas concorrendo com o backfill-itens levaram 429 na oitava.
+// Até 05/09/2026 ela só CONFERIA a pista e desistia se achasse ocupada, o que deixava o
+// buraco do outro lado aberto: com a pista livre ela media sem TOMAR nada, então qualquer
+// tarefa agendada começava por cima da medição em curso. Uma sonda de 30min atravessando
+// as 18:00 encontraria o sync-cobertura em cima dela, e o estrago seria silencioso — 429
+// viram consultas PARCIAIS, que a sonda reporta como "faltando". Medição envenenada é pior
+// que medição nenhuma: leva a mandar mutirão onde não falta nada.
+//
+// Prioridade 35: abaixo do que alimenta o cliente, acima do enriquecimento. E cede entre
+// datas, então o sync-cobertura das 18:00 passa na frente e a sonda retoma em seguida.
 
 import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude } from './saude-filter.mjs'
-import { estado } from './pncp-lock.mjs'
+import { soltarNaSaida } from './pncp-lock.mjs'
+import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 const arg = (n, d) => {
   const m = process.argv.find((a) => a.startsWith(`--${n}=`))
@@ -44,6 +53,7 @@ const MODS = String(arg('mods', '6,8')).split(',').filter(Boolean)
 const MAXPAG = Number(arg('maxpag', '40'))
 const DELAY = Number(arg('delay', '1200'))
 const IGNORAR_PISTA = process.argv.includes('--sem-lock')
+const DONO = 'sonda-pncp'
 
 /** Uma terça-feira por mês do ano — dia útil "médio", longe de segunda e sexta. */
 function tercasDoAno(ano) {
@@ -73,11 +83,13 @@ if (!process.env.DATABASE_URL) {
 }
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada.'); process.exit(1) }
 
-const e = estado()
-if (e.ocupado && !IGNORAR_PISTA) {
-  console.error(`ERRO: a pista está com "${e.dono}". Sondar junto de uma coleta dá 429.`)
-  console.error('      Espere terminar, ou passe --sem-lock se souber o que está fazendo.')
-  process.exit(1)
+// A conversa sobre a pista vai para o stderr de propósito: o stdout é a TABELA, e é
+// ela que alguém vai ler (ou colar) depois. Aviso de fila no meio das linhas estragaria.
+const pista = (m) => console.error(`[pista] ${m}`)
+if (!IGNORAR_PISTA) {
+  soltarNaSaida()
+  limparNaSaida()
+  await esperarVez(DONO, { log: pista })
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -124,6 +136,8 @@ let houveParcial = false
 const porData = []
 
 for (const dia of DATAS) {
+  // Limite de data: nada em voo, nenhum resultado perdido se eu parar aqui por um tempo.
+  if (!IGNORAR_PISTA && devoCeder(DONO)) await ceder(DONO, { log: pista })
   let dSaude = 0
   let dBase = 0
   for (const uf of UFS) {
