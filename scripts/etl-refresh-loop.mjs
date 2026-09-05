@@ -27,10 +27,16 @@
 //       + todas as do etl-refresh.mjs (ETL_DIAS, ETL_DELAY, ETL_ORCAMENTO_MIN, ETL_UF)
 
 import { spawn } from 'node:child_process'
-import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
-import { CODIGO_CEDER, ceder, limparNaSaida } from './pncp-prioridade.mjs'
+import { soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { CODIGO_CEDER, ceder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 const MAX_PASSADAS = Number(process.env.ETL_PASSADAS ?? 3)
+// Quem este processo E na fila da pista. Existem DUAS tarefas agendadas rodando este
+// mesmo script com janelas diferentes: a curta (a cada 2 dias, poucos dias de janela,
+// prioridade 15) e a longa (a cada 3 dias, 21 dias, prioridade 20). Sem nomes distintos
+// as duas teriam a mesma prioridade e a curta ficaria atras da longa por ate 16h nos
+// dias em que coincidem — perdendo exatamente o frescor que ela existe para garantir.
+const DONO = process.env.ETL_DONO ?? 'etl-refresh-loop'
 const ts = () => new Date().toLocaleString('pt-BR')
 const log = (m) => console.log(`[loop] ${m}`)
 
@@ -52,7 +58,7 @@ function passada() {
       // PNCP_DONO desce por AMBIENTE, não por flag, porque entre este processo e o
       // etl-pncp que de fato varre existe o etl-refresh no meio. Por flag eu teria de
       // costurar o repasse em cada nível; por ambiente, herda sozinho até o fim.
-      env: { ...process.env, PNCP_DONO: 'etl-refresh-loop' },
+      env: { ...process.env, PNCP_DONO: DONO },
     })
     let completou = false
     const olhar = (buf) => {
@@ -70,17 +76,23 @@ function passada() {
   })
 }
 
-// Se outro dono legítimo estiver com a pista, não empilhamos em cima dele.
+// ESPERAR, NÃO DESISTIR. Até 05/09/2026 este bloco saía sem rodar quando encontrava a
+// pista ocupada, e o custo disso está no próprio log: em 31/08 ele registrou "a pista
+// já está com backfill-2025h1 — saindo sem rodar" e a próxima chance só veio três dias
+// depois. Para o alimentador principal da base, perder a janela é pior que esperar.
+//
+// Desistir fazia sentido quando a pista era primeiro-a-chegar e esperar significava
+// ficar horas atrás de um trabalho adiável. Agora ele entra na fila com prioridade 20:
+// passa na frente de enriquecer, mutirões e itens, e só espera pelo sync-cobertura,
+// que roda em minutos.
 const antes = estado()
-if (antes.ocupado) {
-  log(`a pista já está com ${antes.dono} — saindo sem rodar.`)
-  process.exit(0)
-}
 if (antes.motivo) log(antes.motivo)
+if (antes.ocupado) log(`pista com ${antes.dono} — entro na fila em vez de desistir`)
 
 soltarNaSaida()
 limparNaSaida()
-pegar('etl-refresh-loop')
+// Sem teto: quem pediu esta tarefa quer a janela coletada, não uma tentativa.
+await esperarVez(DONO, { log })
 
 const diaInicial = diaMaquina()
 log(`início ${ts()} — até ${MAX_PASSADAS} passadas, dia da máquina ${diaInicial}`)
@@ -104,7 +116,7 @@ while (n < MAX_PASSADAS) {
   // com checkpoint gravado. Devolvo a pista, espero minha vez e retomo do mesmo ponto.
   if (code === CODIGO_CEDER && cessoes < MAX_CESSOES) {
     cessoes++
-    await ceder('etl-refresh-loop', { log })
+    await ceder(DONO, { log })
     n-- // não conta contra o teto de passadas: ela foi interrompida, não fracassou
     continue
   }

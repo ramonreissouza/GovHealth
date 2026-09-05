@@ -39,7 +39,13 @@ const PASTA = path.join(process.cwd(), '.pncp-fila')
 export const PRIORIDADE = {
   // Guarda a recência. Roda em minutos e é o que o cliente vê na tela hoje.
   'sync-cobertura': 10,
-  // Traz o volume do dia. Longo, mas é o alimento principal da base.
+  // Refresh CURTO (janela de dias, a cada 2 dias): é a promessa de "o cliente sempre vê
+  // o que saiu esta semana". Passa na frente do refresh longo de propósito — nos dias em
+  // que os dois caem juntos, esperar 16h pelo longo mataria justamente o frescor. O
+  // longo retoma do checkpoint depois; atrasar profundidade custa menos que atrasar hoje.
+  'etl-refresh-2dias': 15,
+  // Refresh LONGO (janela de 21 dias): rede profunda para o que o PNCP publica com
+  // atraso. É o alimento principal da base, mas nada nele é de hoje.
   'etl-refresh-loop': 20,
   // Terceira passada do dia: o que a paginação não alcançou.
   'etl-residuo': 30,
