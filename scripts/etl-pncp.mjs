@@ -158,7 +158,13 @@ async function upsertContratacao(c) {
        link_externo, usuario_nome)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      ON CONFLICT (numero_controle_pncp) DO UPDATE SET
-       valor_total_estimado = EXCLUDED.valor_total_estimado,
+       -- COALESCE pelo mesmo motivo do link_externo abaixo, e a lição custou caro:
+       -- a listagem às vezes devolve valorTotalEstimado nulo para um registro que
+       -- JÁ tem valor na base (recuperado pelo enriquecedor ou pelo backfill de
+       -- valores). Sem o COALESCE, toda re-varredura de um período antigo desfaz
+       -- esse trabalho em silêncio — foi o que 7.263 nulos custaram para virar 907.
+       -- Valor novo e presente ainda ganha do antigo; só o nulo é que não apaga.
+       valor_total_estimado = COALESCE(EXCLUDED.valor_total_estimado, contratacoes.valor_total_estimado),
        data_abertura_proposta = EXCLUDED.data_abertura_proposta,
        data_encerramento_proposta = EXCLUDED.data_encerramento_proposta,
        situacao_id = EXCLUDED.situacao_id,
