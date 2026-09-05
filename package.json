@@ -68,6 +68,8 @@
     "etl:residuo": "node scripts/etl-residuo.mjs",
     "sync:cobertura": "node scripts/sync-cobertura.mjs",
     "pncp:lock:teste": "node scripts/pncp-lock.teste.mjs",
+    "pncp:fila:teste": "node scripts/pncp-prioridade.teste.mjs",
+    "pncp:fila:teste:e2e": "node scripts/pncp-prioridade.integrado.teste.mjs",
     "assentos": "node scripts/assentos-conta.mjs",
     "ia:migrate": "node scripts/migrate-ia-conversas.mjs",
     "deck:numeros": "npx tsx --env-file=.env.local scripts/deck/numeros.ts",

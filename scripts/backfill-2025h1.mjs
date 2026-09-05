@@ -58,7 +58,8 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import pg from 'pg'
-import { estado, pegar, soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { CODIGO_CEDER, ceder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 const arg = (n, d) => {
   const m = process.argv.find((a) => a.startsWith(`--${n}=`))
@@ -164,7 +165,12 @@ function varrer(de, ate) {
       `--delay=${DELAY}`,
       '--soCabecalho',
     ]
-    const p = spawn(process.execPath, args, { stdio: 'inherit' })
+    // PNCP_DONO diz ao filho de quem é a pista, para ele sair pedindo passagem em vez
+    // de segurar a fatia inteira (horas) enquanto alguém urgente espera.
+    const p = spawn(process.execPath, args, {
+      stdio: 'inherit',
+      env: { ...process.env, PNCP_DONO: 'backfill-2025h1' },
+    })
     p.on('exit', (code) => resolve(code ?? 0))
     p.on('error', (e) => { log(`falhou ao iniciar: ${e.message}`); resolve(1) })
   })
@@ -177,17 +183,8 @@ for (const [a, b] of PLANO) log(`  fatia: ${a} → ${b}`)
 if (ENSAIO) { log('ensaio: nada foi executado.'); process.exit(0) }
 
 if (!SEM_LOCK) {
-  const inicio = Date.now()
-  let n = 0
-  while (estado().ocupado) {
-    const e = estado()
-    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
-      log(`pista ainda ocupada por "${e.dono}" — desisto`); process.exit(0)
-    }
-    log(`pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
-    await sleep(10 * 60 * 1000)
-  }
-  pegar('backfill-2025h1')
+  limparNaSaida()
+  if (!(await esperarVez('backfill-2025h1', { esperaMaxMin: ESPERA_MAX_MIN, log }))) process.exit(0)
   soltarNaSaida()
   log('pista tomada.')
 }
@@ -198,7 +195,14 @@ await conferirCodigos()
 let falhas = 0
 for (const [i, [a, b]] of PLANO.entries()) {
   log(`━━━ fatia ${i + 1}/${PLANO.length}: ${a} → ${b} ━━━`)
-  const code = await varrer(a, b)
+  // A fatia pode ser interrompida por passagem quantas vezes for preciso: cada retomada
+  // começa da página seguinte à do checkpoint, então repetir a chamada não repete
+  // trabalho. O teto de cessões vive no pncp-prioridade (piso de trabalho mínimo).
+  let code = await varrer(a, b)
+  while (code === CODIGO_CEDER) {
+    await ceder('backfill-2025h1', { log })
+    code = await varrer(a, b)
+  }
   if (code !== 0) { falhas++; log(`fatia ${a}→${b} saiu com código ${code} — sigo para a próxima`) }
 }
 

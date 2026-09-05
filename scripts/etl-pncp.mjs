@@ -11,6 +11,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude, categoria } from './saude-filter.mjs'
+import { CODIGO_CEDER, devoCeder } from './pncp-prioridade.mjs'
 
 // ── env ──────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -40,6 +41,9 @@ const MAX_UF = Object.fromEntries(String(args.maxuf ?? '').split(',').map((s) =>
   .map((p) => { const [u, n] = p.split(':'); return [u.toUpperCase(), Number(n)] }))
 const maxDaUf = (uf) => MAX_UF[uf] ?? MAX_CONTRATACOES
 const DELAY = Number(args.delay ?? 400)
+// Quem é o dono da pista NO PAI. Sem isto, este script não tem lock para ceder e não
+// tenta — é o caso de quem roda `node scripts/etl-pncp.mjs` direto, na mão.
+const DONO = args.dono ? String(args.dono) : (process.env.PNCP_DONO || null)
 // Range de datas EXPLÍCITO (YYYYMMDD) — usado no backfill fatiado por ano; o PNCP
 // limita a janela a ~1 ano por consulta. Sobrepõe --dias/--meses quando presente.
 const DATA_INI = args.dataInicial ? String(args.dataInicial).replace(/-/g, '') : null
@@ -312,6 +316,16 @@ for (const ufAtual of UF_LIST) {
       if (hitMax) { console.log(`  max/UF (${capUF}) atingido em ${UF}`); break }
       await salvarCheckpoint(chave, pagina) // página inteira concluída → checkpoint
       console.log(`  ${UF}/mod${mod} pág ${pagina}: +${lista.length} saúde — acum ${totC}c/${totI}i/${totR}r (skip ${totSkip})`)
+
+      // CEDER A PISTA — só quando um pai me disse quem ele é (`--dono=`). Rodando
+      // sozinho, este script não tem lock nenhum para ceder e o teste é ignorado.
+      // O lugar é este e não outro: o checkpoint da linha acima ACABOU de gravar, então
+      // sair aqui não perde nem repete página. Sair antes dela repetiria a página.
+      if (DONO && devoCeder(DONO)) {
+        console.log(`  cedendo a pista a pedido — checkpoint em ${UF}/mod${mod} pág ${pagina}; o pai retoma daqui`)
+        try { await db.end() } catch { /* fechar é cortesia; o processo vai sair de todo jeito */ }
+        process.exit(CODIGO_CEDER)
+      }
       if (resp.data.length < 50 || pagina >= (resp.totalPaginas ?? 1)) break
     }
     if (nContrat >= capUF) break

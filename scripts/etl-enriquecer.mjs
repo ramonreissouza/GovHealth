@@ -26,7 +26,8 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
-import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -184,23 +185,38 @@ const lista = meses(DE, ATE)
 // rodar vários ao mesmo tempo. Medido em série: ~9 req/min, porque a lista do PNCP
 // leva ~6s por página e a pausa é irrelevante perto disso; as ~50 mil páginas
 // levariam DIAS. O gargalo é espera de rede, não taxa.
+const logPista = (m) => console.log(`[enriq] ${m}`)
+
 async function esperarPista() {
   if (SEM_LOCK) return true
-  const inicio = Date.now()
-  let n = 0
-  while (estado().ocupado) {
-    const e = estado()
-    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
-      console.log(`[enriq] pista ainda ocupada por "${e.dono}" — desisto de hoje,`
-        + ` a próxima execução retoma do checkpoint`)
-      return false
-    }
-    console.log(`[enriq] pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
-    await sleep(10 * 60 * 1000)
-  }
-  pegar('etl-enriquecer')
+  limparNaSaida()
+  if (!(await esperarVez('etl-enriquecer', { esperaMaxMin: ESPERA_MAX_MIN, log: logPista }))) return false
   soltarNaSaida()
   return true
+}
+
+// CEDER COM CONCORRÊNCIA. Aqui não há um laço só: são CONC frentes puxando da mesma
+// fila. Se uma delas soltasse a pista sozinha, as outras continuariam batendo no PNCP
+// — que é exatamente a concorrência que o lock existe para evitar. Então a primeira
+// que percebe o pedido abre um portão único e as demais esperam nele.
+//
+// `devoCeder` é síncrono e não há `await` entre o teste e a atribuição de `cedendo`,
+// então duas frentes não conseguem abrir dois portões: o portão é criado inteiro
+// dentro de um mesmo passo do laço de eventos.
+//
+// As requisições JÁ EM VOO quando o portão abre seguem até responder — alguns segundos
+// de sobreposição com o sucessor. Cortá-las seria pior: perderíamos o trabalho e o
+// PNCP receberia a mesma consulta de novo na retomada.
+let cedendo = null
+async function talvezCeder() {
+  if (SEM_LOCK) return
+  if (cedendo) { await cedendo; return }
+  if (!devoCeder('etl-enriquecer')) return
+  cedendo = (async () => {
+    await ceder('etl-enriquecer', { log: logPista })
+    cedendo = null
+  })()
+  await cedendo
 }
 
 // Sair aqui é seguro e barato: o progresso está em etl_checkpoint por (mês, modalidade),
@@ -267,6 +283,7 @@ await Promise.all(Array.from({ length: CONC }, async () => {
   for (;;) {
     const p = fila.shift()
     if (!p) return
+    await talvezCeder()
     await varrer(p)
     feitas++
     const min = (Date.now() - t0) / 60000

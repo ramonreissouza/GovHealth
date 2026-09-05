@@ -28,6 +28,7 @@
 
 import { spawn } from 'node:child_process'
 import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { CODIGO_CEDER, ceder, limparNaSaida } from './pncp-prioridade.mjs'
 
 const MAX_PASSADAS = Number(process.env.ETL_PASSADAS ?? 3)
 const ts = () => new Date().toLocaleString('pt-BR')
@@ -48,7 +49,10 @@ function passada() {
   return new Promise((resolve) => {
     const p = spawn(process.execPath, ['scripts/etl-refresh.mjs'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      // PNCP_DONO desce por AMBIENTE, não por flag, porque entre este processo e o
+      // etl-pncp que de fato varre existe o etl-refresh no meio. Por flag eu teria de
+      // costurar o repasse em cada nível; por ambiente, herda sozinho até o fim.
+      env: { ...process.env, PNCP_DONO: 'etl-refresh-loop' },
     })
     let completou = false
     const olhar = (buf) => {
@@ -75,6 +79,7 @@ if (antes.ocupado) {
 if (antes.motivo) log(antes.motivo)
 
 soltarNaSaida()
+limparNaSaida()
 pegar('etl-refresh-loop')
 
 const diaInicial = diaMaquina()
@@ -82,12 +87,27 @@ log(`início ${ts()} — até ${MAX_PASSADAS} passadas, dia da máquina ${diaIni
 
 let n = 0
 let fechou = false
+let cessoes = 0
+// Teto de cessões porque o contrário é pior que o problema: sem ele, um consumidor
+// urgente que acorda de tempos em tempos poderia manter este loop cedendo a noite
+// inteira sem nunca fechar a janela — fila justa que não entrega nada. O piso de
+// trabalho do pncp-prioridade já espaça as cessões; isto é o limite de última linha.
+const MAX_CESSOES = 5
 while (n < MAX_PASSADAS) {
   n++
   log(`passada ${n}/${MAX_PASSADAS} — ${ts()}`)
   const { code, completou } = await passada()
 
   if (completou) { fechou = true; log(`janela FECHADA na passada ${n} — ${ts()}`); break }
+
+  // Passagem não é falha nem passada gasta: a varredura parou num limite de página,
+  // com checkpoint gravado. Devolvo a pista, espero minha vez e retomo do mesmo ponto.
+  if (code === CODIGO_CEDER && cessoes < MAX_CESSOES) {
+    cessoes++
+    await ceder('etl-refresh-loop', { log })
+    n-- // não conta contra o teto de passadas: ela foi interrompida, não fracassou
+    continue
+  }
   if (diaMaquina() !== diaInicial) {
     log(`o dia da máquina virou (${diaInicial} → ${diaMaquina()}): parando aqui.`)
     log('outra passada abriria uma janela NOVA e recomeçaria de SP, perdendo as UFs já fechadas.')

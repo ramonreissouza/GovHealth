@@ -18,7 +18,8 @@
 //   node scripts/backfill-antigos.mjs --so-itens      (pula os valores)
 
 import { spawn } from 'node:child_process'
-import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 const arg = (n, d) => { const m = process.argv.find((a) => a.startsWith(`--${n}=`)); return m ? m.slice(n.length + 3) : d }
 const MIN = arg('min', '10000000')
@@ -41,13 +42,9 @@ function rodar(args) {
 }
 
 // ── pega a pista uma vez para as duas etapas ────────────────────────────────
-let n = 0
-while (estado().ocupado) {
-  const e = estado()
-  log(`pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
-  await sleep(10 * 60 * 1000)
-}
-pegar('backfill-antigos')
+// Sem teto de espera de propósito: é mutirão manual, quem rodou quer que rode.
+limparNaSaida()
+await esperarVez('backfill-antigos', { log })
 soltarNaSaida()
 log(`pista tomada — início`)
 

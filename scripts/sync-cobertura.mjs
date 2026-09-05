@@ -71,7 +71,8 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { spawn } from 'node:child_process'
-import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -306,24 +307,21 @@ if (ENSAIO) {
 }
 
 // ── 2. a pista ───────────────────────────────────────────────────────────────
-/** Mesma etiqueta dos outros consumidores pesados: espera educadamente e DESISTE em
- *  vez de atropelar. Desistir é barato aqui — a próxima execução (em horas) refaz a
- *  mesma pergunta ao banco e reencontra o mesmo buraco. A fila é a consulta. */
+/** Este script é a GUARDA DA RECÊNCIA, e por isso entra na fila com a prioridade mais
+ *  alta de todas (ver pncp-prioridade.mjs). A etiqueta antiga — "espera educadamente e
+ *  desiste" — parecia barata porque a próxima execução refaria a conta. Não era: em
+ *  05/09/2026 ele detectou que 04/09 e 03/09 precisavam ser recolhidos e desistiu para
+ *  o etl-enriquecer, e antes disso perdeu três rodadas seguidas para o mutirão. Quem
+ *  desiste todo dia nunca roda, e o buraco que ele existe para tapar fica aberto.
+ *
+ *  Agora quem tem a pista vê o pedido dele e CEDE em segundos, então o teto de espera
+ *  virou rede de segurança contra dono legado (que não sabe ceder), não o caso normal. */
 async function esperarPista() {
   if (SEM_LOCK) return true
-  const inicio = Date.now()
-  let n = 0
-  while (estado().ocupado) {
-    const e = estado()
-    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
-      log(`pista ainda ocupada por "${e.dono}" — desisto desta rodada,`
-        + ' a próxima refaz a conta e retoma')
-      return false
-    }
-    log(`pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 5min`)
-    await sleep(5 * 60 * 1000)
-  }
-  pegar('sync-cobertura'); soltarNaSaida(); return true
+  limparNaSaida()
+  if (!(await esperarVez('sync-cobertura', { esperaMaxMin: ESPERA_MAX_MIN, log }))) return false
+  soltarNaSaida()
+  return true
 }
 if (!(await esperarPista())) { await client.end(); process.exit(0) }
 

@@ -32,7 +32,8 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
-import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -184,18 +185,8 @@ async function gravar(lote) {
 // ── a pista: um dono só ───────────────────────────────────────────────────────
 async function esperarPista() {
   if (SEM_LOCK) return true
-  const inicio = Date.now()
-  let n = 0
-  while (estado().ocupado) {
-    const e = estado()
-    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
-      log(`pista ainda ocupada por "${e.dono}" — desisto de hoje, a próxima execução retoma`)
-      return false
-    }
-    log(`pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
-    await sleep(10 * 60 * 1000)
-  }
-  pegar('etl-residuo')
+  limparNaSaida()
+  if (!(await esperarVez('etl-residuo', { esperaMaxMin: ESPERA_MAX_MIN, log }))) return false
   soltarNaSaida()
   return true
 }
@@ -229,6 +220,8 @@ for (let i = 0; i < fila.length; i++) {
     log(`orçamento de ${ORCAMENTO_MIN}min esgotado em ${i} de ${fila.length} — a próxima execução retoma`)
     break
   }
+  // Entre dois itens da fila não há nada em voo: é o ponto barato de ceder.
+  if (!SEM_LOCK && devoCeder('etl-residuo')) await ceder('etl-residuo', { log })
   const id = fila[i].id
   // '13571334000167-1-000040/2026' → cnpj / sequencial / ano
   const m = id.match(/^(\d{14})-\d+-(\d+)\/(\d{4})$/)

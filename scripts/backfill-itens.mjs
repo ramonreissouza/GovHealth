@@ -29,7 +29,8 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
-import { pegar, soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 const arg = (n, d) => { const m = process.argv.find((a) => a.startsWith(`--${n}=`)); return m ? m.slice(n.length + 3) : d }
 const MIN = Number(arg('min', '10000000'))
@@ -69,18 +70,11 @@ const brl = (n) => Number(n ?? 0).toLocaleString('pt-BR', { maximumFractionDigit
 // 4 quedas em 485 páginas rodando um de cada vez.
 async function esperarPista() {
   if (SEM_LOCK) return true
-  const inicio = Date.now()
-  let n = 0
-  while (estado().ocupado) {
-    const e = estado()
-    if (ESPERA_MAX_MIN && (Date.now() - inicio) / 60000 >= ESPERA_MAX_MIN) {
-      log(`pista ainda ocupada por "${e.dono}" — desisto de hoje, a próxima execução retoma`)
-      return false
-    }
-    log(`pista ocupada por "${e.dono}" — espera ${++n}, novo teste em 10min`)
-    await sleep(10 * 60 * 1000)
-  }
-  pegar('backfill-itens')
+  limparNaSaida()
+  // Entra na fila com a prioridade mais baixa do pipeline, por mérito próprio: é o
+  // único consumidor cujo trabalho não tem prazo e cuja fila é medida em centenas
+  // de horas. Desistir aqui continua barato — a fila é recalculada do banco amanhã.
+  if (!(await esperarVez('backfill-itens', { esperaMaxMin: ESPERA_MAX_MIN, log }))) return false
   soltarNaSaida()
   return true
 }
@@ -209,6 +203,13 @@ log(`estimativa: ~${Math.round(fila.length * 7.2).toLocaleString('pt-BR')} pedid
 let porOrcamento = false
 for (const c of fila) {
   if (ORCAMENTO_MIN && (Date.now() - t0) / 60000 >= ORCAMENTO_MIN) { porOrcamento = true; break }
+  // CEDER A PISTA. Este é o trabalho mais adiável do pipeline e o que segura a pista
+  // por mais tempo: em 04/09/2026 a própria estimativa dele passou de ~245h para ~492h
+  // no meio da rodada. Enquanto isso o sync-cobertura, que roda em minutos e guarda a
+  // recência da base, desistia todo dia por encontrar a pista ocupada. Aqui é o ponto
+  // certo de ceder: entre duas contratações não há nada em voo e nada a desfazer — a
+  // fila é relida do banco na próxima execução de qualquer jeito.
+  if (!SEM_LOCK && devoCeder('backfill-itens')) await ceder('backfill-itens', { log })
   const base = `${PNCP}/orgaos/${c.cnpj_orgao}/compras/${c.ano_compra}/${c.sequencial_compra}`
   const { dado: resp, falhou } = await fetchOuNulo(`${base}/itens?pagina=1&tamanhoPagina=100`)
   pedidos++
