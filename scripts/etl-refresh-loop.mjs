@@ -28,7 +28,7 @@
 
 import { spawn } from 'node:child_process'
 import { soltar, soltarNaSaida, estado } from './pncp-lock.mjs'
-import { CODIGO_CEDER, ceder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
+import { CODIGO_CEDER, ceder, esperarVez, limparNaSaida, trabalhandoDesdeMs } from './pncp-prioridade.mjs'
 
 const MAX_PASSADAS = Number(process.env.ETL_PASSADAS ?? 3)
 // Quem este processo E na fila da pista. Existem DUAS tarefas agendadas rodando este
@@ -58,7 +58,7 @@ function passada() {
       // PNCP_DONO desce por AMBIENTE, não por flag, porque entre este processo e o
       // etl-pncp que de fato varre existe o etl-refresh no meio. Por flag eu teria de
       // costurar o repasse em cada nível; por ambiente, herda sozinho até o fim.
-      env: { ...process.env, PNCP_DONO: DONO },
+      env: { ...process.env, PNCP_DONO: DONO, PNCP_TRABALHANDO_DESDE: String(trabalhandoDesdeMs()) },
     })
     let completou = false
     const olhar = (buf) => {

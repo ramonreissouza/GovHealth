@@ -70,6 +70,7 @@
     "pncp:lock:teste": "node scripts/pncp-lock.teste.mjs",
     "pncp:fila:teste": "node scripts/pncp-prioridade.teste.mjs",
     "pncp:fila:teste:e2e": "node scripts/pncp-prioridade.integrado.teste.mjs",
+    "pncp:fila:teste:filho": "node scripts/pncp-prioridade.filho.teste.mjs",
     "pncp:sonda": "node scripts/sonda-pncp.mjs",
     "assentos": "node scripts/assentos-conta.mjs",
     "ia:migrate": "node scripts/migrate-ia-conversas.mjs",

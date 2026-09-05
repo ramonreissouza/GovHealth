@@ -136,7 +136,27 @@ export function fila() {
 
 let ultimaConferida = 0
 let ultimaResposta = null
-let trabalhandoDesde = Date.now()
+
+// O PISO DE TRABALHO E DA PISTA, NAO DESTE PROCESSO — e confundir as duas coisas matou
+// a passagem inteira, em silencio, na primeira vez que ela valeu em producao.
+//
+// 05/09/2026: o mutirao de PE segurou a pista por 62 min enquanto a sonda esperava na
+// fila. Ele nunca cedeu, e o log das duas pontas parecia normal — a sonda dizia "espera
+// 1... espera 50", o mutirao nao dizia nada. Motivo: quem varre e um FILHO spawnado por
+// FATIA, e cada fatia durava ~5 min. O `trabalhandoDesde` nascia com o processo, entao
+// nenhum filho chegava aos 10 min do piso e `quemPedePassagem` devolvia null para todos.
+// A pista trocava de processo a cada 5 min e o relogio do piso voltava para o zero junto.
+//
+// O piso existe para impedir que um urgente que acorda de minuto em minuto deixe o longo
+// cedendo para sempre sem produzir nada. Isso e uma propriedade de QUEM ESTA COM A PISTA
+// ao longo do tempo — o pai —, nao da vida de cada filho. Por isso o pai passa o carimbo
+// por ambiente e o filho o herda: os dois medem o mesmo relogio.
+const HERDADO = Number(process.env.PNCP_TRABALHANDO_DESDE)
+let trabalhandoDesde = Number.isFinite(HERDADO) && HERDADO > 0 ? HERDADO : Date.now()
+
+/** Desde quando quem tem a pista esta trabalhando (epoch ms). O pai manda isto ao filho
+ *  no ambiente para o piso nao reiniciar a cada fatia. */
+export const trabalhandoDesdeMs = () => trabalhandoDesde
 
 /** Chamado DENTRO do laço de quem tem a pista. Barato: relê no máximo a cada 15s.
  *  `dono` é quem eu sou; devolve o pedido que me passa na frente, ou null. */

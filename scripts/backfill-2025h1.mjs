@@ -60,7 +60,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import pg from 'pg'
 import { soltar, soltarNaSaida } from './pncp-lock.mjs'
-import { CODIGO_CEDER, ceder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
+import { CODIGO_CEDER, ceder, devoCeder, esperarVez, limparNaSaida, trabalhandoDesdeMs } from './pncp-prioridade.mjs'
 
 const arg = (n, d) => {
   const m = process.argv.find((a) => a.startsWith(`--${n}=`))
@@ -178,7 +178,14 @@ function varrer(de, ate) {
     // de segurar a fatia inteira (horas) enquanto alguém urgente espera.
     const p = spawn(process.execPath, args, {
       stdio: 'inherit',
-      env: { ...process.env, PNCP_DONO: 'backfill-2025h1' },
+      env: {
+        ...process.env,
+        PNCP_DONO: 'backfill-2025h1',
+        // Sem este carimbo o filho comeca o piso de trabalho do zero, e como a fatia dura
+        // ~5min ele nunca alcanca os 10min — nenhum filho cede, nunca. Ver o comentario
+        // do trabalhandoDesde no pncp-prioridade.
+        PNCP_TRABALHANDO_DESDE: String(trabalhandoDesdeMs()),
+      },
     })
     p.on('exit', (code) => resolve(code ?? 0))
     p.on('error', (e) => { log(`falhou ao iniciar: ${e.message}`); resolve(1) })
@@ -203,6 +210,10 @@ await conferirCodigos()
 
 let falhas = 0
 for (const [i, [a, b]] of PLANO.entries()) {
+  // Limite de fatia: o filho anterior ja saiu, nada em voo. Vale como rede mesmo com o
+  // carimbo herdado — se um dia a fatia ficar curta de novo, aqui a espera de quem esta
+  // na fila e de UMA fatia, nao do mutirao inteiro.
+  if (!SEM_LOCK && devoCeder('backfill-2025h1')) await ceder('backfill-2025h1', { log })
   log(`━━━ fatia ${i + 1}/${PLANO.length}: ${a} → ${b} ━━━`)
   // A fatia pode ser interrompida por passagem quantas vezes for preciso: cada retomada
   // começa da página seguinte à do checkpoint, então repetir a chamada não repete
