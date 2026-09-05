@@ -38,8 +38,24 @@ Para medir contra a FONTE:
 npm run pncp:sonda -- --mensal=2025 --ufs=SP,MG --mods=6,8
 ```
 
-- Sempre **duas UFs ou mais**. SP/pregão foi o pior caso em 2025 (36%) enquanto MG ficava
-  em 11-13% e BA em 0%. Extrapolar SP para a base inteira superestima.
+- Sempre **duas UFs ou mais, e nunca só as grandes**. SP, RJ, MG, RS, PR e BA são as
+  PRIMEIRAS a serem coletadas em toda passada (ver o cabeçalho do `etl-refresh-loop.mjs`),
+  então medem o melhor caso. Quando a passada estoura o orçamento, quem fica de fora é
+  sempre o fim da fila.
+
+  Medido em 05/09/2026, e a diferença não é sutil:
+
+  | amostra | faltando |
+  |---|---|
+  | SP+MG, 14 datas de jan/2025 a ago/2026 | **1%** |
+  | PE, 5 datas de jul a dez/2025 | **28-68%** |
+
+  A mesma base, no mesmo dia. Amostrar só SP e MG teria fechado o assunto com "1%,
+  cobertura boa" e deixado PE pela metade. **Inclua sempre uma UF do meio da fila.**
+
+  (Em jan–jun/2025 valia o contrário — SP/pregão era o pior caso, com 36% — porque ali o
+  problema era teto de paginação, que castiga justamente quem tem mais páginas. A regra
+  não é "UF X é pior": é que **cada modo de falha tem sua própria vítima preferida**.)
 - A sonda **entra na fila** (prioridade 35) e toma a pista enquanto mede — não rode com
   `--sem-lock`: sondar junto de uma coleta dá 429, e 429 vira consulta PARCIAL, que a
   sonda reporta como "faltando". Medição envenenada manda mutirão onde não falta nada.

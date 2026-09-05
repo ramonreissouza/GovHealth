@@ -50,6 +50,7 @@
 //   node scripts/backfill-2025h1.mjs --ensaio      (só mostra o plano; não toca em nada)
 //   node scripts/backfill-2025h1.mjs               (espera a pista e varre)
 //   node scripts/backfill-2025h1.mjs --de=2025-03-01 --ate=2025-04-30
+//   node scripts/backfill-2025h1.mjs --de=2025-07-01 --ate=2026-01-31 --ufs=PE
 //
 // DEPOIS DE RODAR: `npm run ruido:limpar -- --so-valor --aplicar`. Toda coleta nova
 // ressuscita as linhas de valor impossível que já haviam sido neutralizadas.
@@ -75,11 +76,19 @@ const DELAY = arg('delay', '400')
 const ESPERA_MAX_MIN = Number(arg('espera-max', '0'))
 const MAXPAG = arg('maxpag', '400')
 
-// Todas as 27 UFs. Conferido na base: as 6 modalidades aparecem em jan–jun/2025 na
-// mesma proporção do resto do ano, então o buraco NÃO é de modalidade — mas varrer
-// só 6,8 (o padrão do etl-pncp) deixaria Inexigibilidade e Credenciamento de fora,
-// que juntas são 15.731 linhas do período.
-const UFS = 'SP,RJ,MG,RS,PR,BA,SC,GO,PE,CE,DF,ES,PA,MT,MS,AM,MA,RN,PB,PI,AL,SE,RO,TO,AC,AP,RR'
+// Todas as 27 UFs por padrão. Conferido na base: as 6 modalidades aparecem em
+// jan–jun/2025 na mesma proporção do resto do ano, então o buraco NÃO é de modalidade
+// — mas varrer só 6,8 (o padrão do etl-pncp) deixaria Inexigibilidade e Credenciamento
+// de fora, que juntas são 15.731 linhas do período.
+//
+// `--ufs=` existe porque nem todo buraco é do tamanho do país. Medido em 05/09/2026:
+// PE estava com 28-68% faltando entre jul e dez/2025 enquanto PA, GO, MT, MS, AM e PB
+// no mesmo dia estavam em 0%. Varrer as 27 para consertar uma custaria ~27x mais pista
+// pelo mesmo resultado — e pista é o recurso escasso aqui, não tempo de CPU.
+//
+// O checkpoint já separa por UF (`uf:PE:mod:6:r...`), então restringir a lista NÃO
+// atrapalha uma varredura completa que tenha rodado antes nem uma que venha depois.
+const UFS = arg('ufs', 'SP,RJ,MG,RS,PR,BA,SC,GO,PE,CE,DF,ES,PA,MT,MS,AM,MA,RN,PB,PI,AL,SE,RO,TO,AC,AP,RR')
 const MODALIDADES = '4,5,6,8,9,12'
 const NOMES_ESPERADOS = {
   4: 'Concorrência - Eletrônica', 5: 'Concorrência - Presencial', 6: 'Pregão - Eletrônico',

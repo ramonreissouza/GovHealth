@@ -181,6 +181,11 @@ if (houveParcial) {
   console.log('         O total do PNCP é chão, não teto — o que falta pode ser MAIOR.')
 }
 console.log(pct >= 10
-  ? '\nVEREDITO: buraco relevante. Amostre outra UF antes de extrapolar (SP costuma ser o pior caso).'
+  ? '\nVEREDITO: buraco relevante. Amostre outra UF antes de extrapolar.'
   : '\nVEREDITO: cobertura boa nesta amostra. Não vale um mutirão só por isto.')
+if (UFS.every((u) => ['SP', 'MG', 'RJ', 'RS', 'PR', 'BA'].includes(u))) {
+  console.log('AVISO: só UFs do começo da fila nesta amostra. Elas são as PRIMEIRAS a serem')
+  console.log('       coletadas em toda passada, então medem o melhor caso, não a média.')
+  console.log('       Inclua uma UF do meio (PE, CE, ES, MA) antes de concluir que está bom.')
+}
 await c.end()
