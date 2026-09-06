@@ -209,7 +209,7 @@ for (const c of fila) {
   // recência da base, desistia todo dia por encontrar a pista ocupada. Aqui é o ponto
   // certo de ceder: entre duas contratações não há nada em voo e nada a desfazer — a
   // fila é relida do banco na próxima execução de qualquer jeito.
-  if (!SEM_LOCK && devoCeder('backfill-itens')) await ceder('backfill-itens', { log })
+  if (!SEM_LOCK && devoCeder('backfill-itens') && !(await ceder('backfill-itens', { log }))) break
   const base = `${PNCP}/orgaos/${c.cnpj_orgao}/compras/${c.ano_compra}/${c.sequencial_compra}`
   const { dado: resp, falhou } = await fetchOuNulo(`${base}/itens?pagina=1&tamanhoPagina=100`)
   pedidos++

@@ -116,7 +116,13 @@ while (n < MAX_PASSADAS) {
   // com checkpoint gravado. Devolvo a pista, espero minha vez e retomo do mesmo ponto.
   if (code === CODIGO_CEDER && cessoes < MAX_CESSOES) {
     cessoes++
-    await ceder(DONO, { log })
+    // Sem a pista de volta não há passada: seguir aqui foi o que pôs duas frentes no
+    // PNCP ao mesmo tempo em 06/09. O checkpoint guarda o progresso; a próxima execução
+    // agendada retoma da mesma janela.
+    if (!(await ceder(DONO, { log }))) {
+      log('não retomei a pista — paro aqui em vez de varrer por cima de quem está nela.')
+      break
+    }
     n-- // não conta contra o teto de passadas: ela foi interrompida, não fracassou
     continue
   }

@@ -213,16 +213,20 @@ for (const [i, [a, b]] of PLANO.entries()) {
   // Limite de fatia: o filho anterior ja saiu, nada em voo. Vale como rede mesmo com o
   // carimbo herdado — se um dia a fatia ficar curta de novo, aqui a espera de quem esta
   // na fila e de UMA fatia, nao do mutirao inteiro.
-  if (!SEM_LOCK && devoCeder('backfill-2025h1')) await ceder('backfill-2025h1', { log })
+  // Sem a pista de volta nao ha mutirao: parar aqui deixa o checkpoint intacto para a
+  // proxima rodada. Seguir seria varrer por cima de quem esta na pista.
+  if (!SEM_LOCK && devoCeder('backfill-2025h1') && !(await ceder('backfill-2025h1', { log }))) break
   log(`━━━ fatia ${i + 1}/${PLANO.length}: ${a} → ${b} ━━━`)
   // A fatia pode ser interrompida por passagem quantas vezes for preciso: cada retomada
   // começa da página seguinte à do checkpoint, então repetir a chamada não repete
   // trabalho. O teto de cessões vive no pncp-prioridade (piso de trabalho mínimo).
   let code = await varrer(a, b)
+  let semPista = false
   while (code === CODIGO_CEDER) {
-    await ceder('backfill-2025h1', { log })
+    if (!(await ceder('backfill-2025h1', { log }))) { semPista = true; break }
     code = await varrer(a, b)
   }
+  if (semPista) break
   if (code !== 0) { falhas++; log(`fatia ${a}→${b} saiu com código ${code} — sigo para a próxima`) }
 }
 

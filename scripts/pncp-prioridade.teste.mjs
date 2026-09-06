@@ -110,6 +110,28 @@ conferir('e não deixou pedido pendurado na fila', fila.fila().length, 0)
 lock.soltar()
 limpar()
 
+
+console.log('\nceder() não retoma por cima')
+// O TETO ERA UM DESPEJO. `ceder` esperava a pista até `tetoMin` e, estourado o teto,
+// chamava `pegar` de qualquer jeito — que na época escrevia sem conferir. Em 06/09/2026
+// o mutirão de MG cedeu às 03:01, esperou os 120min e às 05:01 retomou POR CIMA do
+// refresh longo, que seguiu varrendo sem saber. Duas frentes no PNCP por seis horas.
+//
+// O teste força o caso: pista de um PID vivo alheio que nunca sai, teto minúsculo.
+limpar()
+lock.soltar()
+fs.writeFileSync(path.join(caixa, '.pncp-ocupado'), JSON.stringify({
+  pid: PID_VIVO_ALHEIO, dono: 'dono-legitimo', desde: new Date().toISOString(), anuncia: true,
+}))
+semear(PID_VIVO_ALHEIO, 'sync-cobertura', 10)
+fila._zerarCache()
+const retomou = await fila.ceder('backfill-itens', { log: () => {}, tetoMin: 0.002 })
+conferir('não conseguindo a pista de volta, ceder() devolve false', retomou, false)
+conferir('e o dono legítimo continua na pista', lock.estado().dono, 'dono-legitimo')
+conferir('e não deixou pedido pendurado na fila', fila.fila().filter((p) => p.pid === process.pid).length, 0)
+limpar()
+fs.rmSync(path.join(caixa, '.pncp-ocupado'), { force: true })
+
 console.log(`\n${ok} ok · ${falhou} falharam`)
 process.chdir(os.tmpdir())
 try { fs.rmSync(caixa, { recursive: true, force: true }) } catch {}

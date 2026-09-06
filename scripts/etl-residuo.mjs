@@ -221,7 +221,7 @@ for (let i = 0; i < fila.length; i++) {
     break
   }
   // Entre dois itens da fila não há nada em voo: é o ponto barato de ceder.
-  if (!SEM_LOCK && devoCeder('etl-residuo')) await ceder('etl-residuo', { log })
+  if (!SEM_LOCK && devoCeder('etl-residuo') && !(await ceder('etl-residuo', { log }))) break
   const id = fila[i].id
   // '13571334000167-1-000040/2026' → cnpj / sequencial / ano
   const m = id.match(/^(\d{14})-\d+-(\d+)\/(\d{4})$/)

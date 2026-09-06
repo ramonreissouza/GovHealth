@@ -78,6 +78,42 @@ const sumiu = !fs.existsSync(LOCK)
 console.log(`${sumiu ? 'ok   ' : 'FALHA'} soltar() apaga o arquivo e para a batida`)
 sumiu ? ok++ : falhou++
 
+
+// ── DOIS DONOS NA PISTA (06/09/2026) ────────────────────────────────────────────
+// `pegar` escrevia por cima existisse ou não lock, e `soltar` apagava o de quem
+// fosse. Resultado em produção: `etl-refresh-2dias` com o lock e `etl-refresh-loop`
+// varrendo RS/mod6 ao mesmo tempo, por seis horas, sem uma linha de erro nos dois
+// lados. O sintoma foi 503 em rajada e uma página abandonada.
+//
+// PID_ALHEIO tem de ser um processo VIVO que não é este: com um PID morto o `pegar`
+// deve tomar a pista (e toma), então o caso morto não prova nada sobre despejo.
+const PID_ALHEIO = process.platform === 'win32' ? 4 : 1
+
+const afirmar = (nome, real, esperado) => {
+  const bate = JSON.stringify(real) === JSON.stringify(esperado)
+  console.log(`${bate ? 'ok   ' : 'FALHA'} ${nome}`
+    + (bate ? '' : ` — esperado ${JSON.stringify(esperado)}, real ${JSON.stringify(real)}`))
+  bate ? ok++ : falhou++
+}
+
+const donoAtual = () => { try { return JSON.parse(fs.readFileSync(LOCK, 'utf8')).dono } catch { return null } }
+
+fs.writeFileSync(LOCK, JSON.stringify({ pid: PID_ALHEIO, dono: 'dono-legitimo', desde: minAtras(1), anuncia: true }))
+afirmar('pegar() RECUSA quando um vivo alheio está na pista', mod.pegar('invasor'), false)
+afirmar('e não escreveu por cima do dono legítimo', donoAtual(), 'dono-legitimo')
+
+// A outra ponta do mesmo estrago: em produção foi um processo já despejado que, ao
+// terminar, apagou na saída o lock de quem estava trabalhando.
+mod.soltar()
+afirmar('soltar() NÃO apaga a pista de outro dono', donoAtual(), 'dono-legitimo')
+
+// E o inverso tem de continuar valendo, senão o conserto vira travamento: lock de PID
+// morto não segura ninguém.
+fs.writeFileSync(LOCK, JSON.stringify({ pid: MORTO, dono: 'fantasma', desde: minAtras(1), anuncia: true }))
+afirmar('pegar() TOMA a pista de um lock órfão', mod.pegar('legitimo'), true)
+afirmar('e o dono passou a ser quem pegou', donoAtual(), 'legitimo')
+afirmar('e soltar() apaga a própria pista', (mod.soltar(), fs.existsSync(LOCK)), false)
+
 console.log(`\n${ok} ok · ${falhou} falha(s)`)
 // Sair do diretório antes de apagá-lo: no Windows não se remove o cwd.
 process.chdir(os.tmpdir())

@@ -208,15 +208,21 @@ async function esperarPista() {
 // de sobreposição com o sucessor. Cortá-las seria pior: perderíamos o trabalho e o
 // PNCP receberia a mesma consulta de novo na retomada.
 let cedendo = null
+// Uma vez perdida a pista, TODAS as frentes param: elas compartilham a pista, entao
+// nao ha caso em que uma possa seguir sem a outra.
+let semPista = false
+/** true = pode trabalhar; false = a pista nao voltou, encerre a frente. */
 async function talvezCeder() {
-  if (SEM_LOCK) return
-  if (cedendo) { await cedendo; return }
-  if (!devoCeder('etl-enriquecer')) return
+  if (SEM_LOCK) return true
+  if (semPista) return false
+  if (cedendo) { await cedendo; return !semPista }
+  if (!devoCeder('etl-enriquecer')) return true
   cedendo = (async () => {
-    await ceder('etl-enriquecer', { log: logPista })
+    if (!(await ceder('etl-enriquecer', { log: logPista }))) semPista = true
     cedendo = null
   })()
   await cedendo
+  return !semPista
 }
 
 // Sair aqui é seguro e barato: o progresso está em etl_checkpoint por (mês, modalidade),
@@ -283,7 +289,7 @@ await Promise.all(Array.from({ length: CONC }, async () => {
   for (;;) {
     const p = fila.shift()
     if (!p) return
-    await talvezCeder()
+    if (!(await talvezCeder())) return
     await varrer(p)
     feitas++
     const min = (Date.now() - t0) / 60000

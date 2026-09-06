@@ -179,8 +179,18 @@ export function _zerarCache({ trabalhandoHa = MIN_TRABALHO_MS + 1 } = {}) {
   ultimaResposta = null
 }
 
-/** Solta a pista, deixa o sucessor entrar e retoma. Só volta quando eu tenho a pista
- *  de novo — para quem chama, é uma pausa, não uma desistência. */
+/** Solta a pista, deixa o sucessor entrar e retoma. Devolve `true` quando a pista é
+ *  minha de novo — aí sim é uma pausa. Devolve `false` se o teto estourou com ela
+ *  ainda ocupada, e AÍ QUEM CHAMOU TEM DE PARAR: não tem pista.
+ *
+ *  ATÉ 06/09/2026 ELA RETOMAVA POR CIMA. O `while` saía no teto e o `pegar(dono)` que
+ *  vinha logo abaixo escrevia no lock existisse ou não — ou seja, passados 120min esta
+ *  função DESPEJAVA o dono legítimo e voltava dizendo "pista retomada". Foi assim que o
+ *  mutirão de MG despejou o refresh longo às 05:01 (exatamente 2h após ceder às 03:01),
+ *  e as duas frentes seguiram varrendo o PNCP juntas por seis horas.
+ *
+ *  Agora quem decide é o `pegar`, que confere antes de escrever. O teto virou desistência
+ *  honesta: o checkpoint guardou o progresso e a próxima rodada retoma dali. */
 export async function ceder(dono, { log = console.log, tetoMin = 120 } = {}) {
   const quem = quemPedePassagem(dono)
   log(`cedendo a pista para "${quem?.dono ?? 'alguém mais urgente'}" — retomo depois`)
@@ -194,13 +204,22 @@ export async function ceder(dono, { log = console.log, tetoMin = 120 } = {}) {
 
   // Agora espera a pista desocupar de novo, como qualquer um na fila.
   entrarNaFila(dono)
-  const teto = Date.now() + tetoMin * 60 * 1000
-  while (estado().ocupado && Date.now() < teto) await sleep(POLL_MS)
-  sairDaFila()
-
-  pegar(dono)
-  trabalhandoDesde = Date.now()
-  log('pista retomada.')
+  try {
+    const teto = Date.now() + tetoMin * 60 * 1000
+    while (Date.now() < teto) {
+      if (!estado().ocupado && pegar(dono)) {
+        trabalhandoDesde = Date.now()
+        log('pista retomada.')
+        return true
+      }
+      await sleep(POLL_MS)
+    }
+    log(`esperei ${tetoMin}min e a pista segue com "${estado().dono ?? '—'}" — NÃO retomo `
+      + 'por cima. Paro aqui; o checkpoint guardou o progresso.')
+    return false
+  } finally {
+    sairDaFila()
+  }
 }
 
 /** O laço de espera que cada consumidor reescrevia à mão, agora com fila.
@@ -210,7 +229,10 @@ export async function esperarVez(dono, { esperaMaxMin = 0, log = console.log } =
   entrarNaFila(dono)
   let avisos = 0
   try {
-    while (estado().ocupado) {
+    // `pegar` é quem decide, não o `estado()`: entre perguntar e escrever cabe outro
+    // processo, e era essa fresta que deixava dois donos saírem daqui achando que
+    // tinham a pista. Se ele disser não, eu simplesmente continuo na fila.
+    while (!(!estado().ocupado && pegar(dono))) {
       if (esperaMaxMin && (Date.now() - inicio) / 60000 >= esperaMaxMin) {
         log(`pista ainda ocupada por "${estado().dono}" — desisto desta rodada`)
         return false
@@ -223,7 +245,6 @@ export async function esperarVez(dono, { esperaMaxMin = 0, log = console.log } =
       }
       await sleep(POLL_MS)
     }
-    pegar(dono)
     trabalhandoDesde = Date.now()
     return true
   } finally {

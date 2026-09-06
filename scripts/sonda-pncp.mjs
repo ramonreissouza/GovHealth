@@ -137,7 +137,9 @@ const porData = []
 
 for (const dia of DATAS) {
   // Limite de data: nada em voo, nenhum resultado perdido se eu parar aqui por um tempo.
-  if (!IGNORAR_PISTA && devoCeder(DONO)) await ceder(DONO, { log: pista })
+  // Sem pista, a medicao seguinte seria feita sob concorrencia — e medida assim ela
+  // acusa buraco onde nao ha. Melhor uma amostra menor e honesta.
+  if (!IGNORAR_PISTA && devoCeder(DONO) && !(await ceder(DONO, { log: pista }))) break
   let dSaude = 0
   let dBase = 0
   for (const uf of UFS) {
