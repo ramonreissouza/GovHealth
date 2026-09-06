@@ -107,13 +107,44 @@ bateria são 3 minutos. **Manter plugado durante varredura longa.**
 **O PNCP é ~2,5× mais lento em horário comercial.** Medido em 9 fatias seguidas: 5,3
 s/página às 21h contra 14,2 s/página às 17h. Varredura pesada começa à noite.
 
-**Página abandonada some em silêncio.** Quando o ETL desiste de uma página após 5
-tentativas, o checkpoint avança por cima dela — nenhum re-run a revisita. Para recuperar,
-recue o checkpoint à mão:
+**Página abandonada — CONSERTADO em 06/09/2026.** Quando o ETL desiste de uma página
+após 5 tentativas, o checkpoint continua avançando por cima dela (é ele que mantém o
+progresso durável), mas agora a página fica **anotada** em `etl_checkpoint.paginas_puladas`
+e a próxima passada por aquela UF/modalidade a revisita **antes** de seguir em frente.
+
+Não avançar o checkpoint teria sido a correção óbvia e é a errada: uma página
+permanentemente quebrada travaria toda execução futura naquele ponto. Era essa a escolha
+original — entre travar e perder, perder pareceu menos ruim. Com a lista não é preciso
+escolher.
+
+O resumo final agora imprime no **stdout** quantas páginas foram abandonadas, recuperadas
+e seguem pendentes, então a perda deixou de depender de alguém ler o stderr. Para ver o
+que está pendente a qualquer momento:
 ```sql
-UPDATE etl_checkpoint SET ultima_pagina = <n-1> WHERE chave = 'uf:XX:mod:N:r<ini>_<fim>';
+SELECT chave, ultima_pagina, paginas_puladas FROM etl_checkpoint
+ WHERE cardinality(paginas_puladas) > 0 ORDER BY chave;
 ```
-e re-rode só aquela UF/modalidade. **Este defeito não está consertado.**
+Limite: a lista pertence à **chave** do checkpoint. Em varredura por `--dias` a chave
+carrega a data (`:d20260901`), então a janela do dia seguinte é uma chave nova e a
+pendência da anterior fica órfã — o dado em si volta pela janela nova, que revarre as
+mesmas datas do zero.
+
+**Dois donos na pista — CONSERTADO em 06/09/2026.** O `pegar()` do `pncp-lock` escrevia
+o arquivo de lock existisse ou não, e o `soltar()` apagava o de quem fosse. Quem chegasse
+por último virava "o dono" no papel enquanto o anterior **seguia varrendo sem saber**.
+Flagrado às 11h24 de 06/09: `etl-refresh-2dias` com o lock e `etl-refresh-loop` varrendo
+RS/mod6 ao mesmo tempo, por seis horas, sem uma linha de erro em nenhum dos dois.
+
+O gatilho foi o `ceder()`: ele esperava a pista até `tetoMin` (120min) e, estourado o
+teto, retomava por cima. O mutirão de MG cedeu às 03:01, esperou os 120 minutos e às
+05:01 despejou o refresh longo — o log dele diz "pista retomada", que era mentira.
+
+Agora `pegar()` cria o lock com `wx` (O_CREAT|O_EXCL) e **devolve `false`** se alguém
+vivo já está nele; `soltar()` só apaga o lock se ele for meu; e `ceder()` devolve `false`
+em vez de despejar. Todo chamador de `ceder()` para quando a pista não volta — o
+checkpoint guarda o progresso e a próxima execução retoma dali. O sintoma a procurar, se
+voltar: 429/503 em rajada num lado e `[skip]` no outro. E agora também a linha
+`[pista] PERDI a pista para "X"`, que a batida imprime ao detectar despejo.
 
 **Neste shell, heredoc com aspas quebra.** Use a ferramenta Write para criar scripts.
 
@@ -128,15 +159,24 @@ massa** — corrompe acentos. Use Python/.NET com UTF-8 sem BOM.
 ## 5. Testes que protegem tudo isto
 
 ```bash
-npm run pncp:lock:teste        # 12 casos: um dono só na pista
-npm run pncp:fila:teste        # 17 casos: prioridade e passagem
-npm run pncp:fila:teste:e2e    #  9 casos: DOIS processos de verdade
+npm run pncp:lock:teste          # 18 casos: um dono só na pista
+npm run pncp:fila:teste          # 20 casos: prioridade, passagem e não-despejo
+npm run pncp:fila:teste:e2e      #  9 casos: DOIS processos de verdade
+npm run pncp:fila:teste:filho    #  8 casos: quem varre é um FILHO por fatia
+npm run checkpoint:teste         # 12 casos: a lista de páginas abandonadas
 ```
 
-O terceiro é o que importa. O modo de falha da fila é invisível: se a passagem quebrar,
-ninguém recebe erro — o `sync-cobertura` só volta a desistir todo dia, com o log
-parecendo normal. Rode os três depois de qualquer mexida em `pncp-lock.mjs` ou
-`pncp-prioridade.mjs`.
+Os de processo de verdade são os que importam. O modo de falha desta área é invisível:
+quando ela erra, ninguém recebe erro — duas frentes passam a bater no PNCP ao mesmo
+tempo, ou uma página some, e o log das duas pontas parece normal. Rode os cinco depois
+de qualquer mexida em `pncp-lock.mjs`, `pncp-prioridade.mjs` ou `etl-pncp.mjs`.
+
+**Um teste que passa no código antigo não prova nada.** Dois destes conjuntos existem
+justamente porque a versão anterior os reprovava: o `:filho` roda o cenário COM e SEM o
+carimbo de `PNCP_TRABALHANDO_DESDE` e exige que o SEM falhe; os três casos novos de
+`pncp:lock:teste` (recusa de despejo, não-sobrescrita, não-soltar-alheio) foram rodados
+contra o `pncp-lock.mjs` de HEAD antes de entrar, e reprovaram os três. Ao consertar um
+defeito invisível aqui, faça a mesma conferência.
 
 ---
 
