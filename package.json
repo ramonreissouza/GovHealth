@@ -22,6 +22,8 @@
     "reset:migrate": "node scripts/migrate-reset.mjs",
     "radar:migrate": "node scripts/migrate-radar.mjs",
     "trgm:migrate": "node scripts/migrate-trgm.mjs",
+    "checkpoint:migrate": "node scripts/migrate-checkpoint-pendentes.mjs",
+    "checkpoint:teste": "node scripts/etl-checkpoint-pendentes.teste.mjs",
     "portais:migrate": "node scripts/migrate-portais.mjs",
     "portais:backfill": "node scripts/backfill-portais.mjs",
     "portais:harvest": "node scripts/harvest-portais.mjs",
