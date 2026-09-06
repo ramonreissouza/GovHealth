@@ -18,6 +18,7 @@
 // Pensado para rodar via Windows Task Scheduler a cada 3 dias.
 
 import { spawn } from 'node:child_process'
+import { CODIGO_CEDER } from './pncp-prioridade.mjs'
 
 // 27 UFs, priorizadas dos maiores estados para os menores (economia/volume de saúde).
 const UF = process.env.ETL_UF ?? 'SP,RJ,MG,RS,PR,BA,SC,GO,PE,CE,DF,ES,PA,MT,MS,AM,MA,RN,PB,PI,AL,SE,RO,TO,AC,AP,RR'
@@ -78,6 +79,14 @@ while (tentativa < MAX_TENTATIVAS) {
     + ` (restam ${Math.round(restaMs() / 60000)}min de orçamento) ===`)
   const code = await rodar()
   if (estourou) { pararParcial('passada interrompida no meio'); break }
+  // Passagem pedida por alguém mais urgente. Aqui NÃO dá para ceder: quem tem o lock
+  // é o etl-refresh-loop, dois níveis acima. Repassar o código é o único jeito de a
+  // decisão chegar em quem pode tomá-la — e retentar em 30s, como faria com um erro
+  // qualquer, só recomeçaria a passada com a pista ainda presa.
+  if (code === CODIGO_CEDER) {
+    console.log('\n[refresh] passagem pedida — devolvendo ao loop, que solta a pista e retoma daqui.')
+    process.exit(CODIGO_CEDER)
+  }
   if (code === 0) { console.log(`\n[refresh] ✓ concluído com sucesso em ${ts()}.`); break }
   if (tentativa >= MAX_TENTATIVAS) { console.log('\n[refresh] limite de tentativas atingido — rode de novo para continuar (retoma pelo checkpoint).'); break }
   // Não entra numa passada nova sem tempo de fazer algo útil com ela.

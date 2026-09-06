@@ -53,3 +53,7 @@ _v-*.png
 
 # Apresentacao comercial gerada (binario de 2,5 MB + recortes derivados dos prints)
 scripts/deck/out/
+
+# Lock cooperativo do PNCP (etl-refresh-loop.mjs avisa o pipeline)
+.pncp-ocupado
+.pncp-fila/

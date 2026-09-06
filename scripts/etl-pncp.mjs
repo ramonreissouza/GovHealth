@@ -11,6 +11,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude, categoria } from './saude-filter.mjs'
+import { CODIGO_CEDER, devoCeder } from './pncp-prioridade.mjs'
 
 // ── env ──────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -40,6 +41,9 @@ const MAX_UF = Object.fromEntries(String(args.maxuf ?? '').split(',').map((s) =>
   .map((p) => { const [u, n] = p.split(':'); return [u.toUpperCase(), Number(n)] }))
 const maxDaUf = (uf) => MAX_UF[uf] ?? MAX_CONTRATACOES
 const DELAY = Number(args.delay ?? 400)
+// Quem é o dono da pista NO PAI. Sem isto, este script não tem lock para ceder e não
+// tenta — é o caso de quem roda `node scripts/etl-pncp.mjs` direto, na mão.
+const DONO = args.dono ? String(args.dono) : (process.env.PNCP_DONO || null)
 // Range de datas EXPLÍCITO (YYYYMMDD) — usado no backfill fatiado por ano; o PNCP
 // limita a janela a ~1 ano por consulta. Sobrepõe --dias/--meses quando presente.
 const DATA_INI = args.dataInicial ? String(args.dataInicial).replace(/-/g, '') : null
@@ -158,7 +162,13 @@ async function upsertContratacao(c) {
        link_externo, usuario_nome)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
      ON CONFLICT (numero_controle_pncp) DO UPDATE SET
-       valor_total_estimado = EXCLUDED.valor_total_estimado,
+       -- COALESCE pelo mesmo motivo do link_externo abaixo, e a lição custou caro:
+       -- a listagem às vezes devolve valorTotalEstimado nulo para um registro que
+       -- JÁ tem valor na base (recuperado pelo enriquecedor ou pelo backfill de
+       -- valores). Sem o COALESCE, toda re-varredura de um período antigo desfaz
+       -- esse trabalho em silêncio — foi o que 7.263 nulos custaram para virar 907.
+       -- Valor novo e presente ainda ganha do antigo; só o nulo é que não apaga.
+       valor_total_estimado = COALESCE(EXCLUDED.valor_total_estimado, contratacoes.valor_total_estimado),
        data_abertura_proposta = EXCLUDED.data_abertura_proposta,
        data_encerramento_proposta = EXCLUDED.data_encerramento_proposta,
        situacao_id = EXCLUDED.situacao_id,
@@ -220,8 +230,44 @@ async function salvarCheckpoint(chave, pagina) {
     ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`, [chave, pagina])
 }
 
+// ── páginas abandonadas ─────────────────────────────────────────────────────
+// Quando o ETL desiste de uma página, o checkpoint avança por cima dela. Sem estas
+// três funções a página some para sempre e ninguém fica sabendo — medido em 05-06/09/2026,
+// uma página perdida em CADA um dos dois mutirões (20 contratações), achadas só porque
+// alguém leu o stderr e caçou o buraco na sequência de páginas à mão.
+//
+// NÃO avançar o checkpoint seria pior: uma página permanentemente quebrada travaria toda
+// execução futura nela. Com a lista, o checkpoint avança (progresso durável) e a página
+// fica anotada para a próxima passada por aquela UF/modalidade revisitar.
+// Requer `npm run checkpoint:migrate`.
+const TETO_PENDENTES = 100
+async function lerPuladas(chave) {
+  const r = await dbQuery('SELECT paginas_puladas FROM etl_checkpoint WHERE chave = $1', [chave])
+  return r.rows[0]?.paginas_puladas ?? []
+}
+async function marcarPulada(chave, pagina) {
+  // O teto existe para o caso patológico (paginação profunda inteira morta): a lista
+  // pararia de crescer em vez de virar uma fila de milhares que nunca esvazia.
+  await dbQuery(`INSERT INTO etl_checkpoint (chave, ultima_pagina, paginas_puladas)
+    VALUES ($1, $2, ARRAY[$2::int])
+    ON CONFLICT (chave) DO UPDATE SET
+      paginas_puladas = CASE
+        WHEN cardinality(etl_checkpoint.paginas_puladas) >= ${TETO_PENDENTES}
+          THEN etl_checkpoint.paginas_puladas
+        ELSE (SELECT array_agg(DISTINCT p ORDER BY p)
+                FROM unnest(etl_checkpoint.paginas_puladas || ARRAY[$2::int]) p)
+      END`, [chave, pagina])
+}
+async function limparPulada(chave, pagina) {
+  await dbQuery('UPDATE etl_checkpoint SET paginas_puladas = array_remove(paginas_puladas, $2::int) WHERE chave = $1',
+    [chave, pagina])
+}
+
 // ── pipeline ─────────────────────────────────────────────────────────────────
 let totC = 0, totI = 0, totR = 0, totSkip = 0
+// Página perdida não pode depender de alguém ler o stderr: estes três viram uma linha
+// no resumo final, no stdout, junto com o resto.
+let totPuladas = 0, totRecuperadas = 0, totPend = 0
 console.log(`[ETL] UFs=${UF_LIST.join(',')} janela=${dataInicial}→${dataFinal} modalidades=${MODALIDADES} max/UF=${MAX_CONTRATACOES} delay=${DELAY}ms`)
 
 for (const ufAtual of UF_LIST) {
@@ -243,11 +289,32 @@ for (const ufAtual of UF_LIST) {
     //    backfill; UPSERT/jaProcessada cobrem a sobreposição).
     const chave = (DATA_INI && DATA_FIM) ? `uf:${UF}:mod:${mod}:r${dataInicial}_${dataFinal}`
       : DIAS ? `uf:${UF}:mod:${mod}:d${dataInicial}` : `uf:${UF}:mod:${mod}:m${MESES}`
-    let pagina = (await lerCheckpoint(chave)) + 1
-    if (pagina > 1) console.log(`  retomando ${UF}/mod${mod} da página ${pagina}`)
+    let sequencial = (await lerCheckpoint(chave)) + 1
+    if (sequencial > 1) console.log(`  retomando ${UF}/mod${mod} da página ${sequencial}`)
+
+    // Primeiro as páginas que ficaram para trás numa execução anterior, depois a
+    // sequência normal. As duas usam o MESMO corpo de laço — o que muda é que revisita
+    // não mexe no checkpoint nem testa fim de sequência (a página 14 de 47 voltando
+    // com menos de 50 registros não significa que a modalidade acabou).
+    const pendentes = await lerPuladas(chave)
+    if (pendentes.length) {
+      console.log(`  ${UF}/mod${mod}: ${pendentes.length} página(s) pendente(s) de antes `
+        + `(${pendentes.join(', ')}) — revisitando antes de seguir`)
+      totPend += pendentes.length
+    }
+    let revisita = pendentes.length > 0
+    let pagina = revisita ? pendentes[0] : sequencial
+    // Sai da revisita para a sequência. Falha em revisita NÃO remove da lista: a página
+    // continua pendente e volta a ser tentada na próxima rodada.
+    const proximaRevisita = () => {
+      pendentes.shift()
+      revisita = pendentes.length > 0
+      pagina = revisita ? pendentes[0] : sequencial
+    }
 
     let falhasSeguidas = 0
-    for (; pagina <= MAXPAG; pagina++) {
+    for (;;) {
+      if (!revisita && pagina > MAXPAG) break
       const sp = new URLSearchParams({ dataInicial, dataFinal, codigoModalidadeContratacao: String(mod), uf: UF, pagina: String(pagina), tamanhoPagina: '50' })
       let resp
       try {
@@ -264,17 +331,40 @@ for (const ufAtual of UF_LIST) {
         if (!(await pncpVivo(mod, UF))) {
           console.warn(`  [outage] PNCP indisponível (pág 1 também falha) — aguardando 60s e repetindo ${UF}/mod${mod} pág ${pagina}`)
           await sleep(60000)
-          pagina-- // repete a MESMA página (o for fará pagina++); checkpoint NÃO avança
+          // NÃO mexer em `pagina`: o laço não incrementa mais no cabeçalho, então
+          // continuar já repete a MESMA página. (Antes era `pagina--` para compensar o
+          // `pagina++` do `for`; mantido assim, andaria para TRÁS a cada queda do PNCP.)
+          // Checkpoint NÃO avança: queda global não é página perdida, é espera.
           falhasSeguidas = 0
+          continue
+        }
+        // Revisita que falha de novo continua pendente e não conta para o disjuntor:
+        // são páginas velhas e já problemáticas, e deixá-las derrubar a modalidade
+        // impediria o trabalho NOVO de acontecer. O número de tentativas por rodada já
+        // é limitado pelo tamanho da lista.
+        if (revisita) {
+          console.warn(`  [skip] ${UF}/mod${mod} pág ${pagina} (revisita) falhou de novo — segue pendente`)
+          proximaRevisita()
           continue
         }
         falhasSeguidas++
         console.warn(`  [skip] ${UF}/mod${mod} pág ${pagina} falhou (${falhasSeguidas}x seguidas) — ${e.message.slice(0, 40)}`)
+        // A ORDEM IMPORTA: anota a página ANTES de avançar o checkpoint por cima dela.
+        // Se o processo morrer entre as duas, a página fica anotada e será revisitada —
+        // o inverso perderia a página exatamente como antes deste conserto.
+        await marcarPulada(chave, pagina)
+        totPuladas++
         await salvarCheckpoint(chave, pagina)
+        pagina++
         if (falhasSeguidas >= 3) { console.warn(`  [circuit-breaker] ${UF}/mod${mod}: ${falhasSeguidas} páginas seguidas falhando (pág 1 ok) — paginação profunda degradada; encerrando modalidade`); break }
         continue
       }
-      if (!resp || (resp.data ?? []).length === 0) break
+      if (!resp || (resp.data ?? []).length === 0) {
+        // Página pendente que hoje vem vazia não tem o que recuperar (a janela encolheu,
+        // ou o PNCP repaginou). Tira da lista para não virar pendência eterna.
+        if (revisita) { await limparPulada(chave, pagina); proximaRevisita(); continue }
+        break
+      }
       const lista = resp.data.filter((c) => isSaude(c.objetoCompra))
 
       let hitMax = false
@@ -304,9 +394,40 @@ for (const ufAtual of UF_LIST) {
       }
 
       if (hitMax) { console.log(`  max/UF (${capUF}) atingido em ${UF}`); break }
+
+      // REVISITA: a página foi recuperada. Não toca no checkpoint (ele já está à frente
+      // desta página) e não testa fim de sequência — quem termina a modalidade é a
+      // sequência normal, que ainda nem começou.
+      if (revisita) {
+        await limparPulada(chave, pagina)
+        totRecuperadas++
+        console.log(`  ${UF}/mod${mod} pág ${pagina} RECUPERADA: +${lista.length} saúde — acum ${totC}c/${totI}i/${totR}r`)
+        proximaRevisita()
+        // Também aqui: a lista pendente vive no BANCO, e a página que acabou de entrar
+        // já saiu dela. Sair agora não perde nem repete — sem este teste, uma lista de
+        // até 100 páginas pendentes seguraria a pista inteira sem ceder.
+        if (DONO && devoCeder(DONO)) {
+          console.log(`  cedendo a pista a pedido — revisita de ${UF}/mod${mod}; o pai retoma daqui`)
+          try { await db.end() } catch { /* fechar é cortesia; o processo vai sair de todo jeito */ }
+          process.exit(CODIGO_CEDER)
+        }
+        continue
+      }
+
       await salvarCheckpoint(chave, pagina) // página inteira concluída → checkpoint
       console.log(`  ${UF}/mod${mod} pág ${pagina}: +${lista.length} saúde — acum ${totC}c/${totI}i/${totR}r (skip ${totSkip})`)
+
+      // CEDER A PISTA — só quando um pai me disse quem ele é (`--dono=`). Rodando
+      // sozinho, este script não tem lock nenhum para ceder e o teste é ignorado.
+      // O lugar é este e não outro: o checkpoint da linha acima ACABOU de gravar, então
+      // sair aqui não perde nem repete página. Sair antes dela repetiria a página.
+      if (DONO && devoCeder(DONO)) {
+        console.log(`  cedendo a pista a pedido — checkpoint em ${UF}/mod${mod} pág ${pagina}; o pai retoma daqui`)
+        try { await db.end() } catch { /* fechar é cortesia; o processo vai sair de todo jeito */ }
+        process.exit(CODIGO_CEDER)
+      }
       if (resp.data.length < 50 || pagina >= (resp.totalPaginas ?? 1)) break
+      pagina++
     }
     if (nContrat >= capUF) break
   }
@@ -314,4 +435,11 @@ for (const ufAtual of UF_LIST) {
 }
 
 console.log(`\n[ETL] concluído: ${totC} contratações · ${totI} itens · ${totR} resultados · ${totSkip} já processadas (puladas)`)
+if (totRecuperadas) console.log(`[ETL] ${totRecuperadas} página(s) pendente(s) RECUPERADA(S) nesta rodada`)
+if (totPuladas) console.log(`[ETL] ${totPuladas} página(s) abandonada(s) e anotada(s) — a próxima rodada revisita`)
+const aindaPend = totPend - totRecuperadas + totPuladas
+if (aindaPend > 0) {
+  console.log(`[ETL] ${aindaPend} página(s) seguem pendentes. Para ver quais:`)
+  console.log(`      SELECT chave, paginas_puladas FROM etl_checkpoint WHERE cardinality(paginas_puladas) > 0;`)
+}
 await db.end()

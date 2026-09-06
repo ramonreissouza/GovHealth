@@ -117,6 +117,19 @@ async function jaTemItens(num) {
   const r = await dbQuery('SELECT 1 FROM itens WHERE numero_controle_pncp=$1 LIMIT 1', [num])
   return r.rowCount > 0
 }
+// O fornecedor JÁ aparece como vencedor nesta contratação?
+// Existe porque `jaTemItens` sozinho é critério errado para pular: itens e resultados
+// vêm de endpoints diferentes, e uma contratação coletada pelo etl-pncp costuma ter
+// itens sem ter resultado nenhum. Pulando por itens, a VITÓRIA do fornecedor — que é
+// todo o motivo deste script existir — nunca era buscada. Medido em 26/08/2026 na
+// Prime Medical: de 37 processos auditados, 9 tinham itens e nenhum resultado, e 11
+// não tinham a Prime registrada como vencedora.
+async function jaTemResultadoDo(num, cnpj) {
+  const r = await dbQuery(
+    `SELECT 1 FROM resultados WHERE numero_controle_pncp=$1
+       AND regexp_replace(coalesce(ni_fornecedor,''),'\\D','','g') = $2 LIMIT 1`, [num, cnpj])
+  return r.rowCount > 0
+}
 
 // numeroControlePncpCompra: "15126437000143-1-000632/2024" → {orgao, ano, seq}
 function parseCompra(nc) {
@@ -127,12 +140,27 @@ function parseCompra(nc) {
 // 1) todos os contratos do CNPJ (paginado)
 async function contratosDoFornecedor(cnpj) {
   const out = []
+  let total = null, falhas = 0
   for (let p = 1; p <= MAX_PAGINAS_BUSCA; p++) {
     const j = await fetchJson(`${SEARCH}/?q=${cnpj}&tipos_documento=contrato&ordenacao=-data&pagina=${p}&tam_pagina=50`)
-    const items = j?.items ?? []
-    out.push(...items)
     await sleep(DELAY)
+    // Página que FALHOU não é fim de lista. Antes, `j?.items ?? []` transformava um
+    // erro de rede em array vazio e o `break` seguinte encerrava a coleta como se a
+    // lista tivesse acabado: em 26/08/2026 a busca da Prime devolveu 192 contratos numa
+    // rodada e 100 na seguinte, sem uma linha de aviso, porque a pág 3 falhou.
+    if (j === null) {
+      falhas++
+      console.warn(`  ! busca pág ${p} falhou — seguindo (falhas: ${falhas})`)
+      if (falhas >= 3) { console.warn(`  ! 3 páginas falharam; encerrando a busca INCOMPLETA`); break }
+      continue
+    }
+    if (total === null && j.total != null) total = Number(j.total)
+    const items = j.items ?? []
+    out.push(...items)
     if (items.length < 50) break
+  }
+  if (total != null && out.length < total) {
+    console.warn(`  ! ATENÇÃO: o PNCP declara ${total} contratos e só ${out.length} vieram — coleta INCOMPLETA`)
   }
   return out
 }
@@ -164,12 +192,18 @@ for (const cnpj of ALVOS) {
 
   // 3) enriquecer cada contratação (header + itens + resultados)
   let nEnriq = 0, nSkip = 0
+  const semHeader = []
   for (const cmp of compras) {
     const header = await fetchJson(`${CONSULTA}/orgaos/${cmp.orgao}/compras/${cmp.ano}/${cmp.seq}`)
     await sleep(DELAY)
-    if (!header || !header.numeroControlePNCP) continue
+    // Antes era `continue` puro: 12 dos 104 processos da Prime desapareciam sem entrar
+    // em nenhum contador, e o script fechava com "✓" como se tivesse coberto tudo.
+    if (!header || !header.numeroControlePNCP) { semHeader.push(`${cmp.orgao}/${cmp.ano}/${cmp.seq}`); continue }
     await upsertContratacao(header); totC++
-    if (await jaTemItens(header.numeroControlePNCP)) { nSkip++; continue }
+    // Pular só quando o fornecedor JÁ está registrado como vencedor. Ter itens não
+    // basta: era assim que a vitória dele deixava de ser buscada (ver jaTemResultadoDo).
+    if (await jaTemItens(header.numeroControlePNCP)
+        && await jaTemResultadoDo(header.numeroControlePNCP, cnpj)) { nSkip++; continue }
     const itensResp = await fetchJson(`${PNCP}/orgaos/${cmp.orgao}/compras/${cmp.ano}/${cmp.seq}/itens?pagina=1&tamanhoPagina=100`)
     await sleep(DELAY)
     const itens = Array.isArray(itensResp) ? itensResp : (itensResp?.data ?? [])
@@ -190,6 +224,12 @@ for (const cnpj of ALVOS) {
     `SELECT count(*)::int n, count(distinct numero_controle_pncp)::int lics, coalesce(sum(valor_total_homologado),0)::float8 total
        FROM resultados WHERE regexp_replace(ni_fornecedor,'[^0-9]','','g')=$1`, [cnpj])
   console.log(`  ✓ ${nome}: enriquecidas ${nEnriq} (skip ${nSkip}). Agora no banco: ${q.rows[0].lics} licitações, ${q.rows[0].n} resultados, R$ ${(q.rows[0].total/1e6).toFixed(2)}M`)
+  if (semHeader.length) {
+    console.warn(`  ! ${semHeader.length} processo(s) sem cabeçalho no PNCP — NÃO entraram: ${semHeader.join(', ')}`)
+  }
+  if (nEnriq + nSkip + semHeader.length !== compras.length) {
+    console.warn(`  ! soma não fecha: ${nEnriq}+${nSkip}+${semHeader.length} != ${compras.length} origens`)
+  }
 }
 
 console.log(`\n[etl-fornecedor] concluído: +${totC} contratações · +${totI} itens · +${totR} resultados`)

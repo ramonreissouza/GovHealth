@@ -26,6 +26,8 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { soltar, soltarNaSaida } from './pncp-lock.mjs'
+import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -47,6 +49,20 @@ const PAUSA = Number(arg('pausa', '400'))
 const CONC = Number(arg('conc', '1'))
 const BASE = 'https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao'
 const UA = 'GovHealth-ETL/1.0'
+
+// A PISTA DO PNCP TEM UM DONO SÓ — E ESTE SCRIPT ERA O ÚNICO QUE NÃO PERGUNTAVA.
+// Todos os outros consumidores pesados (pipeline-noite, etl-refresh-loop,
+// harvest-portais, backfill-itens/antigos) passam pelo pncp-lock; este não passava, e
+// por isso conseguia entrar por cima de quem já estava na pista. Medido em 26/08/2026,
+// rodando junto do backfill de itens: as chamadas penduradas do backfill saltaram de
+// ~500 a cada 200 contratações para ~1.800, as desistências foram de 23 para 37, e
+// esta passada tirou ZERO de fev/2025 — cinco páginas seguidas estourando o timeout de
+// 60s, inclusive a página 1, que responde em 6-9s com a pista livre. Os dois lados
+// pioraram e nenhum dos dois avançou.
+const SEM_LOCK = process.argv.includes('--sem-lock')
+// Mesma razão do backfill-itens: ficar de plantão indefinidamente faz o agendador
+// matar a tarefa no meio da espera, e o dia é gasto do mesmo jeito. 0 = para sempre.
+const ESPERA_MAX_MIN = Number(arg('espera-max', '45'))
 
 // Modalidades da Lei 14.133 que aparecem na saúde. 8 (dispensa) e 6 (pregão) são o
 // grosso; as outras somam pouco mas custam poucas páginas.
@@ -169,20 +185,86 @@ const lista = meses(DE, ATE)
 // rodar vários ao mesmo tempo. Medido em série: ~9 req/min, porque a lista do PNCP
 // leva ~6s por página e a pausa é irrelevante perto disso; as ~50 mil páginas
 // levariam DIAS. O gargalo é espera de rede, não taxa.
+const logPista = (m) => console.log(`[enriq] ${m}`)
+
+async function esperarPista() {
+  if (SEM_LOCK) return true
+  limparNaSaida()
+  if (!(await esperarVez('etl-enriquecer', { esperaMaxMin: ESPERA_MAX_MIN, log: logPista }))) return false
+  soltarNaSaida()
+  return true
+}
+
+// CEDER COM CONCORRÊNCIA. Aqui não há um laço só: são CONC frentes puxando da mesma
+// fila. Se uma delas soltasse a pista sozinha, as outras continuariam batendo no PNCP
+// — que é exatamente a concorrência que o lock existe para evitar. Então a primeira
+// que percebe o pedido abre um portão único e as demais esperam nele.
+//
+// `devoCeder` é síncrono e não há `await` entre o teste e a atribuição de `cedendo`,
+// então duas frentes não conseguem abrir dois portões: o portão é criado inteiro
+// dentro de um mesmo passo do laço de eventos.
+//
+// As requisições JÁ EM VOO quando o portão abre seguem até responder — alguns segundos
+// de sobreposição com o sucessor. Cortá-las seria pior: perderíamos o trabalho e o
+// PNCP receberia a mesma consulta de novo na retomada.
+let cedendo = null
+// Uma vez perdida a pista, TODAS as frentes param: elas compartilham a pista, entao
+// nao ha caso em que uma possa seguir sem a outra.
+let semPista = false
+/** true = pode trabalhar; false = a pista nao voltou, encerre a frente. */
+async function talvezCeder() {
+  if (SEM_LOCK) return true
+  if (semPista) return false
+  if (cedendo) { await cedendo; return !semPista }
+  if (!devoCeder('etl-enriquecer')) return true
+  cedendo = (async () => {
+    if (!(await ceder('etl-enriquecer', { log: logPista }))) semPista = true
+    cedendo = null
+  })()
+  await cedendo
+  return !semPista
+}
+
+// Sair aqui é seguro e barato: o progresso está em etl_checkpoint por (mês, modalidade),
+// então a próxima execução retoma na página exata onde esta pararia.
+if (!(await esperarPista())) { await client?.end(); process.exit(0) }
+
 const pares = lista.flatMap((mes) => MODALIDADES.map((mod) => ({ mes, mod })))
 console.log(`[enriq] ${lista.length} mês(es) × ${MODALIDADES.length} modalidades = ${pares.length} frentes · ${DE} → ${ATE} · ${CONC} em paralelo · pausa ${PAUSA}ms`)
-let reqs = 0, vistos = 0, gravados = 0, furos = 0, feitas = 0
+let reqs = 0, vistos = 0, gravados = 0, furos = 0, feitas = 0, pulos = []
 const t0 = Date.now()
 
 async function varrer({ mes, mod }) {
   const chave = `enriq:${mes}:${mod}`
   let pag = await lerCp(chave)
   if (pag === -1) return                           // já concluído
+  let seguidos = 0
   for (;;) {
     pag++
     const j = await pagina(mes, mod, pag)
     reqs++
-    if (j === null) { furos++; break }              // desistiu após 5 tentativas
+    if (j === null) {
+      furos++
+      // PULAR, não abandonar. Uma página que morre após 5 tentativas costuma ser
+      // PERMANENTE: o endpoint de lista devolve 500 em offset fundo (pág 379 = registro
+      // 18.950) e devolve para sempre. Até 26/08/2026 isto dava `break` com o checkpoint
+      // parado na página ruim — então a execução seguinte lia o mesmo número, tomava o
+      // mesmo 500 e desistia de novo. Quatro frentes de Pregão Eletrônico estavam
+      // congeladas assim: 2025-02 na pág 771 (desde 20/08), 2025-04 na 378 (19/08),
+      // 2026-03 na 1008 (20/08), 2025-11 na 78 — 15.483 contratações sem valor que
+      // NENHUMA execução futura ia buscar, porque o script relatava "✓ Fim" e 0 furos
+      // fatais. Agora anda por cima da página ruim; só encerra se várias seguidas
+      // furarem, aí é fim de dados de verdade ou o PNCP fora do ar.
+      await salvarCp(chave, pag)
+      pulos.push(`${mes}/mod${mod}:${pag}`)
+      if (++seguidos >= 5) {
+        console.warn(`[enriq] ${mes}/mod${mod}: 5 páginas seguidas furaram na ${pag} — encerrando a frente`)
+        break
+      }
+      await sleep(PAUSA)
+      continue
+    }
+    seguidos = 0
     const itens = j.data ?? []
     if (!itens.length) { await salvarCp(chave, -1); break }
     vistos += itens.length
@@ -207,6 +289,7 @@ await Promise.all(Array.from({ length: CONC }, async () => {
   for (;;) {
     const p = fila.shift()
     if (!p) return
+    if (!(await talvezCeder())) return
     await varrer(p)
     feitas++
     const min = (Date.now() - t0) / 60000
@@ -218,4 +301,8 @@ await Promise.all(Array.from({ length: CONC }, async () => {
 
 const falta = (await db(`SELECT count(*)::int n FROM contratacoes WHERE valor_total_estimado IS NULL`)).rows[0].n
 console.log(`✓ Fim: ${gravados.toLocaleString('pt-BR')} contratações ganharam valor. Ainda sem valor: ${falta.toLocaleString('pt-BR')}. Páginas que furaram: ${furos}.`)
+// as páginas puladas são ~50 registros cada que ninguém mais vai buscar: sem isso
+// impresso, o "✓ Fim" esconde o buraco. Zerar o checkpoint da frente é como retomá-las.
+if (pulos.length) console.warn(`[enriq] páginas puladas (${pulos.length}): ${pulos.join(', ')}`)
+if (!SEM_LOCK) soltar()
 await client?.end()

@@ -34,17 +34,41 @@ if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configur
 if (!process.env.RADAR_CRED_KEY) { console.error('ERRO: RADAR_CRED_KEY não configurada (cofre).'); process.exit(1) }
 const KEY = process.env.RADAR_CRED_KEY
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
-await client.connect()
+// POOL, nao Client: o PgBouncer da VM derruba conexao ociosa, e um `pg.Client` sem
+// handler de 'error' transforma esse ECONNRESET em excecao NAO TRATADA que mata o
+// daemon (aconteceu em 20/08 — ver connect.log). O daemon precisa sobreviver ao
+// tempo do login humano, que e justamente quando ele fica ocioso. O pool troca a
+// conexao morta por outra sozinho; o handler abaixo garante que o evento nao suba.
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 2,
+  idleTimeoutMillis: 10_000,
+})
+pool.on('error', (e) => console.error('aviso: conexao do pool caiu e foi descartada:', e?.message ?? e))
+
+/**
+ * Mascara o identificador no log. O CPF é PII e não precisa estar inteiro aqui: o log
+ * só tem de dizer QUAL conexão foi pedida, e o CNPJ (dado público, publicado em toda
+ * licitação) já resolve isso. Primeiros 3 e últimos 2 dígitos bastam para conferir que
+ * é a pessoa certa sem guardar o documento em texto claro em disco.
+ */
+function mascararLogin(login) {
+  const s = String(login ?? '').trim()
+  const d = s.replace(/\D/g, '')
+  if (d.length === 11) return `${d.slice(0, 3)}.***.***-${d.slice(-2)}`
+  if (s.includes('@')) return `${s.slice(0, 3)}***@${s.split('@')[1] ?? ''}`
+  return s.length <= 3 ? '***' : `${s.slice(0, 3)}***`
+}
 
 async function concluir(cred, status, detalhe, storageState) {
   const conexao = status === 'ok' ? 'conectado' : 'erro'
-  await client.query(
+  await pool.query(
     `UPDATE radar_credenciais SET storage_state = COALESCE($2, storage_state), metodo='sessao',
         conexao_status=$3, conexao_detalhe=$4, ativo=true, atualizado_em=now() WHERE id=$1`,
     [cred.id, storageState ? encrypt(KEY, storageState) : null, conexao, detalhe ?? null],
   )
-  await client.query(
+  await pool.query(
     `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
      VALUES ($1,$2,$3,$4, ${status === 'ok' ? 'now()' : 'NULL'}, now(), $5, now())
      -- WHERE obrigatório: radar_saude_cred_uq é índice único PARCIAL; sem repetir o
@@ -54,19 +78,19 @@ async function concluir(cred, status, detalhe, storageState) {
        detalhe=EXCLUDED.detalhe, atualizado_em=now()`,
     [cred.id, cred.titular_id, cred.conector_id, status, detalhe ?? null],
   )
-  await client.query(`INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+  await pool.query(`INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
     VALUES ($1,'cred_conectada','radar_credenciais',$2,$3::jsonb)`, [cred.titular_id, cred.id, JSON.stringify({ status })])
 }
 
 async function processarUm() {
   // Reivindica atomicamente 1 pedido pendente (marca 'conectando' antes de abrir).
-  const { rows } = await client.query(
+  const { rows } = await pool.query(
     `UPDATE radar_credenciais SET conexao_status='conectando', atualizado_em=now()
       WHERE id = (SELECT id FROM radar_credenciais WHERE conexao_status='pendente' ORDER BY conexao_pedido_em LIMIT 1 FOR UPDATE SKIP LOCKED)
       RETURNING id, titular_id, conector_id, cnpj, login`)
   if (!rows.length) return false
   const cred = rows[0]
-  console.log(`→ conexão solicitada: CNPJ ${cred.cnpj} (${cred.login})`)
+  console.log(`→ conexão solicitada: CNPJ ${cred.cnpj} (${mascararLogin(cred.login)})`)
 
   if (SIMULADO) {
     await concluir(cred, 'ok', 'sessão simulada capturada', JSON.stringify({ cookies: [], origins: [] }))
@@ -88,5 +112,5 @@ while (!parar) {
   try { const fez = await processarUm(); if (!fez) await new Promise((r) => setTimeout(r, POLL_S * 1000)) }
   catch (e) { console.error('erro no loop:', e?.message ?? e); await new Promise((r) => setTimeout(r, POLL_S * 1000)) }
 }
-await client.end()
+await pool.end()
 console.log('serviço encerrado.')
