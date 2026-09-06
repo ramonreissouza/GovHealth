@@ -146,6 +146,26 @@ checkpoint guarda o progresso e a próxima execução retoma dali. O sintoma a p
 voltar: 429/503 em rajada num lado e `[skip]` no outro. E agora também a linha
 `[pista] PERDI a pista para "X"`, que a batida imprime ao detectar despejo.
 
+**Fim de semana não é buraco.** Medido em 120 dias, por `extract(isodow …)`:
+
+| seg | ter | qua | qui | sex | sáb | dom |
+|----:|----:|----:|----:|----:|----:|----:|
+| 832 | 888 | 978 | 871 | 826 | **14** | **9** |
+
+Todo dia com menos de 100 linhas nos últimos 120 caiu em sábado ou domingo, sem exceção.
+Antes de chamar um dia magro de buraco, veja em que dia da semana ele caiu.
+
+**`toISOString()` em coluna `date` mente um dia.** `contratacoes.data_publicacao` é `date`,
+e o node-postgres devolve `date` como **meia-noite local**. Nesta máquina (UTC+2),
+`r.d.toISOString().slice(0,10)` imprime o dia ANTERIOR. Em 06/09/2026 isso me fez
+reportar "último dado em 03/09" quando era 04/09, e quase virou um mutirão atrás de um
+dia útil que não estava faltando. Formate a data no próprio SQL:
+```sql
+SELECT to_char(data_publicacao, 'YYYY-MM-DD') dia, extract(isodow FROM data_publicacao) dow
+```
+O rótulo do dia da semana vindo do Postgres continua correto mesmo quando a data impressa
+está deslocada — foi essa incoerência que denunciou o erro.
+
 **Neste shell, heredoc com aspas quebra.** Use a ferramenta Write para criar scripts.
 
 **`pg` só resolve dentro do repositório.** Script de consulta tem que morar na raiz do
