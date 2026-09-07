@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude, categoria } from './saude-filter.mjs'
 import { CODIGO_CEDER, devoCeder } from './pncp-prioridade.mjs'
+import { podeEnriquecer, registrarSucesso, registrarFalha, resumo as resumoBreaker } from './pncp-breaker.mjs'
 
 // ── env ──────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -102,6 +103,22 @@ async function fetchJson(url, tentativa = 0) {
 }
 // Variante tolerante: usada em chamadas onde um null transitório só perde 1 item.
 async function fetchJsonSafe(url) { try { return await fetchJson(url) } catch { return null } }
+// Variante do ENRIQUECIMENTO: igual à tolerante, mas relata o desfecho ao disjuntor.
+// `fetchJson` devolve null SEM lançar em 404/204 — isso é serviço vivo e sem conteúdo,
+// e conta como sucesso. Só o throw (as 5 tentativas esgotadas) é falha de verdade.
+// Era exatamente essa distinção que se perdia quando "sem itens" e "serviço fora"
+// voltavam os dois como null pelo mesmo caminho.
+async function fetchJsonEnriq(url) {
+  try { const j = await fetchJson(url); registrarSucesso(); return j }
+  catch {
+    if (registrarFalha()) {
+      const { limite, esperaMin } = resumoBreaker()
+      console.warn(`  [enriquecimento] ${limite} falhas seguidas em ${PNCP} — DESLIGANDO itens/resultados por ${esperaMin}min`)
+      console.warn('  [enriquecimento] a coleta segue pela lista; o item entra depois pelo backfill-itens')
+    }
+    return null
+  }
+}
 // Canário barato (1 tentativa, timeout curto): a página 1 daquela UF/modalidade
 // responde? Serve para distinguir outage global do PNCP de página profunda quebrada.
 async function pncpVivo(mod, uf) {
@@ -380,13 +397,20 @@ for (const ufAtual of UF_LIST) {
         if (await jaProcessada(c.numeroControlePNCP)) { totSkip++; continue }
         nContrat++ // só conta contratações efetivamente processadas nesta rodada
 
-        const itensResp = await fetchJsonSafe(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens?pagina=1&tamanhoPagina=100`)
-        await sleep(DELAY)
+        // Disjuntor: com a API de itens fora, CADA chamada custa 30s de espera e são
+        // 50 por página. Enquanto ele estiver aberto, a contratação entra só com o
+        // cabeçalho — que o upsert acima já gravou — e o item vem depois.
+        let itensResp = null
+        if (podeEnriquecer()) {
+          itensResp = await fetchJsonEnriq(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens?pagina=1&tamanhoPagina=100`)
+          await sleep(DELAY)
+        }
         const itens = Array.isArray(itensResp) ? itensResp : (itensResp?.data ?? [])
         for (const it of itens) {
           await upsertItem(c.numeroControlePNCP, it); totI++
           if (it.temResultado || it.situacaoCompraItem === 2) {
-            const resArr = await fetchJsonSafe(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens/${it.numeroItem}/resultados?pagina=1&tamanhoPagina=20`)
+            if (!podeEnriquecer()) continue
+            const resArr = await fetchJsonEnriq(`${PNCP}/orgaos/${c.orgaoEntidade?.cnpj}/compras/${c.anoCompra}/${c.sequencialCompra}/itens/${it.numeroItem}/resultados?pagina=1&tamanhoPagina=20`)
             await sleep(DELAY)
             for (const r of (Array.isArray(resArr) ? resArr : (resArr?.data ?? []))) { await upsertResultado(c, it, r); totR++ }
           }
@@ -437,6 +461,15 @@ for (const ufAtual of UF_LIST) {
 console.log(`\n[ETL] concluído: ${totC} contratações · ${totI} itens · ${totR} resultados · ${totSkip} já processadas (puladas)`)
 if (totRecuperadas) console.log(`[ETL] ${totRecuperadas} página(s) pendente(s) RECUPERADA(S) nesta rodada`)
 if (totPuladas) console.log(`[ETL] ${totPuladas} página(s) abandonada(s) e anotada(s) — a próxima rodada revisita`)
+// No STDOUT de propósito: enriquecimento desligado é perda silenciosa por natureza —
+// a rodada termina "com sucesso", cheia de contratações e sem um item. Quem lê só o
+// stdout tem que ver isso sem precisar caçar no stderr.
+const brk = resumoBreaker()
+if (brk.desligamentos) {
+  console.log(`[ETL] enriquecimento DESLIGADO ${brk.desligamentos}x (${brk.limite} falhas seguidas) — ${brk.puladas} chamada(s) de item/resultado puladas`)
+  console.log(`[ETL] ${brk.religamentos} religamento(s); ao fim da rodada estava ${brk.aberto ? 'DESLIGADO' : 'ligado'}`)
+  console.log('[ETL] as contratações entraram; os itens ficam para o backfill-itens (npm run backfill:itens)')
+}
 const aindaPend = totPend - totRecuperadas + totPuladas
 if (aindaPend > 0) {
   console.log(`[ETL] ${aindaPend} página(s) seguem pendentes. Para ver quais:`)

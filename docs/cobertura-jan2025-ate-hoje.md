@@ -146,6 +146,40 @@ checkpoint guarda o progresso e a próxima execução retoma dali. O sintoma a p
 voltar: 429/503 em rajada num lado e `[skip]` no outro. E agora também a linha
 `[pista] PERDI a pista para "X"`, que a batida imprime ao detectar despejo.
 
+**As duas APIs do PNCP caem SEPARADO — CONSERTADO em 07/09/2026.** A coleta fala
+com duas: `/api/consulta/v1` traz a LISTA de contratações e `/api/pncp/v1` traz
+ITENS e RESULTADOS de cada uma. Em 07/09 às 06:12 a lista respondia HTTP 200 em
+3,1s enquanto a de itens devolvia HTTP 503 em 245ms, três vezes seguidas.
+Rejeição em 245ms é serviço fora, não sobrecarga nossa — fosse nossa viria 429, e
+vieram **zero** 429 em 417 erros.
+
+O estrago não é perder item. É que cada chamada morta esgota as 5 tentativas do
+`fetchJson` com espera de 2+4+6+8+10 = **30 segundos**, e há uma dessas por
+REGISTRO, 50 registros por página. A rodada das 05:00 de 07/09 gastou 70 minutos
+para fazer 14 páginas de UMA UF das 27 e não gravou uma linha nova: o orçamento
+evaporou dormindo.
+
+O circuit breaker que já existia conta falhas de PÁGINA DA LISTA — e a lista
+estava saudável, então ele nunca disparou. O `scripts/pncp-breaker.mjs` é o do
+outro lado: depois de 5 falhas seguidas desliga o enriquecimento por 10 minutos e
+deixa a coleta seguir só com a lista. A contratação entra no banco do mesmo jeito
+(o upsert do cabeçalho é ANTERIOR ao enriquecimento — era o que o log já dizia em
+`183c/0i/0r`) e o item fica para o `backfill-itens`. Cumprida a espera, UMA
+chamada sonda se o serviço voltou; se voltou, religa. Ajuste por
+`PNCP_ENRIQ_LIMITE` e `PNCP_ENRIQ_ESPERA_MIN`.
+
+O resumo final imprime no **stdout** quantas vezes desligou, quantas chamadas
+pulou e se terminou desligado — enriquecimento fora é perda silenciosa por
+natureza, porque a rodada termina "com sucesso", cheia de contratações e sem um
+item.
+
+O sintoma a procurar, se voltar: rajada de 503 **sem nenhum 429**, com a listagem
+respondendo normalmente. Uma requisição em cada API resolve a dúvida em segundos:
+```bash
+curl -s -o /dev/null -w "lista: %{http_code} %{time_total}s\n" \
+  "https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=20260901&dataFinal=20260906&codigoModalidadeContratacao=6&uf=SP&pagina=1&tamanhoPagina=50"
+```
+
 **Fim de semana não é buraco.** Medido em 120 dias, por `extract(isodow …)`:
 
 | seg | ter | qua | qui | sex | sáb | dom |
@@ -184,25 +218,36 @@ npm run pncp:fila:teste          # 20 casos: prioridade, passagem e não-despejo
 npm run pncp:fila:teste:e2e      #  9 casos: DOIS processos de verdade
 npm run pncp:fila:teste:filho    #  8 casos: quem varre é um FILHO por fatia
 npm run checkpoint:teste         # 12 casos: a lista de páginas abandonadas
+npm run pncp:breaker:teste       # 20 casos: o disjuntor do enriquecimento
 ```
 
 Os de processo de verdade são os que importam. O modo de falha desta área é invisível:
 quando ela erra, ninguém recebe erro — duas frentes passam a bater no PNCP ao mesmo
-tempo, ou uma página some, e o log das duas pontas parece normal. Rode os cinco depois
-de qualquer mexida em `pncp-lock.mjs`, `pncp-prioridade.mjs` ou `etl-pncp.mjs`.
+tempo, ou uma página some, e o log das duas pontas parece normal. Rode os seis depois
+de qualquer mexida em `pncp-lock.mjs`, `pncp-prioridade.mjs`, `pncp-breaker.mjs` ou
+`etl-pncp.mjs`.
 
 **Um teste que passa no código antigo não prova nada.** Dois destes conjuntos existem
 justamente porque a versão anterior os reprovava: o `:filho` roda o cenário COM e SEM o
 carimbo de `PNCP_TRABALHANDO_DESDE` e exige que o SEM falhe; os três casos novos de
 `pncp:lock:teste` (recusa de despejo, não-sobrescrita, não-soltar-alheio) foram rodados
-contra o `pncp-lock.mjs` de HEAD antes de entrar, e reprovaram os três. Ao consertar um
-defeito invisível aqui, faça a mesma conferência.
+contra o `pncp-lock.mjs` de HEAD antes de entrar, e reprovaram os três; e o
+`pncp:breaker:teste` fecha medindo o CUSTO do mesmo cenário com e sem disjuntor —
+500 registros com a API de itens fora dão **500 chamadas / 250min** sem ele contra
+**5 chamadas / 3min** com ele, e a asserção exige que o número antigo estoure o
+orçamento de 120min. Ao consertar um defeito invisível aqui, faça a mesma
+conferência.
 
 ---
 
 ## 6. Pendências conhecidas
 
-- **Defeito do checkpoint** (seção 4): página abandonada nunca é revisitada.
+- **Página pendente órfã por troca de janela.** Aconteceu de verdade em 07/09: a
+  pendência de MG estava sob a chave `uf:MG:mod:6:d20260901` e a janela do dia
+  virou `d20260902`, então nada a revisita. As datas 02–06/09 voltam pela janela
+  nova, mas o que foi publicado em 01/09 naquela página específica não volta.
+  Conserto de verdade seria a lista pendente viver por UF/modalidade/DATA em vez
+  de por chave de janela.
 - **`contratacoes` não tem índice em `data_publicacao`** (345k linhas). Consulta por dia
   com subconsulta correlacionada trava; agregue com um `GROUP BY` só e junte em JS.
 - **2024 e anteriores não foram medidos.** Fora de escopo por decisão de 05/09/2026.
