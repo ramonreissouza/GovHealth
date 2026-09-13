@@ -23,13 +23,24 @@ export const PORTAIS = {
     loginUrl: 'https://www.comprasnet.gov.br/seguro/loginPortal.asp',
     // Área autenticada do fornecedor (destino após o login).
     //
-    // ERA `/comprasnet-web/seguro/acompanhamento`, que NÃO EXISTE MAIS — dava 404 até
-    // com sessão válida, e o conector traduzia isso como "CAPTCHA/2FA exigido". A rota
-    // certa saiu da própria tabela de rotas do Angular (main-*.js do app), que lista:
-    //   public · seguro/fornecedor · seguro/governo · pagina-nao-encontrada
-    //   iniciar-sessao · acesso-nao-autorizado · sessao-encerrada
-    // Perguntar ao aplicativo é mais barato e mais seguro do que adivinhar URL.
-    areaUrl: 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor',
+    // NÃO É o `cnetmobile` (comprasnet-web). Duas rotas já foram tentadas ali e as duas
+    // falharam, por motivos DIFERENTES:
+    //   /seguro/acompanhamento → "Página não encontrada" (a rota não existe mais; a
+    //     tabela de rotas do Angular lista só public · seguro/fornecedor ·
+    //     seguro/governo · pagina-nao-encontrada · iniciar-sessao ·
+    //     acesso-nao-autorizado · sessao-encerrada)
+    //   /seguro/fornecedor → "Acesso não autorizado" MESMO com sessão gov.br válida,
+    //     medido em 13/09/2026 com um login real recém-concluído (4 cookies de
+    //     autenticação no sso.acesso.gov.br). A própria página diz o porquê: "tente
+    //     realizar o acesso A PARTIR DO Compras.gov.br". O cnetmobile não aceita link
+    //     direto — ele exige o repasse vindo de dentro do portal, e por isso NENHUM
+    //     cookie é emitido para aquele domínio quando se chega por fora.
+    //
+    // A área de trabalho do fornecedor continua sendo o ASP clássico do comprasnet, e é
+    // lá que ficam Acompanhar Julgamento, Avisos e as mensagens do certame. Chegamos
+    // aqui seguindo o menu do portal logado (t_top.asp → /assinadas/pregao.asp), não
+    // adivinhando: é o próprio portal que informa a rota.
+    areaUrl: 'https://www.comprasnet.gov.br/pregao/fornec/pregao1.asp',
     emLogin: ({ url }) => /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url),
     // ATENÇÃO: URL NÃO basta aqui. O Compras.gov.br é uma SPA Angular e responde
     // HTTP 200 com o HTML de bootstrap na própria URL da área logada — só depois de
@@ -39,9 +50,15 @@ export const PORTAIS = {
     // sinal de sessão no conteúdo já renderizado, e o `capture.mjs` ainda confere se
     // o storage_state tem cookie/token de verdade.
     logado: ({ url, conteudo }) =>
-      /comprasnet-web\/seguro/.test(url) &&
-      !/acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url) &&
-      /(sair|encerrar\s*sess|meus?\s*dados|minhas?\s*(compras|licita)|cpf|cnpj)/i.test(conteudo || ''),
+      /comprasnet\.gov\.br/i.test(url) &&
+      !/acesso\.gov\.br|sso\.|loginPortal|\/login|autenticacao/i.test(url) &&
+      // Marcadores lidos da área REAL, com uma sessão real aberta (13/09/2026):
+      // "Área de Trabalho do Fornecedor Brasileiro" no topo, e na página do pregão
+      // "Pregão/Concorrência Eletrônica" + "Acompanhar Julgamento/Habilitação".
+      // Sem acento também, porque o conteúdo chega minúsculo e às vezes sem acentuação.
+      /(área|area)\s*de\s*trabalho\s*do\s*fornecedor|(pregão|pregao)\/(concorrência|concorrencia)|acompanhar\s*julgamento/i.test(
+        conteudo || '',
+      ),
   },
   pcp: {
     id: 'pcp',

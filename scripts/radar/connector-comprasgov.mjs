@@ -16,8 +16,14 @@
 import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { PORTAIS } from './portais.mjs'
 
-const LOGIN_URL = 'https://www.gov.br/compras/pt-br/acesso-ao-sistema'
-const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor'
+const LOGIN_URL = PORTAIS.comprasgov.loginUrl
+// UMA fonte de verdade para o endereço da área. Antes havia uma cópia da URL aqui e
+// outra no registro, e elas divergiram: o registro já apontava para a rota nova
+// enquanto o conector continuava batendo na antiga. Endereço duplicado é endereço que
+// vai ficar velho em um dos dois lugares.
+const ACOMPANHAMENTO_URL = PORTAIS.comprasgov.areaUrl
+// Raiz da area do pregao, para os quadros irmaos (Acompanhar.asp, avisos.asp).
+const BASE = ACOMPANHAMENTO_URL.replace(/\/[^/]*$/, '')
 
 /**
  * @param {{ credencial: {login: string, senha: string, storageState?: string},
@@ -86,7 +92,13 @@ export async function sync({ credencial, processos, simulado }) {
       await browser.close()
       return { status: 'captcha_2fa', detalhe: 'CAPTCHA/2FA exigido — reconexão manual necessária', mensagens: [] }
     }
-    if (/acesso-ao-sistema|login|entrar com gov\.br/.test(url + ' ' + conteudo)) {
+    // A PALAVRA "login" NÃO PODE SER PROCURADA NO HTML INTEIRO. A área logada do
+    // comprasnet carrega `main.asp?login=U0000…` no próprio frameset — procurar a
+    // palavra solta faz o conector declarar "sessão expirada" exatamente quando a
+    // sessão está boa, e manda o fornecedor reconectar à toa. Aqui: a URL decide (é
+    // ela que muda quando o portal expulsa), e o texto VISÍVEL serve de reforço.
+    if (PORTAIS.comprasgov.emLogin({ url }) || /acesso-ao-sistema|loginportal/.test(url) ||
+        /faça o login|faca o login|entrar com gov\.br/.test(texto)) {
       await browser.close()
       return { status: 'sessao_expirada', detalhe: 'Sessão expirada — reconecte as credenciais', mensagens: [], loginUrl: LOGIN_URL }
     }
@@ -101,24 +113,43 @@ export async function sync({ credencial, processos, simulado }) {
         detalhe: 'A área autenticada não foi reconhecida (sem sinal de sessão na página) — não vou reportar "sem mensagens" sem ter lido a área de verdade.' }
     }
 
-    // Sessão válida: coleta as mensagens de chat de cada processo monitorado.
-    // NOTA: seletores dependem do layout atual do portal — ajuste aqui quando mudar.
+    // O CHAT NÃO É POR "PREGÃO MONITORADO" — é por PREGÃO EM QUE A EMPRESA PARTICIPA.
+    //
+    // A versão anterior varria os `processos` (os 519 que o Radar acompanha pelo perfil)
+    // procurando `[data-licitacao="…"] .chat-msg` na página do menu. Esses seletores
+    // nunca existiram nesta área, e o resultado era sempre 0 — um zero que PARECIA
+    // resposta. Medido em 13/09/2026 com sessão real: a própria área responde
+    // "No momento não existem licitações para acompanhar" quando não há participação.
+    //
+    // Então perguntamos ao portal, em vez de adivinhar: o Quadro de Acompanhamento
+    // lista o que existe para ler. Lista vazia é uma resposta legítima e dita com todas
+    // as letras; lista cheia que não sabemos ler é FALHA, e tem de aparecer como falha.
     const mensagens = []
-    for (const p of processos) {
-      try {
-        const linhas = await page.$$eval(
-          `[data-licitacao="${p.licitacaoId}"] .chat-msg, .mensagem-chat`,
-          (els) => els.map((el) => ({
-            autor: el.querySelector('.autor')?.textContent?.trim() ?? null,
-            texto: el.querySelector('.texto')?.textContent?.trim() ?? el.textContent?.trim() ?? '',
-            horario: el.querySelector('.horario')?.getAttribute('datetime') ?? null,
-          })),
-        ).catch(() => [])
-        for (const l of linhas) {
-          if (l.texto) mensagens.push(normalizarMensagem({ autor: l.autor, texto: l.texto, horarioOrigem: l.horario }, p.licitacaoId))
-        }
-      } catch { /* processo específico falhou: segue os demais */ }
+    await page.goto(`${BASE}/Acompanhar.asp`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {})
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
+    const acomp = (await page.evaluate(() => document.body?.innerText ?? '').catch(() => '')).toLowerCase()
+
+    if (/não existem licita|nao existem licita/.test(acomp)) {
+      // LER O ESTADO ANTES DE FECHAR. Invertido, o Playwright devolve "Target page,
+      // context or browser has been closed" — e o conector inteiro vira 'falha' por um
+      // detalhe de ordem, com a sessão perfeitamente boa.
+      const renovado = JSON.stringify(await context.storageState())
+      await browser.close()
+      return { status: 'ok', mensagens, storageState: renovado,
+        detalhe: 'nenhuma licitação em acompanhamento para este CNPJ (o portal não tem chat sem participação)' }
     }
+
+    // Há licitações em acompanhamento. A leitura por licitação AINDA NÃO ESTÁ
+    // CALIBRADA — não houve nenhuma participação ativa para servir de amostra, e eu não
+    // vou inventar seletor: chutar aqui produz exatamente o silêncio que este conector
+    // já produziu uma vez. Devolve falha com o que foi visto, para calibrar com dado
+    // real na primeira licitação que aparecer.
+    const linhas = await page.$$eval('table tr', (trs) =>
+      trs.map((tr) => (tr.innerText || '').replace(/\s+/g, ' ').trim()).filter((t) => /\d{4,}/.test(t)).slice(0, 10),
+    ).catch(() => [])
+    await browser.close()
+    return { status: 'falha', mensagens: [],
+      detalhe: `há licitação(ões) em acompanhamento e a leitura do chat ainda não foi calibrada: ${linhas.join(' | ').slice(0, 300)}` }
 
     // Persiste a sessão renovada para o próximo sync.
     const storageState = JSON.stringify(await context.storageState())
