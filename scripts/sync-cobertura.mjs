@@ -29,11 +29,26 @@
 // ele que matou o backfill de itens hoje.
 //
 // COMO DECIDE O QUE É BURACO. Compara cada dia com a MEDIANA dos dias do mesmo tipo
-// (útil com útil, fim de semana com fim de semana). Mediana e não média porque um
+// (útil com útil, baixo volume com baixo volume). Mediana e não média porque um
 // único dia zerado já puxaria a média para baixo e esconderia os outros. Dia útil e
-// fim de semana separados porque sábado publica uma fração de uma terça — sem
+// baixo volume separados porque sábado publica uma fração de uma terça — sem
 // separar, todo fim de semana viraria falso buraco e todo dia útil ruim passaria.
 // Os dois dias mais recentes entram SEMPRE, buraco ou não: são os que o usuário abre.
+// A régua mora em `cobertura-regua.mjs` desde 10/09/2026, para poder ser testada.
+//
+// FERIADO É A TERCEIRA CLASSE, e faltava. A separação era por DIA DA SEMANA, então
+// 07/09/2026 (Independência, numa segunda, 51 contratações no país inteiro) era
+// comparado com a mediana de dia útil — 767 — e voltava à lista de "em falta" em toda
+// execução, três vezes por dia, para sempre. Ver `feriados.mjs`.
+//
+// VARREDURA COMPLETA QUE NÃO TRAZ NADA É RESPOSTA, NÃO SUSPEITA. 05 e 06/09/2026
+// (fim de semana) têm zero no país; a mediana de fim de semana é 7 e abaixo do piso a
+// regra é "só o zero conta como buraco", então os dois eram buraco eternos. O script
+// já sabia que a varredura rodou inteira e ganhou zero — e jogava isso fora. Agora
+// anota (`cobertura:confirmado:<dia>`) e a régua respeita. A marca vale para UMA
+// contagem: se o dia mudar de número, ela é descartada e a régua volta a valer.
+// Não é "aceitar zero" — isso cegaria justamente o buraco que o script existe para
+// achar. É registrar que a pergunta já foi feita à fonte e respondida.
 //
 // A JANELA DA REFERÊNCIA É OUTRA, E MAIOR QUE A DO CONSERTO — e isso não é detalhe.
 // A primeira versão media a referência na mesma janela de 10 dias que ia consertar.
@@ -73,6 +88,7 @@ import pg from 'pg'
 import { spawn } from 'node:child_process'
 import { soltar, soltarNaSaida } from './pncp-lock.mjs'
 import { esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
+import { classificar, avaliar, mereceConfirmacao, FERIADO } from './cobertura-regua.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -168,7 +184,7 @@ async function cobertura(janela = DIAS) {
             LEFT JOIN contratacoes c ON c.data_publicacao = dias.dia
       GROUP BY 1, 2, 3
       ORDER BY 3`, [janela])
-  return rows.map((r) => ({ iso: r.iso, n: r.n, idade: r.idade, fds: r.dow === 0 || r.dow === 6 }))
+  return rows.map((r) => ({ iso: r.iso, n: r.n, idade: r.idade, classe: classificar(r.iso, r.dow) }))
 }
 
 // ── 1b. a marca de dia inacabado ─────────────────────────────────────────────
@@ -177,6 +193,36 @@ async function cobertura(janela = DIAS) {
 // da linha é a marca; `ultima_pagina` guarda quantas contratações o dia tinha quando
 // a tentativa começou, que é o que se quer saber depois ("parou em 436").
 const MARCA = (iso) => `cobertura:inacabado:${iso}`
+
+// A segunda marca, de 10/09/2026: dia que uma varredura COMPLETA declarou definitivo.
+// Mesmo lugar e mesma forma da primeira — a existência da linha é a marca, e
+// `ultima_pagina` guarda a contagem confirmada, que é o que faz a marca vencer sozinha
+// quando o dia muda de número. Ver `cobertura-regua.mjs` para o porquê.
+const CONFIRMADA = (iso) => `cobertura:confirmado:${iso}`
+
+async function marcarConfirmado(iso, quantas) {
+  await dbQuery(
+    `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
+     ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`,
+    [CONFIRMADA(iso), quantas])
+}
+
+async function lerConfirmados() {
+  const { rows } = await dbQuery(
+    `SELECT replace(chave, 'cobertura:confirmado:', '') iso, ultima_pagina quantas
+       FROM etl_checkpoint WHERE chave LIKE 'cobertura:confirmado:%'`)
+  return new Map(rows.filter((r) => isoValido(r.iso)).map((r) => [r.iso, r.quantas]))
+}
+
+/** Confirmação vencida: o dia mudou de contagem, então a resposta antiga não vale mais.
+ *  Apagar é o certo — deixar a marca velha faria a régua confiar num retrato que já
+ *  não descreve o dia. */
+async function descartarVencidas(dias) {
+  const mortas = dias.filter((d) => d.confirmacaoVencida).map((d) => CONFIRMADA(d.iso))
+  if (!mortas.length) return
+  await dbQuery('DELETE FROM etl_checkpoint WHERE chave = ANY($1)', [mortas])
+  log(`${mortas.length} confirmação(ões) vencida(s) — o dia mudou de contagem, régua volta a valer`)
+}
 
 async function marcarInacabado(iso, tinha) {
   await dbQuery(
@@ -218,64 +264,38 @@ async function lerInacabados() {
  *  forma de data e ainda assim não ser data. Aqui nada é convertido: o banco só diz
  *  qual é o corte (ancorado em São Paulo, como todo o resto), a comparação é entre
  *  textos ISO — que ordenam certo — e chave inválida cai fora por não ser data. */
-async function podarInacabados() {
+async function podarMarcas(prefixo, oQue) {
   const { rows } = await dbQuery(
-    `SELECT chave, replace(chave, 'cobertura:inacabado:', '') iso,
+    `SELECT chave, replace(chave, $2, '') iso,
             to_char((now() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int, 'YYYY-MM-DD') limite
-       FROM etl_checkpoint WHERE chave LIKE 'cobertura:inacabado:%'`, [REF_DIAS])
+       FROM etl_checkpoint WHERE chave LIKE $2 || '%'`, [REF_DIAS, prefixo])
   const mortas = rows.filter((r) => !isoValido(r.iso) || r.iso < r.limite).map((r) => r.chave)
   if (!mortas.length) return
   await dbQuery('DELETE FROM etl_checkpoint WHERE chave = ANY($1)', [mortas])
-  log(`${mortas.length} marca(s) de dia inacabado fora da janela ou malformada(s) — podadas`)
+  log(`${mortas.length} marca(s) de ${oQue} fora da janela ou malformada(s) — podadas`)
 }
 
-const mediana = (xs) => {
-  if (!xs.length) return 0
-  const s = [...xs].sort((a, b) => a - b)
-  const m = Math.floor(s.length / 2)
-  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2)
-}
-
-function buracos(dias, referencia, inacabados) {
-  // O dia de HOJE fica fora da régua: ele ainda está sendo publicado e entraria como
-  // um zero permanente, puxando a mediana para baixo todo dia.
-  const base = referencia.filter((d) => d.idade > 0)
-  const refUtil = mediana(base.filter((d) => !d.fds).map((d) => d.n))
-  const refFds = mediana(base.filter((d) => d.fds).map((d) => d.n))
-  for (const d of dias) {
-    d.ref = d.fds ? refFds : refUtil
-    // Percentual em cima de número pequeno não quer dizer nada: um sábado com 3
-    // contra referência 8 dispara "buraco de 62%" para uma diferença de 5 registros,
-    // e pagaria uma varredura nacional de 20min por eles. Abaixo do piso só o zero
-    // absoluto conta como buraco.
-    const faltando = d.ref < PISO_REF ? d.n === 0 : d.n < LIMIAR * d.ref
-    // A marca vence o limiar. Um dia que sabidamente ficou pela metade não precisa
-    // convencer a régua: quem o interrompeu já sabe, e a régua nunca vai saber.
-    d.inacabado = inacabados.has(d.iso)
-    // Os dois mais novos entram sempre: são os que a tela mostra primeiro e o dia de
-    // hoje, por definição, ainda está sendo publicado — nunca vai parecer completo.
-    d.recolher = d.idade <= 1 || faltando || d.inacabado
-    d.motivo = d.idade <= 1 ? 'recente'
-      : faltando ? `${d.n} vs ref ${d.ref}`
-      : d.inacabado ? `inacabado (parou em ${inacabados.get(d.iso) ?? '?'})`
-      : null
-  }
-  return { refUtil, refFds }
+async function podarTodasAsMarcas() {
+  await podarMarcas('cobertura:inacabado:', 'dia inacabado')
+  await podarMarcas('cobertura:confirmado:', 'dia confirmado')
 }
 
 const referencia = await cobertura(REF_DIAS)
 const dias = referencia.slice(0, DIAS)
 const inacabados = await lerInacabados()
-const { refUtil, refFds } = buracos(dias, referencia, inacabados)
+const confirmados = (await tentar('ler confirmações', () => lerConfirmados())) ?? new Map()
+const { refUtil, refBaixo } = avaliar(dias, referencia,
+  { inacabados, confirmados, limiar: LIMIAR, pisoRef: PISO_REF })
+if (!ENSAIO) await tentar('descartar confirmações vencidas', () => descartarVencidas(dias))
 
 console.log(`\n[cobertura] ${ts()} — conserta ${DIAS}d · régua de ${REF_DIAS}d:`
-  + ` dia útil ${refUtil}, fim de semana ${refFds}`)
+  + ` dia útil ${refUtil}, baixo volume (fim de semana e feriado) ${refBaixo}`)
 console.table(dias.map((d) => ({
   dia: d.iso,
-  tipo: d.fds ? 'fim de semana' : 'útil',
+  tipo: d.classe === FERIADO ? `feriado (${d.feriado})` : d.classe,
   contratações: d.n,
   referência: d.ref,
-  recolher: !d.recolher ? '—'
+  recolher: !d.recolher ? (d.dispensa ? `— (${d.dispensa})` : '—')
     : d.motivo === 'recente' ? 'sim (recente)'
     : d.inacabado ? 'SIM — inacabado'
     : 'SIM — buraco',
@@ -293,7 +313,7 @@ if (FORCAR.length && alvo.length !== FORCAR.length) {
 // Poda ANTES das saídas antecipadas. Uma marca fora da janela não vira alvo, então se
 // a poda ficasse depois do `!alvo.length` ela nunca rodaria justamente nas rodadas em
 // que não há o que fazer — que são as únicas em que sobra tempo para arrumar a casa.
-if (!ENSAIO) await tentar('podar marcas', () => podarInacabados())
+if (!ENSAIO) await tentar('podar marcas', () => podarTodasAsMarcas())
 
 if (!alvo.length) {
   log('nenhum dia para recolher — cobertura está em dia.')
@@ -383,28 +403,41 @@ if (!depois) {
 }
 const porDia = new Map(depois.map((d) => [d.iso, d.n]))
 let ganho = 0
-console.log('')
-console.table(feitos.map((f) => {
+const linhas = []
+for (const f of feitos) {
   const n = porDia.get(f.iso) ?? 0
-  ganho += n - f.n
-  return {
+  const ganhoDia = n - f.n
+  ganho += ganhoDia
+  // A VARREDURA COMPLETA QUE NÃO TROUXE NADA É UMA RESPOSTA, e é aqui que ela era
+  // jogada fora: o dia voltava à fila na execução seguinte para ser reperguntado.
+  // Anotar custa uma linha e economiza uma varredura nacional por execução — 05 e
+  // 06/09/2026 vinham sendo revarridos 3x/dia sem nunca poder passar na régua.
+  f.confirmou = mereceConfirmacao({ inteiro: f.inteiro, idade: f.idade, ganho: ganhoDia })
+  if (f.confirmou) await tentar(`confirmar ${f.iso}`, () => marcarConfirmado(f.iso, n))
+  linhas.push({
     dia: f.iso,
     antes: f.n,
     depois: n,
-    ganho: n - f.n,
+    ganho: ganhoDia,
     referência: f.ref,
     situação: f.cortado ? 'cortado no tempo' : (f.code === 0 ? 'ok' : `saiu ${f.code}`),
     // O que importa não é ter rodado, é ter fechado: um dia que continua abaixo da
     // referência depois da coleta não foi resolvido, e dizer "ok" aqui seria mentir.
     // Passar no limiar TAMBÉM não basta — foi assim que 26/08 se declarou são com 436
     // de 838 depois de morrer na 4ª de 27 UFs. Quem não terminou não fechou.
+    //
+    // A exceção é o dia CONFIRMADO: varredura completa, ganho zero. Esse não está em
+    // falta, está vazio — e insistir nele é gastar pista para reler a mesma resposta.
     fechou: f.idade <= 1 ? '—'
       : !f.inteiro ? 'NÃO — ficou inacabado'
       : n >= LIMIAR * f.ref ? 'sim'
+      : f.confirmou ? 'sim — vazio confirmado'
       : 'NÃO — segue em falta',
-  }
-}))
-const emFalta = feitos.filter((f) => f.idade > 1
+  })
+}
+console.log('')
+console.table(linhas)
+const emFalta = feitos.filter((f) => f.idade > 1 && !f.confirmou
   && (!f.inteiro || (porDia.get(f.iso) ?? 0) < LIMIAR * f.ref))
 log(`fim: ${feitos.length} dia(s) trabalhados · +${ganho} contratações · ${emFalta.length} ainda em falta`
   + ` · ${Math.round((ORCAMENTO_MIN * 60 * 1000 - restaMs()) / 60000)}min`)

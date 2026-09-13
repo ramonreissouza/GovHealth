@@ -15,9 +15,15 @@ services:
     image: ghcr.io/steel-dev/steel-browser:latest
     container_name: radar-steel
     restart: unless-stopped
+    # 127.0.0.1: NAO REMOVER. Sem o endereço, o Docker publica a porta em TODAS as
+    # interfaces e escreve a regra direto no iptables, PASSANDO POR CIMA do firewall da
+    # nuvem — o steel ficaria acessível da internet. E o live view do steel é, por
+    # desenho dele, sem autenticação ("intentionally unauthenticated for fast embeds"),
+    # numa rota fixa e sem id: quem soubesse o IP dirigiria um navegador logado no
+    # gov.br de um cliente. Quem vai para o túnel é o browser-service, não o steel.
     ports:
-      - "3100:3000"
-      - "9223:9223"
+      - "127.0.0.1:3100:3000"
+      - "127.0.0.1:9223:9223"
     # Em produção, defina origem permitida do iframe e limites conforme a doc do steel.
     environment:
       - NODE_ENV=production

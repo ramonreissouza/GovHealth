@@ -25,6 +25,8 @@
     "checkpoint:migrate": "node scripts/migrate-checkpoint-pendentes.mjs",
     "checkpoint:teste": "node scripts/etl-checkpoint-pendentes.teste.mjs",
     "pncp:breaker:teste": "node scripts/pncp-breaker.teste.mjs",
+    "cobertura:regua:teste": "node scripts/cobertura-regua.teste.mjs",
+    "radar:pista:teste": "node scripts/radar/pista-navegador.teste.mjs",
     "portais:migrate": "node scripts/migrate-portais.mjs",
     "portais:backfill": "node scripts/backfill-portais.mjs",
     "portais:harvest": "node scripts/harvest-portais.mjs",
