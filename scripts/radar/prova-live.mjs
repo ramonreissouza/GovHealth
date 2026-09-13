@@ -15,8 +15,11 @@ const BASE = 'http://127.0.0.1:3200'
 
 const cli = new pg.Client({ connectionString: env.DATABASE_URL })
 await cli.connect()
+// Prefere uma credencial que NÃO esteja conectada. A sonda abre e cancela sessão; se
+// escolhesse a credencial de um cliente em produção, mexeria na saúde dele por nada.
 const { rows } = await cli.query(
-  `SELECT id, conector_id FROM radar_credenciais ORDER BY criado_em DESC LIMIT 1`,
+  `SELECT id, conector_id FROM radar_credenciais
+   ORDER BY (storage_state IS NOT NULL), criado_em DESC LIMIT 1`,
 )
 await cli.end()
 if (!rows.length) { console.log('nenhuma credencial cadastrada — nao da para provar'); process.exit(1) }
@@ -85,10 +88,14 @@ try {
     // Não use o endpoint CDP cru: o /json/version do steel devolve um
     // webSocketDebuggerUrl com o endereço INTERNO do container, e o Playwright tenta
     // localhost:80 (ECONNREFUSED ::1:80). `cdpUrlDe` rebaseia para o alcançável.
-    const { cdpUrlDe } = await import('./steel.mjs')
-    const lista = await fetch((env.RADAR_STEEL_URL || 'http://localhost:3100') + '/v1/sessions').then((x) => x.json())
-    const viva = (Array.isArray(lista) ? lista : lista.sessions ?? [])[0]
-    const b = await chromium.connectOverCDP(cdpUrlDe(viva ?? {}))
+    // Usa a MESMA função que o capturar() usa. Não é detalhe: o capturar() conectava
+    // no endpoint cru e morria com ECONNREFUSED ::1:80 — depois de o fornecedor ter
+    // digitado senha e 2FA. Exercitar aqui a função do produto é o que transforma esta
+    // sonda em prova; uma variante própria só provaria a variante.
+    const { cdpUrlDaSessaoViva } = await import('./steel.mjs')
+    const cdp = await cdpUrlDaSessaoViva()
+    console.log('  CDP usado pelo capturar():', cdp)
+    const b = await chromium.connectOverCDP(cdp)
     const ctx = b.contexts()[0]
     const page = ctx?.pages()[0]
     if (!page) { console.log('  (nenhuma página aberta)') }
@@ -105,6 +112,19 @@ try {
       // que o sistema de verdade considera.
       const { PORTAIS } = await import('./portais.mjs')
       const emLogin = PORTAIS[cred.conector_id]?.emLogin?.({ url, conteudo: dentro }) ?? null
+      // A sessão TEM de nascer sem cookie de ninguém. O steel reaproveita o mesmo
+      // Chromium entre sessões, então sem limpeza o próximo fornecedor abre o iframe
+      // já logado como o anterior — e a captura grava a sessão do primeiro como
+      // credencial do segundo. Medido acontecendo em 13/09/2026.
+      //
+      // A conferência é por cookie de AUTENTICAÇÃO, não por domínio: a própria tela de
+      // login cria um `ASPSESSIONID…` anônimo ao abrir, e contá-lo como vazamento faria
+      // a sonda gritar sempre — uma sonda que grita sempre não é lida.
+      const st = await ctx.storageState()
+      const AUTENTICACAO = /Session_Gov_Br|Govbrid|GovbrUid|TSPD|\.ASPXAUTH|JSESSIONID/i
+      const herdados = (st.cookies ?? []).filter((c) => AUTENTICACAO.test(c.name ?? ''))
+      console.log('  cookies na sessão recém-aberta:', st.cookies?.length ?? 0,
+        '· de AUTENTICAÇÃO herdados:', herdados.length ? `${herdados.length} <<< VAZAMENTO (${herdados.map((c) => c.name).join(', ')})` : '0')
       console.log('  404?', erro404 ? 'SIM <<< DEFEITO' : 'não',
         '· certificado?', certErr ? 'SIM <<< DEFEITO' : 'não',
         '· é tela de login (critério do capturar)?', emLogin === null ? '(portal sem regra)' : emLogin ? 'sim' : 'NÃO <<< suspeito')

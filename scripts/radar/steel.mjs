@@ -115,6 +115,26 @@ export async function sessaoAtivaId() {
   } catch { return null }
 }
 
+/** CDP ALCANÇÁVEL da sessão viva.
+ *
+ *  Existe porque conectar no endpoint CRU (`http://localhost:9223`) NÃO funciona, e
+ *  falha de um jeito que não parece o que é: o Playwright pede `/json/version`, o steel
+ *  responde com um `webSocketDebuggerUrl` que carrega o endereço INTERNO do container,
+ *  o Playwright segue esse endereço e termina em `connect ECONNREFUSED ::1:80`.
+ *
+ *  O `iniciar()` já usava `cdpUrlDe()` e por isso funcionava; o `capturar()` conectava
+ *  no cru e morria — depois de o fornecedor ter digitado a senha e o 2FA. O erro
+ *  chegava à tela como "Não foi possível capturar a sessão", sem nada apontando para
+ *  um endereço de rede. Medido em 13/09/2026, com um cliente real no meio do login. */
+export async function cdpUrlDaSessaoViva() {
+  try {
+    const r = await req('/v1/sessions')
+    const lista = Array.isArray(r) ? r : (r.sessions ?? r.data ?? [])
+    const viva = lista.find((s) => (s.status ?? s.state) !== 'released' && !s.endedAt) ?? lista[0]
+    return viva ? cdpUrlDe(viva) : STEEL_CDP
+  } catch { return STEEL_CDP }
+}
+
 /** Encerra/libera a sessão (best-effort). */
 export async function encerrarSessao(id) {
   if (!id) return

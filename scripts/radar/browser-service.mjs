@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import pg from 'pg'
 import net from 'node:net'
 import crypto from 'node:crypto'
-import { criarSessao, idDe, cdpUrlDe, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
+import { criarSessao, idDe, cdpUrlDe, cdpUrlDaSessaoViva, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
 import { encrypt } from './capture.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
 import { PORTAIS } from './portais.mjs'
@@ -48,6 +48,37 @@ const q = (sql, params) => pool.query(sql, params).then((r) => r.rows)
 async function playwright() {
   try { const { chromium } = await import('playwright'); return chromium }
   catch { throw new Error('Playwright não instalado (npx playwright install chromium)') }
+}
+
+// ZERAR O NAVEGADOR ENTRE FORNECEDORES.
+//
+// O steel NÃO reinicia o Chromium a cada `POST /v1/sessions` — ele troca a
+// contabilidade da sessão e segue com o mesmo processo e o mesmo perfil
+// (`--user-data-dir=/tmp/steel-chrome`). Medido em 13/09/2026, logo depois de um
+// fornecedor real conectar: uma sessão NOVA, pedida por OUTRA credencial, já nascia
+// com os 11 cookies do login anterior — `Session_Gov_Br_Prod`, `Govbrid`,
+// `GovbrUid_…`. Ou seja, o segundo fornecedor abriria o iframe já logado como o
+// primeiro, e o `capturar()` — que confere se EXISTE cookie, não DE QUEM ele é —
+// cifraria a sessão do primeiro e a gravaria como credencial do segundo.
+//
+// A `pista-navegador.mjs` não cobre isto: ela impede acesso SIMULTÂNEO, e este
+// vazamento é SEQUENCIAL. São defesas diferentes para riscos diferentes.
+//
+// Zeramos nos dois extremos, de propósito: ao ABRIR (para que o que for capturado
+// tenha vindo, com certeza, do login desta sessão) e ao CAPTURAR (para não deixar
+// sessão autenticada de ninguém esperando o próximo).
+async function limparEstado(ctx, page) {
+  try { await ctx.clearCookies() } catch {}
+  try {
+    const cdp = await ctx.newCDPSession(page)
+    await cdp.send('Network.clearBrowserCookies').catch(() => {})
+    await cdp.send('Network.clearBrowserCache').catch(() => {})
+    await cdp.send('Storage.clearDataForOrigin', { origin: '*', storageTypes: 'all' }).catch(() => {})
+    await cdp.detach().catch(() => {})
+  } catch {}
+  // Abas herdadas também vão embora: a do fornecedor anterior ficou aberta, e uma aba
+  // aberta numa área logada é a mesma exposição por outro caminho.
+  for (const p of ctx.pages()) { if (p !== page) await p.close().catch(() => {}) }
 }
 
 async function marcarSaude(cred, status, detalhe) {
@@ -101,6 +132,7 @@ async function iniciar(credencialId) {
     const browser = await chromium.connectOverCDP(cdp)
     const ctx = browser.contexts()[0] ?? (await browser.newContext())
     const page = ctx.pages()[0] ?? (await ctx.newPage())
+    await limparEstado(ctx, page) // ANTES de navegar — ver o comentário em limparEstado
     await page.goto(urlDeEntrada, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
     await browser.close() // desconecta do CDP; a sessão steel continua viva
   } catch (e) {
@@ -140,13 +172,19 @@ async function capturar(credencialId) {
   try {
     const chromium = await playwright()
     // Reconecta ao mesmo browser do steel para ler o estado autenticado.
-    const cdp = process.env.RADAR_STEEL_CDP || 'http://localhost:9223'
-    const browser = await chromium.connectOverCDP(cdp)
+    // NÃO use o endpoint CDP cru aqui: ver `cdpUrlDaSessaoViva()` em steel.mjs. O
+    // `iniciar()` já rebaseava e por isso funcionava; esta linha ficou para trás e
+    // derrubava a captura DEPOIS de o fornecedor ter digitado senha e 2FA.
+    const browser = await chromium.connectOverCDP(await cdpUrlDaSessaoViva())
     const ctx = browser.contexts()[0]
     if (!ctx) { await browser.close(); return { erro: 'sessão sem contexto ativo', status: 502 } }
     const url = ctx.pages()[0]?.url() ?? ''
     const estado = await ctx.storageState()
     const storageState = JSON.stringify(estado)
+    // Lido o cofre, o navegador não guarda mais nada de ninguém. Se falhar daqui para
+    // baixo, o pior caso é o fornecedor refazer o login — nunca outro herdar a sessão.
+    const pagina = ctx.pages()[0]
+    if (pagina) await limparEstado(ctx, pagina)
     await browser.close()
 
     // URL NÃO PROVA LOGIN — e este projeto já pagou por isso uma vez (o falso
