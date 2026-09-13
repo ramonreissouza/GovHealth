@@ -208,11 +208,19 @@ function alvoDoLive(caminhoRestante) {
 
 function repassar(req, res, caminho) {
   const alvo = new URL(STEEL + caminho)
+  // Host reescrito: o steel responde para si mesmo, não para o hostname do túnel.
+  const cabecalhos = { ...req.headers, host: alvo.host }
+  // O token interno NÃO segue para o steel. Atenção: `{'x-radar-token': undefined}`
+  // NÃO remove o cabeçalho — o Node tenta escrever o valor e lança
+  // ERR_HTTP_INVALID_HEADER_VALUE, de forma SÍNCRONA, antes de existir listener de
+  // 'error'. Era uma queda do processo inteiro no primeiro live view legítimo: o
+  // porteiro recusava link inválido com 403 sem chegar aqui, então só quebrava quando
+  // um token VÁLIDO passava — isto é, exatamente quando um cliente conectava.
+  delete cabecalhos['x-radar-token']
   const r = http.request({
     hostname: alvo.hostname, port: alvo.port || 80, path: alvo.pathname + alvo.search,
     method: req.method,
-    // Host reescrito: o steel responde para si mesmo, não para o hostname do túnel.
-    headers: { ...req.headers, host: alvo.host, 'x-radar-token': undefined },
+    headers: cabecalhos,
   }, (resp) => {
     res.writeHead(resp.statusCode ?? 502, resp.headers)
     resp.pipe(res)
@@ -231,7 +239,15 @@ const server = http.createServer(async (req, res) => {
     const [, , tok, ...resto] = req.url.split('/')
     const dono = donoDoToken((tok ?? '').split('?')[0])
     if (!dono) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('sessão expirada ou link inválido') }
-    return repassar(req, res, alvoDoLive('/' + resto.join('/')))
+    // Rede de proteção: um defeito aqui NÃO pode derrubar o serviço. Este caminho é o
+    // único aberto à internet, e quem paga a queda é o fornecedor no meio do login.
+    try {
+      return repassar(req, res, alvoDoLive('/' + resto.join('/')))
+    } catch (e) {
+      console.error('[browser-service] live view:', e)
+      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
+      return res.end('live view indisponível')
+    }
   }
 
   if (req.method !== 'POST') return send(405, { erro: 'method' })
