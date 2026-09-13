@@ -206,7 +206,28 @@ function alvoDoLive(caminhoRestante) {
   return caminhoRestante && caminhoRestante !== '/' ? caminhoRestante : '/v1/sessions/debug'
 }
 
-function repassar(req, res, caminho) {
+// O HTML do player traz o endereço do websocket CRAVADO, com o endereço interno do
+// container — medido em 13/09/2026:
+//
+//     const baseWsUrl = 'ws://0.0.0.0:3000/v1/sessions/cast';
+//
+// O `rebasear()` do steel.mjs não alcança isto: ele conserta as URLs que a API do steel
+// DEVOLVE, e esta vem dentro do corpo da página. Sem reescrever, o navegador do
+// fornecedor tenta abrir um websocket para 0.0.0.0 (que não existe) e ainda em `ws://`
+// dentro de uma página https — o player carrega e fica "Session not connected".
+//
+// As queries são anexadas depois (`?tabInfo=true`, `?pageId=…`), então basta trocar a
+// base: o proxy de upgrade já preserva pathname + search.
+export function reescreverPlayer(html, token, publico = PUBLICO) {
+  const base = new URL(publico)
+  const prefixo = `${base.host}/live/${token}`
+  const seguro = base.protocol === 'https:'
+  return html
+    .replace(/wss?:\/\/(?:0\.0\.0\.0|localhost|127\.0\.0\.1):3000/g, `${seguro ? 'wss:' : 'ws:'}//${prefixo}`)
+    .replace(/https?:\/\/(?:0\.0\.0\.0|localhost|127\.0\.0\.1):3000/g, `${base.protocol}//${prefixo}`)
+}
+
+function repassar(req, res, caminho, token) {
   const alvo = new URL(STEEL + caminho)
   // Host reescrito: o steel responde para si mesmo, não para o hostname do túnel.
   const cabecalhos = { ...req.headers, host: alvo.host }
@@ -217,13 +238,29 @@ function repassar(req, res, caminho) {
   // porteiro recusava link inválido com 403 sem chegar aqui, então só quebrava quando
   // um token VÁLIDO passava — isto é, exatamente quando um cliente conectava.
   delete cabecalhos['x-radar-token']
+  // Pedimos sem compressão: precisamos LER o HTML do player para reescrevê-lo, e
+  // descomprimir aqui só para recomprimir depois seria trabalho à toa.
+  delete cabecalhos['accept-encoding']
   const r = http.request({
     hostname: alvo.hostname, port: alvo.port || 80, path: alvo.pathname + alvo.search,
     method: req.method,
     headers: cabecalhos,
   }, (resp) => {
-    res.writeHead(resp.statusCode ?? 502, resp.headers)
-    resp.pipe(res)
+    // Só o HTML precisa de reescrita. Todo o resto (imagens, js, o que for) passa
+    // direto, sem ficar na memória.
+    if (!String(resp.headers['content-type'] ?? '').includes('text/html')) {
+      res.writeHead(resp.statusCode ?? 502, resp.headers)
+      return resp.pipe(res)
+    }
+    const pedacos = []
+    resp.on('data', (d) => pedacos.push(d))
+    resp.on('end', () => {
+      const html = reescreverPlayer(Buffer.concat(pedacos).toString('utf8'), token)
+      const cab = { ...resp.headers, 'content-length': Buffer.byteLength(html) }
+      res.writeHead(resp.statusCode ?? 502, cab)
+      res.end(html)
+    })
+    resp.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end() })
   })
   r.on('error', (e) => { if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end(`live view indisponível: ${e.message}`) })
   req.pipe(r)
@@ -242,7 +279,7 @@ const server = http.createServer(async (req, res) => {
     // Rede de proteção: um defeito aqui NÃO pode derrubar o serviço. Este caminho é o
     // único aberto à internet, e quem paga a queda é o fornecedor no meio do login.
     try {
-      return repassar(req, res, alvoDoLive('/' + resto.join('/')))
+      return repassar(req, res, alvoDoLive('/' + resto.join('/')), (tok ?? '').split('?')[0])
     } catch (e) {
       console.error('[browser-service] live view:', e)
       if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })

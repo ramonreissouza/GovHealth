@@ -49,6 +49,33 @@ try {
   console.log('  <title>:', t ? t[1].trim() : '(sem title)')
   console.log('  tem canvas/stream:', /canvas|<img/i.test(txt))
 
+  // O player carregar NÃO basta: ele traz o endereço do websocket cravado com o
+  // endereço interno do container. Se isto não for reescrito, a moldura aparece e
+  // fica "Session not connected" — foi exatamente o que o cliente viu.
+  console.log('\n--- o websocket do player foi reescrito? ---')
+  const interno = txt.match(/wss?:\/\/(?:0\.0\.0\.0|localhost|127\.0\.0\.1):3000[^'"]*/g)
+  const externo = txt.match(/wss?:\/\/[^'"]*\/live\/[^'"]*\/v1\/sessions\/cast/g)
+  console.log('  sobrou endereço interno:', interno ? 'SIM — ' + interno[0] + '  <<< DEFEITO' : 'não')
+  console.log('  aponta para o túnel    :', externo ? externo[0].replace(/\/live\/[^/]+/, '/live/********') : 'NÃO ENCONTRADO  <<< DEFEITO')
+  if (interno || !externo) { console.log('\n  A MOLDURA VAI APARECER E FICAR "Session not connected".') }
+
+  // Reescrever o endereço não prova que ele FUNCIONA. Este é o teste que separa
+  // "a moldura aparece" de "a tela do gov.br aparece": abrir o websocket pelo túnel,
+  // atravessando o proxy de upgrade, como o navegador do fornecedor faz.
+  if (externo) {
+    console.log('\n--- o websocket conecta MESMO pelo túnel? ---')
+    const wsUrl = externo[0] + '?tabInfo=true'
+    const r = await new Promise((resolve) => {
+      const ws = new WebSocket(wsUrl)
+      const fim = setTimeout(() => { try { ws.close() } catch {} ; resolve('ESGOTOU O TEMPO (15s) sem abrir') }, 15000)
+      ws.onopen = () => { clearTimeout(fim); resolve('ABRIU') }
+      ws.onerror = (e) => { clearTimeout(fim); resolve('ERRO: ' + (e.message ?? 'recusado')) }
+      ws.onmessage = (m) => { clearTimeout(fim); resolve('ABRIU e já recebeu ' + String(m.data).length + ' bytes') }
+    })
+    console.log(' ', r)
+    if (!r.startsWith('ABRIU')) console.log('  A MOLDURA VAI APARECER E FICAR "Session not connected".')
+  }
+
   console.log('\n--- o serviço continua vivo depois disso? ---')
   const vivo = await fetch(BASE + '/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
     .then((x) => x.status).catch((e) => 'MORREU: ' + e.message)
