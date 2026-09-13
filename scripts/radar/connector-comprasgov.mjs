@@ -14,6 +14,7 @@
 //    tempos); qualquer falha inesperada vira 'falha' e alarme na saúde do conector.
 
 import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import { PORTAIS } from './portais.mjs'
 
 const LOGIN_URL = 'https://www.gov.br/compras/pt-br/acesso-ao-sistema'
 const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento'
@@ -51,15 +52,53 @@ export async function sync({ credencial, processos, simulado }) {
     // redireciona para login — sinal de sessao_expirada.
     await withBackoff(() => page.goto(ACOMPANHAMENTO_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }))
 
+    // ESPERAR O ANGULAR DESENHAR. O `domcontentloaded` acima volta com o HTML de
+    // bootstrap da SPA, quando a tela ainda está vazia. Sem esta espera, as checagens
+    // abaixo olham uma página em branco: nem acham o "página não encontrada", nem acham
+    // sinal de login — e o conector seguia adiante e reportava `ok` com 0 mensagens.
+    // Falso "ok" é pior que erro: some da lista de problemas e o fornecedor acha que
+    // está monitorado.
+    await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
+
     const url = page.url()
     const conteudo = (await page.content()).toLowerCase()
-    if (/captcha|recaptcha|hcaptcha/.test(conteudo)) {
+    const texto = (await page.evaluate(() => document.body?.innerText ?? '').catch(() => '')).toLowerCase()
+
+    // A ÁREA MUDOU DE ENDEREÇO — e isto precisa vir ANTES do teste de CAPTCHA.
+    //
+    // Medido em 13/09/2026 com uma sessão recém-criada e válida: esta URL renderiza
+    // "Página não encontrada". E o teste de CAPTCHA abaixo era um `includes` no HTML
+    // INTEIRO, então a palavra "captcha" em algum script da própria página de erro
+    // casava — e o fornecedor recebia "CAPTCHA/2FA exigido — reconexão manual
+    // necessária". Diagnóstico errado, e caro: manda o cliente refazer um login que
+    // não resolve, porque o problema não é a sessão dele.
+    if (/não encontrada|nao encontrada|página não existe/.test(texto)) {
+      await browser.close()
+      return { status: 'portal_indisponivel', mensagens: [],
+        detalhe: 'A área de acompanhamento do Compras.gov.br respondeu "página não encontrada" — o endereço mudou. Não é problema da sua conexão; estamos recalibrando.' }
+    }
+
+    // CAPTCHA de verdade é um WIDGET VISÍVEL, não a palavra solta num script.
+    const temCaptcha = await page.evaluate(() =>
+      !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], .g-recaptcha, [class*="h-captcha"], #captcha'),
+    ).catch(() => false)
+    if (temCaptcha) {
       await browser.close()
       return { status: 'captcha_2fa', detalhe: 'CAPTCHA/2FA exigido — reconexão manual necessária', mensagens: [] }
     }
     if (/acesso-ao-sistema|login|entrar com gov\.br/.test(url + ' ' + conteudo)) {
       await browser.close()
       return { status: 'sessao_expirada', detalhe: 'Sessão expirada — reconecte as credenciais', mensagens: [], loginUrl: LOGIN_URL }
+    }
+
+    // PROVA POSITIVA antes de declarar sucesso. Até aqui só descartamos hipóteses de
+    // erro conhecidas, e "não reconheci nenhum erro" NÃO é o mesmo que "estou na área
+    // logada". O registro já tem o predicado que exige sinal de sessão no conteúdo
+    // renderizado — é ele que decide, e é o mesmo usado pela captura.
+    if (!PORTAIS.comprasgov.logado({ url, conteudo: texto })) {
+      await browser.close()
+      return { status: 'sessao_expirada', mensagens: [], loginUrl: LOGIN_URL,
+        detalhe: 'A área autenticada não foi reconhecida (sem sinal de sessão na página) — não vou reportar "sem mensagens" sem ter lido a área de verdade.' }
     }
 
     // Sessão válida: coleta as mensagens de chat de cada processo monitorado.
