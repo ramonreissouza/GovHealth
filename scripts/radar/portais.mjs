@@ -63,6 +63,8 @@ export const PORTAIS = {
   pcp: {
     id: 'pcp',
     nome: 'Portal de Compras Públicas',
+    publico: true,
+    dominio: 'portaldecompraspublicas',
     loginUrl: 'https://www.portaldecompraspublicas.com.br/Login',
     // Painel do fornecedor após o login (a calibrar).
     areaUrl: 'https://www.portaldecompraspublicas.com.br/Home',
@@ -79,11 +81,31 @@ export const PORTAIS = {
     emLogin: ({ url }) => /login/i.test(url),
     logado: ({ url, conteudo }) => !/login/i.test(url) && /(sair|encerrar\s*sess|minhas\s*licita)/i.test(conteudo || ''),
   },
+  // BLL e BNC: MESMA aplicação em dois domínios (medido em 13/09/2026 — mesma rota
+  // /Process/ProcessView, mesmas abas, mesmo `#MsgProcess`). Um conector só atende os
+  // dois (connector-bll.mjs), mas os ids são separados para o cliente ver o nome certo
+  // do portal onde o pregão corre.
+  //
+  // São PÚBLICOS: o log do processo abre sem cookie nenhum. `loginUrl`/`areaUrl` ficam
+  // registrados para a etapa da sala de disputa AO VIVO, que aí sim exige a sessão do
+  // fornecedor — e que este conector NÃO tenta ler.
   bll: {
     id: 'bll',
     nome: 'BLL — Bolsa de Licitações e Leilões',
+    publico: true,
+    dominio: 'bllcompras',
     loginUrl: 'https://bllcompras.com/Account/Login',
     areaUrl: 'https://bllcompras.com/',
+    emLogin: ({ url }) => /account\/login|\/login/i.test(url),
+    logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
+  },
+  bnc: {
+    id: 'bnc',
+    nome: 'BNC — Bolsa Nacional de Compras',
+    publico: true,
+    dominio: 'bnccompras',
+    loginUrl: 'https://bnccompras.com/Account/Login',
+    areaUrl: 'https://bnccompras.com/',
     emLogin: ({ url }) => /account\/login|\/login/i.test(url),
     logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
   },
@@ -93,3 +115,14 @@ export const PORTAIS = {
 export function portalMeta(id) {
   return PORTAIS[id] ?? PORTAIS.comprasgov
 }
+
+/**
+ * Ids dos portais lidos pela página PÚBLICA (sem credencial). O worker usa esta lista
+ * para saber em quem rodar a passada pública — antes o 'pcp' estava escrito na mão
+ * dentro do run.mjs, e acrescentar um portal público significava editar o orquestrador.
+ *
+ * Espelha `modoPublico` de src/lib/radar/conectores.ts (o catálogo da UI). São dois
+ * arquivos porque um é TypeScript do app e o outro é ESM do worker; divergir aqui faz o
+ * Radar selecionar processo que ninguém lê, ou ler processo que ninguém selecionou.
+ */
+export const PORTAIS_PUBLICOS = Object.values(PORTAIS).filter((p) => p.publico).map((p) => p.id)

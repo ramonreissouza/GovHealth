@@ -5,7 +5,8 @@
 // Idempotente (UNIQUE msg_hash + ON CONFLICT DO NOTHING). Nunca dá falso "ok".
 //
 // Uso:
-//   node scripts/radar/run.mjs                 # captura real (Compras.gov.br)
+//   node scripts/radar/run.mjs                 # captura real (sessao + portais publicos)
+//   node scripts/radar/run.mjs --publico-only  # só os portais publicos (PCP, BLL, BNC)
 //   node scripts/radar/run.mjs --urgentes      # só processos com sessão à porta (roda a cada 20 min)
 //   node scripts/radar/run.mjs --simulado      # fixtures, sem browser (grava)
 //   node scripts/radar/run.mjs --simulado --dry # fixtures, sem gravar (só imprime)
@@ -14,6 +15,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import pg from 'pg'
 import { conectorSync } from './registry.mjs'
+import { PORTAIS_PUBLICOS } from './portais.mjs'
 import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 import { sessaoTemCredencial } from './capture.mjs'
 
@@ -32,7 +34,9 @@ loadEnv()
 
 const DRY = process.argv.includes('--dry')
 const SIMULADO = process.argv.includes('--simulado')
-const ONLY_PCP = process.argv.includes('--pcp-only') // pula o laço de credenciais; só o passo público (PCP)
+// Pula o laço de credenciais e roda só o passo público (PCP, BLL, BNC). O nome antigo
+// (--pcp-only) continua valendo: era o único portal público quando a flag nasceu.
+const ONLY_PUBLICO = process.argv.includes('--publico-only') || process.argv.includes('--pcp-only')
 // PASSADA DE URGÊNCIA (a cada 20 min, contra as 2 h da passada completa).
 // Só processos com sessão à porta: é quando o chat ferve (convocação, diligência com
 // prazo de horas, intenção de recurso) e 2 h de atraso custa o certame.
@@ -126,11 +130,33 @@ async function resolverUrlsPCP(client, processos, dry) {
   return mapaUrl
 }
 
+// HISTÓRICO NÃO É NOTÍCIA.
+//
+// Na PRIMEIRA vez que o Radar vê um processo, o portal entrega o log INTEIRO dele de
+// uma vez — semanas de eventos. Todas essas linhas são "novas" para o banco, e o
+// enfileiramento mandava UM E-MAIL POR LINHA: 176 e-mails saíram de dez processos de
+// teste do BNC, sobre coisas que aconteceram semanas atrás. Num tenant real, com
+// centenas de processos, isso é o cliente abrindo a caixa com milhares de alertas
+// retroativos no primeiro dia — e desligando o produto no segundo.
+//
+// Então o e-mail passa a ser sobre o que ACABOU de acontecer. O resto continua gravado
+// e aparece na caixa do Radar (é contexto útil do processo), mas não toca o telefone de
+// ninguém. Mensagem sem horário de origem notifica: não dá para afirmar que é velha.
+const JANELA_EMAIL_H = 48
+
+/** A mensagem é recente o bastante para virar e-mail? Sem horário → sim (conservador). */
+function valeEmail(horarioOrigem) {
+  if (!horarioOrigem) return true
+  const t = Date.parse(horarioOrigem)
+  if (Number.isNaN(t)) return true
+  return Date.now() - t <= JANELA_EMAIL_H * 3600_000
+}
+
 // ── Persiste mensagens novas + enfileira notificações (compartilhado pelos dois
 // caminhos: credencial e público). Retorna {total, novas}. Respeita DRY. ─────────
 async function gravarMensagens(client, ctx, mensagens) {
   const { titularId, conectorId, cnpj, mapa, regras, destinatario } = ctx
-  let total = 0, novas = 0
+  let total = 0, novas = 0, emails = 0
   for (const m of mensagens) {
     const proc = mapa.get(m.licitacaoId)
     if (!proc) continue // mensagem de processo não monitorado — ignora
@@ -152,12 +178,15 @@ async function gravarMensagens(client, ctx, mensagens) {
     novas++
     const msgId = ins[0].id
     const assunto = proc.titulo || m.licitacaoId
-    // e-mail + in-app (a leitura confirma ambas).
-    await client.query(
-      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
-       VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
-      [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
-    )
+    // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
+    if (valeEmail(m.horarioOrigem)) {
+      await client.query(
+        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
+         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
+        [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+      )
+      emails++
+    }
     await client.query(
       `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
        VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
@@ -169,14 +198,14 @@ async function gravarMensagens(client, ctx, mensagens) {
       [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
     )
   }
-  return { total, novas }
+  return { total, novas, emails }
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
 await client.connect()
 
-let totalMsgs = 0, novasMsgs = 0, conectores = 0
+let totalMsgs = 0, novasMsgs = 0, emailsMsgs = 0, conectores = 0
 try {
   const { rows: creds } = await client.query(
     `SELECT c.id, c.titular_id, c.user_id, c.conector_id, c.cnpj, c.login, c.cred_cipher, c.storage_state
@@ -188,7 +217,7 @@ try {
         -- ainda arrisca bloqueio da conta no portal. A passada de 2 h continua tentando.
         ${URGENTES ? `AND coalesce(s.status, '') NOT IN ('captcha_2fa', 'sessao_expirada')` : ''}`,
   )
-  console.log(`→ ${creds.length} credencial(is) ativa(s)${SIMULADO ? ' [SIMULADO]' : ''}${DRY ? ' [DRY]' : ''}${ONLY_PCP ? ' [PCP-ONLY]' : ''}${URGENTES ? ' [URGENTES]' : ''}${LIMIT ? ` [LIMIT ${LIMIT}]` : ''}`)
+  console.log(`→ ${creds.length} credencial(is) ativa(s)${SIMULADO ? ' [SIMULADO]' : ''}${DRY ? ' [DRY]' : ''}${ONLY_PUBLICO ? ' [PUBLICO-ONLY]' : ''}${URGENTES ? ' [URGENTES]' : ''}${LIMIT ? ` [LIMIT ${LIMIT}]` : ''}`)
 
   // Passada de urgência com fila vazia é o caso NORMAL — a maioria das rodadas de 20
   // min não tem sessão à porta. Sai antes de qualquer navegador subir.
@@ -204,7 +233,7 @@ try {
     console.log(`→ ${n} processo(s) com sessão à porta`)
   }
 
-  for (const cred of (ONLY_PCP ? [] : creds)) {
+  for (const cred of (ONLY_PUBLICO ? [] : creds)) {
     conectores++
     const inicio = Date.now()
 
@@ -265,7 +294,7 @@ try {
 
     // Grava mensagens novas + enfileira notificações (helper compartilhado).
     const g = await gravarMensagens(client, { titularId: cred.titular_id, conectorId: cred.conector_id, cnpj: cred.cnpj, mapa, regras, destinatario }, resultado.mensagens)
-    totalMsgs += g.total; novasMsgs += g.novas
+    totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails
 
     // Saúde do conector (requisito 4.2): verificado_em só avança em 'ok'.
     if (!DRY) {
@@ -312,61 +341,82 @@ try {
     }
   }
 
-  // ── PASSO PÚBLICO (PCP sem login) ───────────────────────────────────────────
-  // Tenants com processos PCP ativos e SEM credencial PCP ativa: o Radar lê a
-  // página PÚBLICA do andamento (não exige login). Tenants que conectaram sessão
-  // PCP já foram cobertos no laço acima (modo híbrido). SIMULADO pula.
+  // ── PASSO PÚBLICO (portais que publicam o andamento SEM login) ──────────────
+  // Vale para TODO portal marcado como público em portais.mjs (hoje PCP, BLL e BNC).
+  // Antes este passo tinha 'pcp' escrito na mão em cinco lugares — acrescentar um portal
+  // público significava reescrever o orquestrador, e foi por isso que BLL e BNC ficaram
+  // parados mesmo com a página deles aberta a qualquer um.
+  //
+  // Cada portal roda por tenant que tenha processos dele e NÃO tenha credencial ativa
+  // dele (quem conectou sessão já foi atendido no laço acima, em modo híbrido).
   if (!SIMULADO) {
-    const { rows: pubProcs } = await client.query(
-      `SELECT p.id, p.titular_id, p.licitacao_id, p.titulo, p.uf, p.link_portal
-         FROM radar_processos p
-        WHERE p.conector_id = 'pcp' AND p.status = 'ativo' AND p.mutado = false
-          AND NOT EXISTS (SELECT 1 FROM radar_credenciais c
-                          WHERE c.titular_id = p.titular_id AND c.conector_id = 'pcp' AND c.ativo = true)${filtro}
-        ORDER BY p.criado_em DESC`,
-    )
-    const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs
-    const porTitular = new Map()
-    for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
-    if (porTitular.size) console.log(`→ PCP público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
-
-    const syncPcp = conectorSync('pcp')
-    for (const [titularId, procs] of porTitular) {
-      conectores++
-      const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
-      const urlPublicaPorLic = await resolverUrlsPCP(client, procs, DRY)
-      const { rows: regras } = await client.query(`SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
-      const { rows: [tit] } = await client.query(`SELECT email FROM usuarios WHERE id = $1`, [titularId])
-      const destinatario = tit?.email ?? titularId
-
-      let resultado
-      try {
-        resultado = syncPcp
-          ? await syncPcp({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
-          : { status: 'falha', detalhe: 'conector pcp ausente', mensagens: [] }
-      } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
-      console.log(`  · pcp[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
-
-      const g = await gravarMensagens(client, { titularId, conectorId: 'pcp', cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
-      totalMsgs += g.total; novasMsgs += g.novas
-
-      // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
-      // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
-      // configurado" — se contradizendo na cara do usuário.
-      const okPub = resultado.status === 'ok'
-      await client.query(
-        `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
-         VALUES (NULL,$1,'pcp',$2, ${okPub ? 'now()' : 'NULL'}, now(), $3, now())
-         ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
-           status = EXCLUDED.status,
-           verificado_em = ${okPub ? 'now()' : 'radar_saude.verificado_em'},
-           tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
-        [titularId, resultado.status, resultado.detalhe ?? null],
+    for (const portalId of PORTAIS_PUBLICOS) {
+      const { rows: pubProcs } = await client.query(
+        `SELECT p.id, p.titular_id, p.licitacao_id, p.titulo, p.uf, p.link_portal
+           FROM radar_processos p
+           LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
+          WHERE p.conector_id = $1 AND p.status = 'ativo' AND p.mutado = false
+            AND NOT EXISTS (SELECT 1 FROM radar_credenciais cr
+                            WHERE cr.titular_id = p.titular_id AND cr.conector_id = $1 AND cr.ativo = true)${filtro}
+          -- A ORDEM É POLÍTICA, NÃO ENFEITE. Ler a página pública custa ~12 s por
+          -- processo e o conector tem teto por passada; então o que está perto da sessão
+          -- vai primeiro, e o teto corta a cauda fria em vez de sortear quem fica de fora.
+          -- Processo sem data casada em contratacoes (metade deles, medido) vai ao fim,
+          -- não fica de fora.
+          ORDER BY (coalesce(c.data_encerramento_proposta, c.data_abertura_proposta) IS NULL),
+                   abs(coalesce(c.data_encerramento_proposta, c.data_abertura_proposta) - current_date),
+                   p.criado_em DESC`,
+        [portalId],
       )
+      const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs
+      const porTitular = new Map()
+      for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
+      if (porTitular.size) console.log(`→ ${portalId} público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
+
+      const syncPortal = conectorSync(portalId)
+      for (const [titularId, procs] of porTitular) {
+        conectores++
+        const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
+        // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
+        // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
+        // gravado pela seleção a partir do `link_externo` do PNCP.
+        const urlPublicaPorLic = portalId === 'pcp'
+          ? await resolverUrlsPCP(client, procs, DRY)
+          : new Map(procs.filter((p) => p.link_portal).map((p) => [p.licitacao_id, p.link_portal]))
+        const { rows: regras } = await client.query(`SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
+        const { rows: [tit] } = await client.query(`SELECT email FROM usuarios WHERE id = $1`, [titularId])
+        const destinatario = tit?.email ?? titularId
+
+        let resultado
+        try {
+          resultado = syncPortal
+            ? await syncPortal({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
+            : { status: 'falha', detalhe: `conector ${portalId} ausente`, mensagens: [] }
+        } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
+        console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
+
+        const g = await gravarMensagens(client, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
+        totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails
+
+        // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
+        // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
+        // configurado" — se contradizendo na cara do usuário.
+        if (DRY) continue
+        const okPub = resultado.status === 'ok'
+        await client.query(
+          `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
+           VALUES (NULL,$1,$2,$3, ${okPub ? 'now()' : 'NULL'}, now(), $4, now())
+           ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
+             status = EXCLUDED.status,
+             verificado_em = ${okPub ? 'now()' : 'radar_saude.verificado_em'},
+             tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
+          [titularId, portalId, resultado.status, resultado.detalhe ?? null],
+        )
+      }
     }
   }
 
-  console.log(`✓ Radar sync: ${conectores} conector(es), ${totalMsgs} mensagem(ns) vistas, ${novasMsgs} nova(s)${DRY ? ' (dry-run, nada gravado)' : ''}.`)
+  console.log(`✓ Radar sync: ${conectores} conector(es), ${totalMsgs} mensagem(ns) vistas, ${novasMsgs} nova(s), ${emailsMsgs} por e-mail (as demais são histórico: só na caixa)${DRY ? ' (dry-run, nada gravado)' : ''}.`)
 } catch (e) {
   console.error('Falha no Radar sync:', e)
   process.exitCode = 1

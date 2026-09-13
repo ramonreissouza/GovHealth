@@ -7,8 +7,8 @@
 //   página pública; não pede credencial). É o caso do PCP: monitoramos o andamento
 //   (convocação, habilitação, recurso, prazo, homologação) de graça; a sessão do
 //   próprio cliente só é necessária para a sala AO VIVO (lances em tempo real).
-// Compras.gov.br usa captura de sessão (login gov.br). BLL/Licitações-e seguem
-// em ETAPA 2 (login/seletores a calibrar).
+// Compras.gov.br usa captura de sessão (login gov.br). PCP, BLL e BNC são públicos.
+// Licitações-e segue em ETAPA 2 (login/seletores a calibrar).
 
 export interface Conector {
   id: string
@@ -48,11 +48,29 @@ export const CONECTORES: Conector[] = [
     descricao: 'Pregões conduzidos no portal do BB. Em calibração (etapa 2).',
     disponivel: false,
   },
+  // BLL e BNC são a MESMA aplicação em dois domínios — mesma rota de processo, mesmas
+  // abas, mesmo quadro de mensagens (medido em 13/09/2026 nos dois, sem cookie). Um
+  // conector só atende os dois no worker (scripts/radar/connector-bll.mjs); os ids ficam
+  // separados para o cliente ler o nome do portal onde o pregão realmente corre.
+  //
+  // O que entra por aqui é o LOG PÚBLICO do processo (arquivo novo, troca de pregoeiro,
+  // suspensão/retomada, alteração de disputa). A sala de lances AO VIVO continua exigindo
+  // a sessão do próprio fornecedor e NÃO é lida.
   {
     id: 'bll',
     nome: 'BLL — Bolsa de Licitações e Leilões',
-    descricao: 'Portal privado usado por muitos municípios. Em calibração (etapa 2).',
-    disponivel: false,
+    descricao: 'Portal privado usado por muitos municípios. Monitoramento público — sem login.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'bllcompras',
+  },
+  {
+    id: 'bnc',
+    nome: 'BNC — Bolsa Nacional de Compras',
+    descricao: 'Mesma plataforma do BLL, em outro domínio. Monitoramento público — sem login.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'bnccompras',
   },
 ]
 

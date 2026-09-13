@@ -13,24 +13,14 @@
 //
 // Referência de implementação: connector-comprasgov.mjs.
 
-import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import { SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 
 const META = portalMeta('pcp')
 const UA_NAVEGADOR = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
-/**
- * Converte horário BR ("10/07/2026 18:50:39" ou "10/07/2026 18:50") em ISO com
- * fuso de Brasília (-03:00). O banco grava em TIMESTAMPTZ — sem isso, "23/08/2024"
- * seria interpretado como mês 23 e QUEBRARIA o INSERT. Sem casar → null (seguro).
- */
-export function horarioBrParaISO(s) {
-  const m = String(s ?? '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\D+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
-  if (!m) return null
-  const [, d, mo, y, h, mi, se] = m
-  const p = (n) => String(n).padStart(2, '0')
-  return `${y}-${p(mo)}-${p(d)}T${p(h)}:${p(mi)}:${p(se || '00')}-03:00`
-}
+// horarioBrParaISO vive em connector-base.mjs — o BLL/BNC escreve a data igual.
+export { horarioBrParaISO }
 
 // URL da sala de disputa AO VIVO por processo (lances em tempo real) — A CALIBRAR
 // com a sessão de um assinante (null = ainda não confirmado). O andamento público

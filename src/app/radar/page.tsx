@@ -1206,15 +1206,24 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
 
             {publico ? (
               <>
+                {/* Os dois portais públicos chegam ao processo por caminhos diferentes, e
+                    dizer o caminho errado faz o cliente preencher o campo errado: o PCP
+                    precisa ser PROCURADO (o PNCP não publica o endereço da página), o
+                    BLL/BNC vêm com o link pronto no próprio PNCP. */}
                 <p className="text-[12px] text-muted mb-4">
                   O {nomeSel} publica o <strong className="text-strong">andamento de cada processo</strong> numa página pública —
-                  monitoramos <strong className="text-strong">sem login</strong>. Informe o objeto e a UF; nós achamos o processo
-                  automaticamente. Se não acharmos com segurança, cole o link do processo no portal.
+                  monitoramos <strong className="text-strong">sem login</strong>.{' '}
+                  {conectorId === 'pcp'
+                    ? <>Informe o objeto e a UF; nós achamos o processo automaticamente. Se não acharmos com segurança, cole o link do processo no portal.</>
+                    : <>As licitações deste portal já entram sozinhas pelo seu perfil, com o link do processo que o próprio PNCP publica. Use este formulário só para acompanhar um processo <strong className="text-strong">fora do perfil</strong> — aí precisamos do link da página dele.</>}
                 </p>
                 <div className="space-y-3">
                   <Campo label="Objeto / título da licitação" value={pubObjeto} onChange={setPubObjeto} placeholder="ex.: aquisição de medicamentos para a farmácia básica" />
                   <Campo label="UF (opcional, ajuda a achar)" value={pubUf} onChange={(v) => setPubUf(v.toUpperCase().slice(0, 2))} placeholder="ex.: SP" />
-                  <Campo label="Link do processo no PCP (opcional — fallback)" value={pubLink} onChange={setPubLink} placeholder="cole aqui se souber a URL exata do processo" />
+                  <Campo
+                    label={conectorId === 'pcp' ? 'Link do processo no PCP (opcional — fallback)' : `Link do processo no ${CURTO[conectorId] ?? nomeSel} (obrigatório)`}
+                    value={pubLink} onChange={setPubLink}
+                    placeholder={conectorId === 'pcp' ? 'cole aqui se souber a URL exata do processo' : 'cole a URL da página do processo no portal'} />
                 </div>
                 <p className="text-[11px] text-faint mt-3 leading-snug">
                   A sala <strong>ao vivo</strong> (lances em tempo real) usa a sua própria sessão do portal e entra numa próxima etapa —
@@ -1228,8 +1237,8 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
                 A conexão por <strong>login do gov.br</strong> está desligada neste ambiente: o cofre que guarda a
                 sessão cifrada (<span className="font-mono-custom">RADAR_CRED_KEY</span>) não está configurado, e sem
                 ele não temos onde guardar a sua sessão com segurança. O{' '}
-                <strong>Portal de Compras Públicas</strong> monitora <strong>sem login</strong> e já funciona —
-                selecione ele acima.
+                <strong>Portal de Compras Públicas</strong>, o <strong>BLL</strong> e o <strong>BNC</strong> monitoram{' '}
+                <strong>sem login</strong> e já funcionam — selecione um deles acima.
               </div>
             ) : conectorDisponivel(conectorId) ? (
               <>
@@ -1247,7 +1256,7 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
               <div className="bg-amber/10 border border-amber/30 rounded-lg px-3 py-2.5 text-[12px] text-amber leading-snug">
                 Este portal já está no modelo de dados e na seleção por perfil — a captura de chat entra na{' '}
                 <strong>próxima etapa</strong>, quando calibrarmos o login e os seletores dele. Por ora, use o{' '}
-                <strong>Compras.gov.br</strong> ou o <strong>Portal de Compras Públicas</strong> (sem login).
+                <strong>Compras.gov.br</strong> ou os portais <strong>sem login</strong> (PCP, BLL e BNC).
               </div>
             )}
 
@@ -1255,7 +1264,7 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => { pararPoll(); onClose() }} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
               {publico ? (
-                <button onClick={adicionarPublico} disabled={salvando || !pubObjeto.trim()} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
+                <button onClick={adicionarPublico} disabled={salvando || !pubObjeto.trim() || (conectorId !== 'pcp' && !pubLink.trim())} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
                   {salvando && <Loader2 size={13} className="animate-spin" />} Monitorar sem login
                 </button>
               ) : (
