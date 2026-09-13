@@ -15,6 +15,7 @@ import crypto from 'node:crypto'
 import { criarSessao, idDe, cdpUrlDe, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
 import { encrypt } from './capture.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
+import { PORTAIS } from './portais.mjs'
 
 function loadEnv() {
   try {
@@ -86,13 +87,21 @@ async function iniciar(credencialId) {
   anotarSessao(credencialId, { sessionId, token })
   const embedUrl = `${PUBLICO}/live/${token}`
 
-  // Abre o gov.br dentro da sessão (para o fornecedor já cair na tela de login).
+  // Abre a TELA DE LOGIN do portal da credencial (não a área autenticada).
+  //
+  // Ia para a `ACOMPANHAMENTO_URL`, que é o destino DEPOIS do login. Como a SPA do
+  // Compras.gov.br não redireciona quem chega sem sessão, o fornecedor caía numa
+  // "Página não encontrada" dentro do iframe — com cadeado verde e tudo, o que fazia
+  // parecer problema de certificado. O registro já tinha a URL certa por portal; era
+  // só usá-la, e assim isto passa a valer para PCP, BLL e os demais também.
+  const portal = PORTAIS[cred.conector_id]
+  const urlDeEntrada = portal?.loginUrl ?? ACOMPANHAMENTO_URL
   try {
     const chromium = await playwright()
     const browser = await chromium.connectOverCDP(cdp)
     const ctx = browser.contexts()[0] ?? (await browser.newContext())
     const page = ctx.pages()[0] ?? (await ctx.newPage())
-    await page.goto(ACOMPANHAMENTO_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
+    await page.goto(urlDeEntrada, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
     await browser.close() // desconecta do CDP; a sessão steel continua viva
   } catch (e) {
     await encerrarSessao(sessionId).catch(() => {})

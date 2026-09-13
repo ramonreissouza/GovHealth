@@ -76,6 +76,42 @@ try {
     if (!r.startsWith('ABRIU')) console.log('  A MOLDURA VAI APARECER E FICAR "Session not connected".')
   }
 
+  // O live view abrir só prova que a MOLDURA funciona. Falta a pergunta que importa:
+  // o que o fornecedor está vendo lá dentro? Duas vezes eu tomei um sinal parcial por
+  // prova — o <title> "Compras.gov.br" era o cabeçalho de uma página de erro 404.
+  console.log('\n--- o que tem DENTRO do navegador? ---')
+  try {
+    const { chromium } = await import('playwright')
+    // Não use o endpoint CDP cru: o /json/version do steel devolve um
+    // webSocketDebuggerUrl com o endereço INTERNO do container, e o Playwright tenta
+    // localhost:80 (ECONNREFUSED ::1:80). `cdpUrlDe` rebaseia para o alcançável.
+    const { cdpUrlDe } = await import('./steel.mjs')
+    const lista = await fetch((env.RADAR_STEEL_URL || 'http://localhost:3100') + '/v1/sessions').then((x) => x.json())
+    const viva = (Array.isArray(lista) ? lista : lista.sessions ?? [])[0]
+    const b = await chromium.connectOverCDP(cdpUrlDe(viva ?? {}))
+    const ctx = b.contexts()[0]
+    const page = ctx?.pages()[0]
+    if (!page) { console.log('  (nenhuma página aberta)') }
+    else {
+      const dentro = (await page.evaluate(() => document.body?.innerText ?? '').catch(() => '')).replace(/\s+/g, ' ')
+      const url = page.url()
+      console.log('  URL    :', url.slice(0, 90))
+      console.log('  título :', await page.title().catch(() => ''))
+      console.log('  texto  :', dentro.slice(0, 110))
+      const erro404 = /não encontrada|nao encontrada/i.test(dentro)
+      const certErr = /chrome-error|ERR_CERT|not private/i.test(url + dentro)
+      // O MESMO critério que o capturar() usa, não uma regex improvisada aqui — senão
+      // a sonda dá alarme falso (ou, pior, deixa passar) por um motivo diferente do
+      // que o sistema de verdade considera.
+      const { PORTAIS } = await import('./portais.mjs')
+      const emLogin = PORTAIS[cred.conector_id]?.emLogin?.({ url, conteudo: dentro }) ?? null
+      console.log('  404?', erro404 ? 'SIM <<< DEFEITO' : 'não',
+        '· certificado?', certErr ? 'SIM <<< DEFEITO' : 'não',
+        '· é tela de login (critério do capturar)?', emLogin === null ? '(portal sem regra)' : emLogin ? 'sim' : 'NÃO <<< suspeito')
+    }
+    await b.close()
+  } catch (e) { console.log('  não deu para inspecionar:', e.message.split('\n')[0]) }
+
   console.log('\n--- o serviço continua vivo depois disso? ---')
   const vivo = await fetch(BASE + '/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
     .then((x) => x.status).catch((e) => 'MORREU: ' + e.message)

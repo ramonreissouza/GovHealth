@@ -12,8 +12,17 @@ export const PORTAIS = {
   comprasgov: {
     id: 'comprasgov',
     nome: 'Compras.gov.br',
-    // Página onde o humano faz o login (gov.br).
-    loginUrl: 'https://www.gov.br/compras/pt-br/acesso-ao-sistema',
+    // Página onde o humano faz o login. É a TELA DE LOGIN em si, não a página
+    // institucional de "acesso ao sistema" — o fornecedor não deve ter de caçar um
+    // botão dentro de um iframe. Confirmado em 13/09/2026: título "Faça o Login no
+    // Compras.gov.br", e a URL casa com `emLogin` logo abaixo.
+    //
+    // NÃO use aqui a `areaUrl`: a SPA responde 404 para quem chega SEM sessão (ela
+    // não redireciona para o login). Medido no navegador real — `/comprasnet-web/`,
+    // `/comprasnet-web/seguro/acompanhamento` e `/comprasnet-web/public/landing`
+    // renderizam "Página não encontrada". Com sessão válida a mesma rota resolve, que
+    // é por isso que o monitor funciona e o CONECTAR não funcionava.
+    loginUrl: 'https://www.comprasnet.gov.br/seguro/loginPortal.asp',
     // Área autenticada de acompanhamento (destino após o login).
     areaUrl: 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento',
     emLogin: ({ url }) => /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url),
