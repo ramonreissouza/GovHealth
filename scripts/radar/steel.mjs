@@ -36,19 +36,83 @@ export function idDe(session) {
   return session.id ?? session.sessionId ?? session.session_id
 }
 
-/** URL de live view para embutir no iframe. Prioriza o que o steel devolve; senão template/env. */
+/** URL de live view para embutir no iframe.
+ *
+ *  A ORDEM AQUI IMPORTA, e estava errada até 10/09/2026. O schema do steel
+ *  (api/src/modules/sessions/sessions.schema.ts) descreve os campos assim:
+ *
+ *    debugUrl         "URL for a viewing the live browser instance for the session"
+ *    sessionViewerUrl "URL to view session details"
+ *
+ *  Ou seja: `debugUrl` é o navegador AO VIVO, onde uma pessoa digita; o
+ *  `sessionViewerUrl` é a página de DETALHES da sessão. A versão anterior tentava o
+ *  sessionViewerUrl primeiro — o fornecedor abriria o modal e veria metadados da
+ *  sessão no lugar da tela de login do gov.br, sem nenhum erro em lugar nenhum.
+ *  A documentação de embed do steel também aponta o debugUrl como o que se põe em
+ *  iframe ("embedding live sessions with debugUrl iframes").
+ *
+ *  A DERIVAÇÃO DE RESERVA TAMBÉM ESTAVA ERRADA: a rota é `/v1/sessions/debug`, SEM
+ *  id — conferido em api/src/modules/sessions/sessions.routes.ts. A rota com id que
+ *  estava aqui (`/v1/sessions/{id}/debug`) não existe, e `/v1/sessions/{id}/player`,
+ *  que a documentação mostra, responde 404 no self-hosted (é só da nuvem paga).
+ *  A falta de id na rota não é descuido do steel: o servidor open-source só tem UMA
+ *  sessão viva por vez (ver o cabeçalho de browser-service.mjs). */
 export function embedUrlDe(session) {
-  const direto = session.sessionViewerUrl ?? session.debugUrl ?? session.liveViewUrl ?? session.debuggerUrl
-  if (direto) return direto
-  const id = idDe(session)
-  if (EMBED_TEMPLATE) return EMBED_TEMPLATE.replace('{id}', id)
-  // Derivação padrão (⚠ confirmar no container): página de debug da sessão.
-  return `${STEEL_URL}/v1/sessions/${id}/debug`
+  const direto = session.debugUrl ?? session.liveViewUrl ?? session.debuggerUrl
+  // Rebaseado pelo mesmo motivo do cdpUrlDe: o que o steel devolve aponta para o
+  // endereço interno do container. Note que `sessionViewerUrl` saiu da lista — com o
+  // container real ele é `http://0.0.0.0:3000/`, a HOME do steel, não o navegador.
+  if (direto) return rebasear(direto, STEEL_URL)
+  if (EMBED_TEMPLATE) return EMBED_TEMPLATE.replace('{id}', idDe(session))
+  return `${STEEL_URL}/v1/sessions/debug`
 }
 
-/** Endpoint para o Playwright.connectOverCDP. Prioriza ws da sessão; senão o CDP global. */
+/** O steel devolve URLs com o endereço INTERNO do container, e elas não servem.
+ *  Medido em 11/09/2026, com o container rodando:
+ *
+ *    websocketUrl      ws://0.0.0.0:3000/
+ *    debugUrl          http://0.0.0.0:3000/v1/sessions/debug
+ *    sessionViewerUrl  http://0.0.0.0:3000/
+ *
+ *  `0.0.0.0` é o endereço de escuta dele lá dentro, e 3000 é a porta interna — de fora
+ *  do container o caminho é outro (aqui, localhost:3100). Usar o que ele devolve, como
+ *  estava, dá `connect ECONNREFUSED` no Playwright e iframe morto.
+ *
+ *  Então mantemos o CAMINHO que o steel informa (é ele quem sabe a rota) e trocamos a
+ *  ORIGEM pela que nós sabemos alcançar. */
+function rebasear(url, base) {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    const b = new URL(base)
+    u.protocol = u.protocol.startsWith('ws') ? (b.protocol === 'https:' ? 'wss:' : 'ws:') : b.protocol
+    u.host = b.host
+    return u.toString()
+  } catch { return url }
+}
+
+/** Endpoint para o Playwright.connectOverCDP. Prioriza o ws da sessão — rebaseado —
+ *  e cai no CDP configurado se a sessão não informar nenhum. */
 export function cdpUrlDe(session) {
-  return session.websocketUrl ?? session.connectUrl ?? session.wsEndpoint ?? STEEL_CDP
+  const bruto = session.websocketUrl ?? session.connectUrl ?? session.wsEndpoint
+  return bruto ? rebasear(bruto, STEEL_URL) : STEEL_CDP
+}
+
+/** Qual sessão está viva no steel AGORA. Existe para a captura poder conferir que o
+ *  navegador que ela vai ler é o mesmo que a credencial abriu — sem isso, com o steel
+ *  servindo uma sessão por vez, dá para gravar a sessão gov.br de um fornecedor como
+ *  credencial de outro. Ver `pista-navegador.mjs`.
+ *
+ *  Devolve null se não der para saber. Quem chama trata null como "não confirmei" e
+ *  decide pela pista — nunca como "está tudo certo". */
+export async function sessaoAtivaId() {
+  try {
+    const r = await req('/v1/sessions')
+    const lista = Array.isArray(r) ? r : (r.sessions ?? r.data ?? [])
+    // O open-source mantém UMA ativa; se vier mais de uma, a viva é a que não terminou.
+    const viva = lista.find((s) => (s.status ?? s.state) !== 'released' && !s.endedAt) ?? lista[0]
+    return viva ? idDe(viva) : null
+  } catch { return null }
 }
 
 /** Encerra/libera a sessão (best-effort). */

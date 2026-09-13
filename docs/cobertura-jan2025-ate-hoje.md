@@ -189,6 +189,32 @@ curl -s -o /dev/null -w "lista: %{http_code} %{time_total}s\n" \
 Todo dia com menos de 100 linhas nos últimos 120 caiu em sábado ou domingo, sem exceção.
 Antes de chamar um dia magro de buraco, veja em que dia da semana ele caiu.
 
+**FERIADO também não é buraco — e a régua não sabia, CONSERTADO em 10/09/2026.** A
+separação era por dia da semana, então feriado caía em "dia útil". 07/09/2026
+(Independência) foi uma segunda e publicou **51** contratações no país inteiro; a régua
+comparou com a mediana de dia útil (767), declarou buraco, e o `sync-cobertura` o
+recolocava na fila em **toda** execução — três vezes por dia, para sempre. O calendário
+agora vive em `scripts/feriados.mjs`, com os móveis derivados da Páscoa (Carnaval,
+Sexta-feira Santa, Corpus Christi). Entram os dias em que o país não publica, não a lista
+legal: Carnaval e Corpus Christi são ponto facultativo e contam, feriado estadual não
+conta — a cobertura é nacional, e um feriado só de SP deixa as outras 26 UFs publicando.
+
+**Varredura completa que não traz nada é RESPOSTA, não suspeita — CONSERTADO em
+10/09/2026.** 05 e 06/09/2026 têm zero no país; a mediana de fim de semana é 7 e, abaixo
+do piso, a regra é "só o zero conta como buraco". Os dois eram buraco eterno: recolhidos,
+ganho zero, "rodou inteiro e ainda ficou curto", e de novo na execução seguinte. A
+informação que faltava **já estava na mão e era descartada** — o script sabia que a
+varredura rodou inteira e ganhou zero. Agora anota em `cobertura:confirmado:<dia>` e a
+régua respeita a anotação.
+
+O conserto NÃO foi "aceitar zero", que era o óbvio e o errado: se zero deixasse de ser
+buraco nos dias de baixo volume, um sábado realmente não coletado ficaria invisível — e é
+exatamente esse que o script existe para achar. A marca não relaxa a régua; ela registra
+que a pergunta já foi feita à fonte e respondida. E **vence sozinha**: vale para uma
+contagem específica, então se o dia mudar de número a confirmação é descartada e a régua
+volta a valer. Custo medido do defeito: 3 dias falsos × ~8min × 3 execuções =
+**72min/dia**, ou 8,4h de pista por semana relendo a mesma resposta.
+
 **`toISOString()` em coluna `date` mente um dia.** `contratacoes.data_publicacao` é `date`,
 e o node-postgres devolve `date` como **meia-noite local**. Nesta máquina (UTC+2),
 `r.d.toISOString().slice(0,10)` imprime o dia ANTERIOR. Em 06/09/2026 isso me fez
@@ -219,13 +245,14 @@ npm run pncp:fila:teste:e2e      #  9 casos: DOIS processos de verdade
 npm run pncp:fila:teste:filho    #  8 casos: quem varre é um FILHO por fatia
 npm run checkpoint:teste         # 12 casos: a lista de páginas abandonadas
 npm run pncp:breaker:teste       # 20 casos: o disjuntor do enriquecimento
+npm run cobertura:regua:teste    # 49 casos: a régua da cobertura e os feriados
 ```
 
 Os de processo de verdade são os que importam. O modo de falha desta área é invisível:
 quando ela erra, ninguém recebe erro — duas frentes passam a bater no PNCP ao mesmo
-tempo, ou uma página some, e o log das duas pontas parece normal. Rode os seis depois
-de qualquer mexida em `pncp-lock.mjs`, `pncp-prioridade.mjs`, `pncp-breaker.mjs` ou
-`etl-pncp.mjs`.
+tempo, ou uma página some, e o log das duas pontas parece normal. Rode os sete depois
+de qualquer mexida em `pncp-lock.mjs`, `pncp-prioridade.mjs`, `pncp-breaker.mjs`,
+`cobertura-regua.mjs` ou `etl-pncp.mjs`.
 
 **Um teste que passa no código antigo não prova nada.** Dois destes conjuntos existem
 justamente porque a versão anterior os reprovava: o `:filho` roda o cenário COM e SEM o

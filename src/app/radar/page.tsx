@@ -1046,7 +1046,10 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
     if (r.status === 503) return 'fallback'
     const j = await r.json()
     if (r.ok && j.embedUrl) { setEmbedUrl(j.embedUrl); return 'live' }
-    setErro(j.error || j.detalhe || 'Falha ao abrir o gov.br'); return 'erro'
+    // 409 = navegador ocupado por outro fornecedor. Não é erro de ninguém e tem
+    // solução (esperar), então o `detalhe` — que diz quanto falta — vale mais que o
+    // `error`, que é só a etiqueta técnica.
+    setErro(j.detalhe || j.error || 'Falha ao abrir o gov.br'); return 'erro'
   }
 
   async function concluirLogin() {
@@ -1140,7 +1143,10 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
                 <iframe
                   src={embedUrl}
                   title="Login gov.br"
-                  className="w-full h-[440px] block"
+                  /* 600px é o mínimo que a documentação do steel recomenda para o live
+                     view ser usável; com 440 a tela de login do gov.br fica espremida e
+                     o botão de entrar pode cair fora da área visível. */
+                  className="w-full h-[620px] block"
                   allow="clipboard-read; clipboard-write"
                   sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
                 />

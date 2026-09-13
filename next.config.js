@@ -16,11 +16,28 @@ const scriptSrc = process.env.NODE_ENV === 'production'
   ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
   : "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
 
+// frame-src: o Radar embute o live view do navegador hospedado (steel-browser) num
+// iframe para o fornecedor fazer o login do gov.br DENTRO da tela. Sem esta diretiva a
+// CSP cai em `default-src 'self'` e o iframe é bloqueado — silenciosamente, do ponto de
+// vista de quem está olhando: a tela fica em branco e o console diz "Refused to frame".
+// Era o terceiro furo do caminho hospedado, achado em 10/09/2026 antes de subir a infra.
+//
+// A origem entra por env porque muda por ambiente (local, VPS, produção) e porque
+// deixá-la fixa no código convidaria a alargar a CSP "só para testar". Precisa ser
+// HTTPS: o `upgrade-insecure-requests` logo abaixo reescreve http:// para https://, então
+// um steel em http puro não carrega nem com a CSP aberta.
+//
+// ATENÇÃO: isto é lido em tempo de BUILD. Mudar a variável na Vercel exige REDEPLOY —
+// não basta salvar a env e reiniciar.
+const embedOrigem = (process.env.RADAR_EMBED_ORIGIN || '').trim()
+const frameSrc = ['frame-src', "'self'", embedOrigem].filter(Boolean).join(' ')
+
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "frame-ancestors 'self'",
+  frameSrc,
   "form-action 'self'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
