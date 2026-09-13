@@ -17,14 +17,19 @@ export const PORTAIS = {
     // botão dentro de um iframe. Confirmado em 13/09/2026: título "Faça o Login no
     // Compras.gov.br", e a URL casa com `emLogin` logo abaixo.
     //
-    // NÃO use aqui a `areaUrl`: a SPA responde 404 para quem chega SEM sessão (ela
-    // não redireciona para o login). Medido no navegador real — `/comprasnet-web/`,
-    // `/comprasnet-web/seguro/acompanhamento` e `/comprasnet-web/public/landing`
-    // renderizam "Página não encontrada". Com sessão válida a mesma rota resolve, que
-    // é por isso que o monitor funciona e o CONECTAR não funcionava.
+    // NÃO use aqui a `areaUrl`: a SPA não redireciona para o login quem chega sem
+    // sessão — ela mostra "Página não encontrada" ou "Acesso não autorizado", e o
+    // fornecedor fica olhando um erro dentro do iframe sem saber o que fazer.
     loginUrl: 'https://www.comprasnet.gov.br/seguro/loginPortal.asp',
-    // Área autenticada de acompanhamento (destino após o login).
-    areaUrl: 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento',
+    // Área autenticada do fornecedor (destino após o login).
+    //
+    // ERA `/comprasnet-web/seguro/acompanhamento`, que NÃO EXISTE MAIS — dava 404 até
+    // com sessão válida, e o conector traduzia isso como "CAPTCHA/2FA exigido". A rota
+    // certa saiu da própria tabela de rotas do Angular (main-*.js do app), que lista:
+    //   public · seguro/fornecedor · seguro/governo · pagina-nao-encontrada
+    //   iniciar-sessao · acesso-nao-autorizado · sessao-encerrada
+    // Perguntar ao aplicativo é mais barato e mais seguro do que adivinhar URL.
+    areaUrl: 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor',
     emLogin: ({ url }) => /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url),
     // ATENÇÃO: URL NÃO basta aqui. O Compras.gov.br é uma SPA Angular e responde
     // HTTP 200 com o HTML de bootstrap na própria URL da área logada — só depois de

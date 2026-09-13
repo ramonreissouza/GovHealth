@@ -142,4 +142,4 @@ export async function encerrarSessao(id) {
   catch { try { await req(`/v1/sessions/${id}/release`, { method: 'POST' }) } catch { /* ignore */ } }
 }
 
-export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento'
+export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor'

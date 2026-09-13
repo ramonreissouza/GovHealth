@@ -15,6 +15,7 @@ import crypto from 'node:crypto'
 import pg from 'pg'
 import { conectorSync } from './registry.mjs'
 import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
+import { sessaoTemCredencial } from './capture.mjs'
 
 // ── env ────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -270,7 +271,21 @@ try {
     if (!DRY) {
       const okAgora = resultado.status === 'ok'
       // Persiste sessão renovada (cifrada) quando o conector devolveu storageState.
-      if (okAgora && resultado.storageState && !SIMULADO) {
+      // NUNCA regravar o cofre com algo PIOR do que ele já tem.
+      //
+      // Esta gravação existe para renovar a sessão, mas não conferia o que estava
+      // renovando. Em 13/09/2026 custou a sessão de um cliente: o conector reportou
+      // `ok` por engano (olhava a SPA antes de renderizar), devolveu o estado de um
+      // navegador que nunca logou, e a passada seguinte salvou por cima — os 11 cookies
+      // do login viraram dois cookies do Google Analytics.
+      //
+      // Regra: sessão sem cookie de credencial não substitui sessão existente. Perder a
+      // renovação custa uma reconexão; perder o cofre custa o cliente refazer o login.
+      const renovacaoUtil = resultado.storageState && sessaoTemCredencial(resultado.storageState)
+      if (okAgora && resultado.storageState && !renovacaoUtil) {
+        console.warn(`    (renovação DESCARTADA: a sessão devolvida não tem cookie de credencial — cofre preservado)`)
+      }
+      if (okAgora && renovacaoUtil && !SIMULADO) {
         try {
           const raw = process.env.RADAR_CRED_KEY
           const key = Buffer.from(raw.trim(), 'hex')

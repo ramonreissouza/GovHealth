@@ -17,7 +17,7 @@ import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-
 import { PORTAIS } from './portais.mjs'
 
 const LOGIN_URL = 'https://www.gov.br/compras/pt-br/acesso-ao-sistema'
-const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento'
+const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor'
 
 /**
  * @param {{ credencial: {login: string, senha: string, storageState?: string},

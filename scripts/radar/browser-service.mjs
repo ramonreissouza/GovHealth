@@ -178,6 +178,23 @@ async function capturar(credencialId) {
     const browser = await chromium.connectOverCDP(await cdpUrlDaSessaoViva())
     const ctx = browser.contexts()[0]
     if (!ctx) { await browser.close(); return { erro: 'sessão sem contexto ativo', status: 502 } }
+    // PASSAR PELA ÁREA ANTES DE GUARDAR.
+    //
+    // O login acontece em `www.comprasnet.gov.br` + `sso.acesso.gov.br`, mas o que o
+    // monitor precisa ler vive em `cnetmobile.estaleiro.serpro.gov.br` — outro domínio,
+    // outra sessão. Medido em 13/09/2026: o cofre saía com 11 cookies e NENHUM deles
+    // daquele host, e o monitor batia em "acesso não autorizado" achando que a sessão
+    // do fornecedor tinha expirado.
+    //
+    // Navegar até a área faz o próprio portal completar a troca e assentar os cookies
+    // do domínio certo. De quebra, dá conteúdo renderizado para o teste de `logado()`.
+    const pagInicial = ctx.pages()[0] ?? (await ctx.newPage())
+    const area = PORTAIS[cred.conector_id]?.areaUrl
+    if (area) {
+      await pagInicial.goto(area, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {})
+      await pagInicial.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
+    }
+
     const url = ctx.pages()[0]?.url() ?? ''
     const estado = await ctx.storageState()
     const storageState = JSON.stringify(estado)
