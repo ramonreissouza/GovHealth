@@ -88,9 +88,17 @@ const PADROES = [
   ['habilitacao', /habilita|inabilita|documenta[çc]?[ãa]?o?|documento.*complement/i],
   ['diligencia', /dilig[êe]nc/i],
   ['recurso', /recurso|contrarraz|impugna/i],
-  ['prazo', /prazo|at[ée] (o dia|as|às)|encerr|vencimento|expira/i],
+  // `encerr` SOLTO saiu daqui (espelha src/lib/radar/regras.ts): quem fala de prazo
+  // escreve "prazo", e o token solto transformava "o ITEM 213 foi encerrado" em
+  // prioridade ALTA — 34 de 60 mensagens de uma sessão do Licitanet, rotina de disputa
+  // empurrando suspensão e intenção de recurso para fora do topo da caixa.
+  ['prazo', /prazo|at[ée] (o dia|as|às)|vencimento|expira/i],
+  // Mudança de estado do processo (suspensão, revogação, prorrogação…). Espelha
+  // src/lib/radar/regras.ts: sem ela, "o Processo foi SUSPENSO, reabertura dia X"
+  // caía como prioridade BAIXA por não conter nenhuma das outras palavras.
+  ['status_processo', /suspens|suspend|retomad|reabertura|reaberto|revoga|anulad|cancelad|prorrogad[oa]|prorroga[çc][ãa]o d[aeo]|adiad|remarcad/i],
 ]
-const ALTA = new Set(['convocacao', 'prazo', 'recurso', 'diligencia'])
+const ALTA = new Set(['convocacao', 'prazo', 'recurso', 'diligencia', 'status_processo'])
 const norm = (s) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
 
 function classificar(texto, cnpj, regras) {
@@ -144,6 +152,20 @@ async function resolverUrlsPCP(client, processos, dry) {
 // ninguém. Mensagem sem horário de origem notifica: não dá para afirmar que é velha.
 const JANELA_EMAIL_H = 48
 
+// E UM PREGÃO VIVO TAMBÉM NÃO É UMA CAIXA DE ENTRADA.
+//
+// A janela de 48 h resolve o histórico, não a enxurrada. Num pregão de 213 itens do
+// Licitanet, o portal narra CADA item ("o ITEM 212 está na fase competitiva", "o ITEM
+// 213 foi encerrado") — são centenas de mensagens legítimas e recentes numa tarde só.
+// Sem teto, o cliente receberia centenas de e-mails de um único processo enquanto
+// disputa outro.
+//
+// Então o e-mail carrega no máximo as `TETO_EMAIL_PROCESSO` mais importantes de cada
+// processo a cada passada — as de prioridade alta primeiro, e entre iguais as mais
+// recentes. O RESTO NÃO SOME: continua gravado, classificado e visível na caixa do
+// Radar. O que o teto corta é o toque no telefone, não a informação.
+const TETO_EMAIL_PROCESSO = 5
+
 /** A mensagem é recente o bastante para virar e-mail? Sem horário → sim (conservador). */
 function valeEmail(horarioOrigem) {
   if (!horarioOrigem) return true
@@ -152,12 +174,31 @@ function valeEmail(horarioOrigem) {
   return Date.now() - t <= JANELA_EMAIL_H * 3600_000
 }
 
+/** Ordem de ATENDIMENTO do e-mail: alta primeiro, depois a mais recente. */
+function ordemDeAtencao(a, b) {
+  const alta = (m) => (prioridadeDe(classificarSoPadroes(m.texto)) === 'alta' ? 0 : 1)
+  const d = alta(a) - alta(b)
+  if (d) return d
+  return (Date.parse(b.horarioOrigem ?? 0) || 0) - (Date.parse(a.horarioOrigem ?? 0) || 0)
+}
+
+/** Classificação só pelos padrões fixos — basta para ordenar, sem ler regras do tenant. */
+function classificarSoPadroes(texto) {
+  const hay = norm(texto)
+  const cats = []
+  for (const [tipo, re] of PADROES) if (re.test(hay)) cats.push(tipo)
+  return cats
+}
+
 // ── Persiste mensagens novas + enfileira notificações (compartilhado pelos dois
 // caminhos: credencial e público). Retorna {total, novas}. Respeita DRY. ─────────
 async function gravarMensagens(client, ctx, mensagens) {
   const { titularId, conectorId, cnpj, mapa, regras, destinatario } = ctx
-  let total = 0, novas = 0, emails = 0
-  for (const m of mensagens) {
+  let total = 0, novas = 0, emails = 0, contidas = 0
+  // Cópia ordenada: quem decide o que vira e-mail é a atenção que a mensagem merece,
+  // não a ordem em que o portal devolveu.
+  const porProcesso = new Map()
+  for (const m of [...mensagens].sort(ordemDeAtencao)) {
     const proc = mapa.get(m.licitacaoId)
     if (!proc) continue // mensagem de processo não monitorado — ignora
     const cats = classificar(m.texto, cnpj, regras)
@@ -179,7 +220,10 @@ async function gravarMensagens(client, ctx, mensagens) {
     const msgId = ins[0].id
     const assunto = proc.titulo || m.licitacaoId
     // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
-    if (valeEmail(m.horarioOrigem)) {
+    const jaMandou = porProcesso.get(proc.id) ?? 0
+    if (valeEmail(m.horarioOrigem) && jaMandou >= TETO_EMAIL_PROCESSO) contidas++
+    if (valeEmail(m.horarioOrigem) && jaMandou < TETO_EMAIL_PROCESSO) {
+      porProcesso.set(proc.id, jaMandou + 1)
       await client.query(
         `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
          VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
@@ -198,14 +242,14 @@ async function gravarMensagens(client, ctx, mensagens) {
       [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
     )
   }
-  return { total, novas, emails }
+  return { total, novas, emails, contidas }
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
 await client.connect()
 
-let totalMsgs = 0, novasMsgs = 0, emailsMsgs = 0, conectores = 0
+let totalMsgs = 0, novasMsgs = 0, emailsMsgs = 0, contidasMsgs = 0, conectores = 0
 try {
   const { rows: creds } = await client.query(
     `SELECT c.id, c.titular_id, c.user_id, c.conector_id, c.cnpj, c.login, c.cred_cipher, c.storage_state
@@ -294,7 +338,7 @@ try {
 
     // Grava mensagens novas + enfileira notificações (helper compartilhado).
     const g = await gravarMensagens(client, { titularId: cred.titular_id, conectorId: cred.conector_id, cnpj: cred.cnpj, mapa, regras, destinatario }, resultado.mensagens)
-    totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails
+    totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas
 
     // Saúde do conector (requisito 4.2): verificado_em só avança em 'ok'.
     if (!DRY) {
@@ -396,7 +440,7 @@ try {
         console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
 
         const g = await gravarMensagens(client, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
-        totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails
+        totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas; contidasMsgs += g.contidas
 
         // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
         // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
@@ -416,7 +460,7 @@ try {
     }
   }
 
-  console.log(`✓ Radar sync: ${conectores} conector(es), ${totalMsgs} mensagem(ns) vistas, ${novasMsgs} nova(s), ${emailsMsgs} por e-mail (as demais são histórico: só na caixa)${DRY ? ' (dry-run, nada gravado)' : ''}.`)
+  console.log(`✓ Radar sync: ${conectores} conector(es), ${totalMsgs} mensagem(ns) vistas, ${novasMsgs} nova(s), ${emailsMsgs} por e-mail${contidasMsgs ? ` (+${contidasMsgs} recente(s) contida(s) pelo teto por processo)` : ''} — as demais são histórico e ficam só na caixa${DRY ? ' (dry-run, nada gravado)' : ''}.`)
 } catch (e) {
   console.error('Falha no Radar sync:', e)
   process.exitCode = 1

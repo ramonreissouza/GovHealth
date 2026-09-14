@@ -1,7 +1,7 @@
 # Radar — portais públicos (sem login)
 
 Como um portal entra no Radar **sem pedir credencial ao cliente**, e o que foi medido
-no BLL e no BNC em 13/09/2026.
+nos portais da Onda 1 em 13-14/09/2026.
 
 ## Por que o modo público importa
 
@@ -86,6 +86,59 @@ respondem por ~6,3 mil contratações de saúde em 180 dias. O worker manda os p
 **ordenados por proximidade da sessão**, então o teto corta a cauda fria, não o que
 importa — e o truncamento aparece no `detalhe`.
 
+## Licitanet — o painel mais rico dos que ligamos
+
+`/sessao/<id>`, sob o título "Sessão Pública — Visualize o andamento do processo
+licitatório". O painel "Mensagens · Comunicação da sessão" abre sem conta e sem cookie.
+São 3.115 contratações de saúde em 180 dias (a rota antiga `/acesso-visitante`, com 7.103
+no total, tem só 1 recente — está morta).
+
+Aqui não é log de arquivo: é a comunicação do certame, com o **prazo escrito dentro do
+texto**. Capturado sem login em 13/09/2026:
+
+```
+o Processo nº 040/2026 foi SUSPENSO. A REABERTURA será no dia 24/09/2026 09:00
+A manifestação de Intenção de Recurso de (…) foi recebida (…) razões até 17/09/2026
+   e os outros interessados contrarrazões até 22/09/2026
+o Processo nº 021/2026 foi REVOGADO pelo seguinte motivo: Em anexo.
+```
+
+Três detalhes que decidem a implementação:
+
+- **O painel só renderiza quando entra em tela.** A página é Vue e monta o bloco sob
+  demanda: sem rolar até "Comunicação da sessão", o DOM não tem mensagem nenhuma — e o
+  conector leria zero achando que leu. É por isso que `lerSessao` rola antes de extrair.
+- **A âncora é `<time datetime="…">`**, não classe CSS. Vem em ISO com fuso, direto do
+  portal: não depende das utilitárias do Tailwind (que mudam a cada build) e dispensa
+  reparsear data em português.
+- **O lote entra no texto** (`[ITEM-02] …`). Duas mensagens idênticas no mesmo segundo,
+  uma por item, são o caso normal — foi o que o portal devolveu em Cruz das Almas/BA. Sem
+  o lote, o dedup por hash colapsaria as duas e o fornecedor perderia que o fato
+  aconteceu nos dois itens.
+
+## O resto da Onda 1, medido
+
+Sondado em 13-14/09/2026, com navegador limpo e User-Agent de navegador comum:
+
+| Portal | 180 dias | Veredito |
+|---|---:|---|
+| BLL + BNC | 6.236 | **ligado** — log público do processo |
+| Licitanet | 3.115 | **ligado** — comunicação da sessão |
+| Licitar Digital (`app2.licitardigital`) | 1.673 | **bloqueado** — desafio de bot da Cloudflare (HTTP 403). Não se contorna |
+| AMM Licita (`app2.ammlicita`) | 864 | **aberto** — mesmo software, sem Cloudflare; painel existe ("Nenhuma mensagem encontrada", "Atas", "Solicitações") |
+| Licitações-e (BB) | 1.993 | **sem chat público** — a rota `visualizar-processo-publico` traz dados e anexos, nada de mensagem, nem com a disputa encerrada |
+| Licita+Brasil | 407 | **exige login** — a página de edital redireciona para autenticação |
+| Compras BR | 178 | volume marginal |
+
+Duas observações que valem mais que o número:
+
+- **Licitar Digital e AMM Licita são o mesmo sistema** (mesma rota `/pesquisa/<id>`, ids
+  na mesma faixa). Um conector atenderia os dois — mas metade está atrás da Cloudflare, e
+  o Radar não burla proteção de bot (requisito 4.2 + ToS). Ligar só a AMM cobre 0,8% da
+  base; a decisão de gastar um conector nisso é do negócio, não da engenharia.
+- **O Licitações-e não é caso de calibração, é caso de ausência.** O chat do BB fica atrás
+  do login do fornecedor. O caminho que sobra é a Ata, ainda não verificado.
+
 ## Histórico não é notícia
 
 Na primeira vez que o Radar vê um processo, o portal entrega o log **inteiro** de uma vez.
@@ -97,11 +150,24 @@ Por isso `run.mjs` só enfileira e-mail para mensagem com horário de origem den
 processo —, mas não toca o telefone de ninguém. Mensagem **sem** horário notifica: não dá
 para afirmar que é velha.
 
+### E um pregão vivo também não é uma caixa de entrada
+
+A janela de 48 h resolve o histórico, não a enxurrada. Num pregão de 213 itens do
+Licitanet o portal narra **cada item** ("o ITEM 212 está na fase competitiva", "o ITEM 213
+foi encerrado") — centenas de mensagens legítimas e recentes numa tarde só.
+
+`TETO_EMAIL_PROCESSO` (5) limita quantas viram e-mail por processo a cada passada, **as de
+prioridade alta primeiro** e, entre iguais, as mais recentes. O resto continua gravado,
+classificado e visível na caixa. O teto corta o toque no telefone, não a informação — e a
+passada informa quantas conteve.
+
 ## Verificando
 
 ```bash
 node scripts/radar/run.mjs --publico-only --limit 5
 ```
+
+`--publico-only` roda só os portais públicos (o nome antigo `--pcp-only` continua valendo).
 
 O que esperar de uma passada saudável — e como ler cada estado:
 

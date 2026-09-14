@@ -64,6 +64,17 @@ export const CONECTORES: Conector[] = [
     modoPublico: true,
     dominio: 'bllcompras',
   },
+  // O painel de mensagens do Licitanet é o mais rico dos portais públicos ligados até
+  // aqui: suspensão com data de reabertura, intenção de recurso com prazo, revogação,
+  // prorrogação de disputa. Tudo com o prazo escrito dentro do texto.
+  {
+    id: 'licitanet',
+    nome: 'Licitanet',
+    descricao: 'Sessão pública com a comunicação do certame. Monitoramento público — sem login.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'licitanet',
+  },
   {
     id: 'bnc',
     nome: 'BNC — Bolsa Nacional de Compras',

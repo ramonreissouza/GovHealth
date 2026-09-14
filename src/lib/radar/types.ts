@@ -19,6 +19,7 @@ export type CategoriaRegra =
   | 'diligencia'
   | 'recurso'
   | 'prazo'
+  | 'status_processo'
   | 'cnpj'
   | 'keyword'
   | 'qualquer'

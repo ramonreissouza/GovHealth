@@ -99,6 +99,19 @@ export const PORTAIS = {
     emLogin: ({ url }) => /account\/login|\/login/i.test(url),
     logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
   },
+  // Licitanet: a sessão pública (/sessao/<id>) mostra a comunicação do certame para
+  // qualquer um. Não tem área logada envolvida na leitura — `loginUrl` fica só para a
+  // sala de disputa do fornecedor, que este conector NÃO lê.
+  licitanet: {
+    id: 'licitanet',
+    nome: 'Licitanet',
+    publico: true,
+    dominio: 'licitanet',
+    loginUrl: 'https://licitanet.com.br/',
+    areaUrl: 'https://licitanet.com.br/',
+    emLogin: ({ url }) => /\/login|\/entrar/i.test(url),
+    logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
+  },
   bnc: {
     id: 'bnc',
     nome: 'BNC — Bolsa Nacional de Compras',

@@ -36,7 +36,7 @@ import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { Paginacao } from '@/components/ui/Paginacao'
 
-const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'cnpj']
+const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'status_processo', 'cnpj']
 
 interface Mensagem {
   id: number; processo_id: string; conector_id: string; cnpj: string; licitacao_id: string

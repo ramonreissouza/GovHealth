@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS radar_regras (
   id         TEXT PRIMARY KEY,
   titular_id TEXT,                          -- NULL = built-in global
   user_id    TEXT,
-  tipo       TEXT NOT NULL,                 -- convocacao|negociacao|proposta_ajustada|habilitacao|diligencia|recurso|prazo|cnpj|keyword|qualquer
+  tipo       TEXT NOT NULL,                 -- convocacao|negociacao|proposta_ajustada|habilitacao|diligencia|recurso|prazo|status_processo|cnpj|keyword|qualquer
   padrao     TEXT,                          -- regex/keyword (para 'keyword')
   prioridade TEXT NOT NULL DEFAULT 'normal',
   ativo      BOOLEAN NOT NULL DEFAULT true,
@@ -190,5 +190,6 @@ INSERT INTO radar_conectores (id, nome) VALUES
   ('licitacoes-e', 'Licitações-e (Banco do Brasil)'),
   ('bll',          'BLL — Bolsa de Licitações e Leilões'),
   ('bnc',          'BNC — Bolsa Nacional de Compras'),
+  ('licitanet',    'Licitanet'),
   ('pcp',          'Portal de Compras Públicas')
 ON CONFLICT (id) DO NOTHING;
