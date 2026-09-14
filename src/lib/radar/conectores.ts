@@ -33,7 +33,7 @@ export const CONECTORES: Conector[] = [
   {
     id: 'pcp',
     nome: 'Portal de Compras Públicas',
-    descricao: 'Prefeituras, consórcios e órgãos estaduais. Monitoramento público — sem login.',
+    descricao: 'Prefeituras, consórcios e órgãos estaduais. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
     modoPublico: true,
     dominio: 'portaldecompraspublicas',
@@ -59,7 +59,7 @@ export const CONECTORES: Conector[] = [
   {
     id: 'bll',
     nome: 'BLL — Bolsa de Licitações e Leilões',
-    descricao: 'Portal privado usado por muitos municípios. Monitoramento público — sem login.',
+    descricao: 'Portal privado usado por muitos municípios. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
     modoPublico: true,
     dominio: 'bllcompras',
@@ -70,7 +70,7 @@ export const CONECTORES: Conector[] = [
   {
     id: 'licitanet',
     nome: 'Licitanet',
-    descricao: 'Sessão pública com a comunicação do certame. Monitoramento público — sem login.',
+    descricao: 'Sessão pública com a comunicação do certame. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
     modoPublico: true,
     dominio: 'licitanet',
@@ -82,7 +82,7 @@ export const CONECTORES: Conector[] = [
   {
     id: 'ammlicita',
     nome: 'AMM Licita',
-    descricao: 'Impugnações, esclarecimentos, recursos e avisos do condutor. Monitoramento público — sem login.',
+    descricao: 'Impugnações, esclarecimentos, recursos e avisos do condutor. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
     modoPublico: true,
     dominio: 'ammlicita',
@@ -90,7 +90,7 @@ export const CONECTORES: Conector[] = [
   {
     id: 'bnc',
     nome: 'BNC — Bolsa Nacional de Compras',
-    descricao: 'Mesma plataforma do BLL, em outro domínio. Monitoramento público — sem login.',
+    descricao: 'Mesma plataforma do BLL, em outro domínio. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
     modoPublico: true,
     dominio: 'bnccompras',

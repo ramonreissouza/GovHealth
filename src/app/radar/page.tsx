@@ -803,7 +803,7 @@ export default function RadarPage() {
           )}
         </main>
 
-        {conectar && <ConectarModal capacidades={capacidades} onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
+        {conectar && <ConectarModal capacidades={capacidades} saude={(data?.saude ?? []) as SaudeItem[]} onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
         {detalhes && <DetalhesModal processo={detalhes} onClose={() => setDetalhes(null)} />}
       </div>
     </div>
@@ -835,8 +835,18 @@ function TextoDestacado({ texto, chaves }: { texto: string; chaves: string[] }) 
     <>
       {trechos.map((t, i) =>
         t.tipo === null ? <span key={i}>{t.texto}</span> : (
+          // TEXTO ESCURO SOBRE O TOM CLARO — como marca-texto de verdade.
+          //
+          // Era `text-amber-100` / `text-emerald-100`: tons quase brancos, que só fazem
+          // sentido sobre fundo escuro. Este produto tem UM tema, e ele é claro
+          // (globals.css, `--bg: #ffffff`), então a palavra destacada ficava com
+          // contraste de ~1,1:1 contra o próprio realce — o mínimo legível é 4,5:1.
+          // O destaque fazia o OPOSTO do que existe para fazer: apagava justamente a
+          // palavra que queríamos que o fornecedor lesse, e apagava só as importantes
+          // (o nome do arquivo anexado, a palavra-chave que ele mesmo monitorou).
+          // Agora ficam em ~8:1 (anexo) e ~7,5:1 (chave).
           <mark key={i} className={clsx('rounded px-0.5',
-            t.tipo === 'chave' ? 'bg-amber/30 text-amber-100' : 'bg-emerald-500/25 text-emerald-100')}>
+            t.tipo === 'chave' ? 'bg-amber/25 text-amber-900' : 'bg-emerald-500/20 text-emerald-900')}>
             {t.texto}
           </mark>
         ))}
@@ -999,8 +1009,8 @@ function Kpi({ label, valor, destaque }: { label: string; valor: string; destaqu
 
 type Fase = 'form' | 'live' | 'conectando' | 'ok' | 'erro'
 
-function ConectarModal({ capacidades, onClose, onSaved }: {
-  capacidades: { cofre: boolean; hosted: boolean }; onClose: () => void; onSaved: () => void
+function ConectarModal({ capacidades, saude, onClose, onSaved }: {
+  capacidades: { cofre: boolean; hosted: boolean }; saude: SaudeItem[]; onClose: () => void; onSaved: () => void
 }) {
   const [conectorId, setConectorId] = useState('comprasgov')
   const [cnpj, setCnpj] = useState('')
@@ -1187,15 +1197,39 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
               <div className="grid grid-cols-2 gap-2 mt-1">
                 {CONECTORES.map((c) => {
                   const ativo = conectorId === c.id
+
+                  // O SELO SÓ PODE DIZER UMA COISA — E TEM DE SER A QUE O CLIENTE ESTÁ
+                  // PERGUNTANDO.
+                  //
+                  // Dizia "sem login", que descreve o PORTAL (ele não exige senha). Só que
+                  // o cliente lê como ESTADO DELE — "não estou logado", "não conectei" — e
+                  // lê isso a poucos centímetros de um cartão verde dizendo Verificado. Duas
+                  // afirmações opostas sobre o mesmo portal, na mesma tela: ele acredita na
+                  // pior. Pior ainda no PCP, BLL, BNC, Licitanet e AMM, onde não existe login
+                  // nenhum a fazer — o cliente ficava procurando um botão que não devia
+                  // existir.
+                  //
+                  // Agora: se o portal já está sendo lido, o selo diz isso, com a cor do
+                  // cartão de saúde. A capacidade ("não pede senha") continua dita, mas na
+                  // descrição, que é onde se descreve o portal.
+                  const saudeDo = saude.filter((s) => s.conectorId === c.id)
+                  const monitorando = saudeDo.some((s) => s.status === 'ok')
+                  const precisaRever = saudeDo.length > 0 && !monitorando
+                  const selo = 'text-[8px] font-mono-custom uppercase tracking-wide px-1 py-0.5 rounded flex-shrink-0'
+
                   return (
                     <button key={c.id} type="button" onClick={() => setConectorId(c.id)}
                       className={clsx('text-left rounded-lg border px-3 py-2 transition-colors',
                         ativo ? 'border-accent bg-accent/10' : 'border-subtle2 bg-bg3 hover:border-subtle')}>
                       <div className="flex items-center justify-between gap-1">
                         <span className="text-[12px] font-semibold text-strong">{c.nome}</span>
-                        {c.modoPublico
-                          ? <span className="text-[8px] font-mono-custom uppercase tracking-wide bg-accent/20 text-accent px-1 py-0.5 rounded flex-shrink-0">sem login</span>
-                          : !c.disponivel && <span className="text-[8px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1 py-0.5 rounded flex-shrink-0">em breve</span>}
+                        {monitorando
+                          ? <span className={clsx(selo, 'bg-emerald-500/15 text-emerald-400')}>monitorando</span>
+                          : precisaRever
+                            ? <span className={clsx(selo, 'bg-amber/15 text-amber')}>rever</span>
+                            : c.modoPublico
+                              ? <span className={clsx(selo, 'bg-accent/20 text-accent')}>não pede senha</span>
+                              : !c.disponivel && <span className={clsx(selo, 'bg-bg4 text-faint')}>em breve</span>}
                       </div>
                       <div className="text-[10px] text-muted mt-0.5 leading-snug">{c.descricao}</div>
                     </button>
