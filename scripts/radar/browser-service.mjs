@@ -20,7 +20,12 @@ import { PORTAIS } from './portais.mjs'
 function loadEnv() {
   try {
     const e = fs.readFileSync('.env.local', 'utf8')
-    for (const k of ['DATABASE_URL', 'RADAR_CRED_KEY', 'RADAR_CONNECT_TOKEN', 'RADAR_CONNECT_PORT', 'RADAR_STEEL_URL', 'RADAR_STEEL_CDP', 'RADAR_STEEL_EMBED_TEMPLATE']) {
+    // RADAR_PUBLIC_URL ESTAVA FORA DESTA LISTA, e era a única essencial de fora.
+    // Consequência: quem subisse o serviço sem exportá-la na mão caía no padrão
+    // `http://localhost:3200` — o iframe do live view apontava para a própria
+    // máquina e só funcionava nela. O aviso existia, na saída de erro, onde
+    // ninguém olha depois que o processo some para o segundo plano.
+    for (const k of ['DATABASE_URL', 'RADAR_CRED_KEY', 'RADAR_CONNECT_TOKEN', 'RADAR_CONNECT_PORT', 'RADAR_PUBLIC_URL', 'RADAR_STEEL_URL', 'RADAR_STEEL_CDP', 'RADAR_STEEL_EMBED_TEMPLATE']) {
       if (process.env[k]) continue
       const m = e.match(new RegExp(`^${k}=(.*)$`, 'm'))
       if (m) process.env[k] = m[1].trim().replace(/^["']|["']$/g, '')
@@ -108,7 +113,26 @@ async function iniciar(credencialId) {
 
   let session
   try { session = await criarSessao({}) }
-  catch (e) { soltar(credencialId); return { erro: `falha ao criar a sessão: ${e.message}`, status: 502 } }
+  catch (e) {
+    soltar(credencialId)
+    // "fetch failed"/ECONNREFUSED na 3100 quer dizer UMA coisa só: o container do
+    // navegador não está no ar. Isso é problema NOSSO, e devolver a mensagem crua
+    // ("falha ao criar a sessão: fetch failed") manda o fornecedor procurar defeito
+    // na conta ou na senha dele — que estão perfeitas. Os dois casos pedem reações
+    // opostas: este ele espera, o outro ele reporta. Então têm de ser ditos
+    // diferentes.
+    //
+    // O status continua 502 de propósito: 503 é o código que a tela usa para "o
+    // navegador hospedado não está configurado, caia no fluxo local", e cair no
+    // fluxo local aqui esconderia a queda em vez de mostrá-la.
+    const foraDoAr = /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(String(e.message))
+    if (foraDoAr) {
+      console.error(`[browser-service] steel inacessível em ${STEEL}: ${e.message}`)
+      return { erro: 'navegador indisponível', status: 502,
+        detalhe: 'O navegador que abre o gov.br está fora do ar no nosso lado — não é a sua conta nem a sua senha. Tente de novo em alguns minutos; se persistir, nos avise.' }
+    }
+    return { erro: `falha ao criar a sessão: ${e.message}`, status: 502 }
+  }
   const sessionId = idDe(session)
   const cdp = cdpUrlDe(session)
 
