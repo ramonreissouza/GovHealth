@@ -8,6 +8,7 @@ import { sync as licitacoesE } from './connector-licitacoes-e.mjs'
 import { sync as bll } from './connector-bll.mjs'
 import { sync as bnc } from './connector-bnc.mjs'
 import { sync as licitanet } from './connector-licitanet.mjs'
+import { sync as ammlicita } from './connector-ammlicita.mjs'
 import { sync as pcp } from './connector-pcp.mjs'
 
 export const CONECTORES = {
@@ -16,6 +17,7 @@ export const CONECTORES = {
   bll,
   bnc,
   licitanet,
+  ammlicita,
   pcp,
 }
 

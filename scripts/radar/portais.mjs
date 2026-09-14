@@ -112,6 +112,19 @@ export const PORTAIS = {
     emLogin: ({ url }) => /\/login|\/entrar/i.test(url),
     logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
   },
+  // AMM Licita: mesma aplicação do Licitar Digital (rota /pesquisa/<id>), no domínio que
+  // NÃO está atrás da Cloudflare. Só este entra — o gêmeo fica de fora enquanto exigir
+  // desafio de robô, porque o Radar não contorna proteção de robô.
+  ammlicita: {
+    id: 'ammlicita',
+    nome: 'AMM Licita',
+    publico: true,
+    dominio: 'ammlicita',
+    loginUrl: 'https://app2.ammlicita.org.br/',
+    areaUrl: 'https://app2.ammlicita.org.br/',
+    emLogin: ({ url }) => /\/login|\/entrar/i.test(url),
+    logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
+  },
   bnc: {
     id: 'bnc',
     nome: 'BNC — Bolsa Nacional de Compras',

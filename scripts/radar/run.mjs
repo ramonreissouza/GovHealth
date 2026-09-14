@@ -97,6 +97,10 @@ const PADROES = [
   // src/lib/radar/regras.ts: sem ela, "o Processo foi SUSPENSO, reabertura dia X"
   // caía como prioridade BAIXA por não conter nenhuma das outras palavras.
   ['status_processo', /suspens|suspend|retomad|reabertura|reaberto|revoga|anulad|cancelad|prorrogad[oa]|prorroga[çc][ãa]o d[aeo]|adiad|remarcad/i],
+  // Desfecho do lote (fracassado/deserto/adjudicado/homologado). Espelha regras.ts e NÃO
+  // entra em ALTA: é resultado, não urgência — mas deixar em 'baixa' era tratar como
+  // ruído uma frase cujo sentido o Radar reconhece.
+  ['resultado_lote', /fracassad|desert[oa]|adjudicad|homologad/i],
 ]
 const ALTA = new Set(['convocacao', 'prazo', 'recurso', 'diligencia', 'status_processo'])
 const norm = (s) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()

@@ -75,6 +75,18 @@ export const CONECTORES: Conector[] = [
     modoPublico: true,
     dominio: 'licitanet',
   },
+  // AMM Licita roda a mesma aplicação do Licitar Digital. Só ela entra no catálogo: o
+  // domínio do Licitar Digital responde com o desafio de robô da Cloudflare, e contornar
+  // isso está fora de questão. Se um dia abrir, é só acrescentar o id aqui — o conector
+  // (scripts/radar/connector-ammlicita.mjs) já serve aos dois.
+  {
+    id: 'ammlicita',
+    nome: 'AMM Licita',
+    descricao: 'Impugnações, esclarecimentos, recursos e avisos do condutor. Monitoramento público — sem login.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'ammlicita',
+  },
   {
     id: 'bnc',
     nome: 'BNC — Bolsa Nacional de Compras',

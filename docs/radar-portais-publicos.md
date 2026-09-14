@@ -116,6 +116,41 @@ Três detalhes que decidem a implementação:
   o lote, o dedup por hash colapsaria as duas e o fornecedor perderia que o fato
   aconteceu nos dois itens.
 
+## AMM Licita — o quadro mais decisivo, e o gêmeo que ficou de fora
+
+`/pesquisa/<id>`, aberto sem conta. 864 contratações de saúde em 180 dias.
+
+**É a mesma aplicação do Licitar Digital** — mesma rota, ids na mesma faixa numérica,
+provavelmente a mesma instalação com dois domínios. A diferença está no portão:
+`app2.licitardigital.com.br` responde com o desafio de robô da Cloudflare (HTTP 403,
+`__cf_chl_rt_tk` na URL) e `app2.ammlicita.org.br` não. O Radar não contorna proteção de
+robô, então só o domínio aberto entra. O conector já serve aos dois: se um dia abrir,
+basta acrescentar o id ao catálogo.
+
+Dois quadros são lidos, e os dois valem:
+
+- **Solicitações** — impugnação, esclarecimento e recurso, com o pedido, a resposta, os
+  anexos e **o desfecho no título**: `Impugnação - VALE COMÉRCIO DE MOTOS LTDA INDEFERIDA`,
+  `Esclarecimento - LF MOTOS PECAS E SERVICOS LTDA RESPONDIDA`, `Recurso - A4CLTDA PENDENTE`.
+  É o quadro mais decisivo de todos os portais ligados: impugnação deferida muda o edital,
+  e quem descobre depois perde a licitação.
+- **Avisos** — atos do condutor sobre os lotes, assinados e datados:
+  `Lote 1 foi declarado como fracassado. Motivo do fracasso: Outros. Deserto —
+  AILTON PEREIRA GOULART - 11/09/2026 11:00`.
+
+Três detalhes de implementação:
+
+- **A âncora é `header > h1`** ("Solicitações", "Avisos"), nunca classe. A página é
+  Material-UI com styled-components e as classes são hashes (`sc-cmaqmh rwTQm`) que trocam
+  a cada build — ancorar nelas é garantir quebra silenciosa.
+- **Dois formatos de data no mesmo processo**: as solicitações escrevem "7 de setembro de
+  2026 às 22:35" e os avisos "11/09/2026 11:00". `horarioPorExtensoParaISO` cobre o
+  primeiro e `horarioBrParaISO` o segundo; os dois viram ISO -03:00.
+- **O desafio de robô tem estado próprio.** Se a Cloudflare aparecer aqui, o conector
+  devolve `portal_indisponivel` dizendo exatamente isso — não é falha nossa, não é
+  problema do cliente, e principalmente não é "sem novidades". O detector foi exercitado
+  contra os dois domínios: `true` no licitardigital, `false` no ammlicita.
+
 ## O resto da Onda 1, medido
 
 Sondado em 13-14/09/2026, com navegador limpo e User-Agent de navegador comum:
@@ -125,7 +160,7 @@ Sondado em 13-14/09/2026, com navegador limpo e User-Agent de navegador comum:
 | BLL + BNC | 6.236 | **ligado** — log público do processo |
 | Licitanet | 3.115 | **ligado** — comunicação da sessão |
 | Licitar Digital (`app2.licitardigital`) | 1.673 | **bloqueado** — desafio de bot da Cloudflare (HTTP 403). Não se contorna |
-| AMM Licita (`app2.ammlicita`) | 864 | **aberto** — mesmo software, sem Cloudflare; painel existe ("Nenhuma mensagem encontrada", "Atas", "Solicitações") |
+| AMM Licita (`app2.ammlicita`) | 864 | **ligado** — Solicitações (impugnação/esclarecimento/recurso) + Avisos do condutor |
 | Licitações-e (BB) | 1.993 | **sem chat público** — a rota `visualizar-processo-publico` traz dados e anexos, nada de mensagem, nem com a disputa encerrada |
 | Licita+Brasil | 407 | **exige login** — a página de edital redireciona para autenticação |
 | Compras BR | 178 | volume marginal |
@@ -133,9 +168,9 @@ Sondado em 13-14/09/2026, com navegador limpo e User-Agent de navegador comum:
 Duas observações que valem mais que o número:
 
 - **Licitar Digital e AMM Licita são o mesmo sistema** (mesma rota `/pesquisa/<id>`, ids
-  na mesma faixa). Um conector atenderia os dois — mas metade está atrás da Cloudflare, e
-  o Radar não burla proteção de bot (requisito 4.2 + ToS). Ligar só a AMM cobre 0,8% da
-  base; a decisão de gastar um conector nisso é do negócio, não da engenharia.
+  na mesma faixa). O conector foi escrito e cobre os dois — mas só a AMM entrou, porque
+  metade está atrás da Cloudflare e o Radar não burla proteção de bot (requisito 4.2 +
+  ToS). São 0,8% da base hoje; se o outro domínio abrir, é uma linha no catálogo.
 - **O Licitações-e não é caso de calibração, é caso de ausência.** O chat do BB fica atrás
   do login do fornecedor. O caminho que sobra é a Ata, ainda não verificado.
 

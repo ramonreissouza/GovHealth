@@ -36,6 +36,15 @@ const PADROES: Array<{ tipo: CategoriaRegra; re: RegExp }> = [
   // Apareceu ao ligar o Licitanet (14/09/2026), que é justamente o portal que escreve
   // esses avisos por extenso — mas o buraco sempre esteve lá, para todos os portais.
   { tipo: 'status_processo', re: /suspens|suspend|retomad|reabertura|reaberto|revoga|anulad|cancelad|prorrogad[oa]|prorroga[çc][ãa]o d[aeo]|adiad|remarcad/i },
+  // DESFECHO DO LOTE — não é urgência, mas também não é nada.
+  //
+  // "Lote 01 foi declarado como fracassado. Motivo: Fornecedor pediu declínio" caía como
+  // prioridade BAIXA por não casar com categoria nenhuma — ou seja, o Radar reconhecia o
+  // sentido da frase e mesmo assim a tratava como ruído. Para quem disputou, é o
+  // resultado; para quem não disputou, é o aviso de que o item volta a ser licitado.
+  //
+  // Fica FORA de `ALTA` de propósito: merece ser vista, não merece acordar ninguém.
+  { tipo: 'resultado_lote', re: /fracassad|desert[oa]|adjudicad|homologad/i },
 ]
 
 // Categorias que exigem ação rápida do fornecedor → prioridade alta.
