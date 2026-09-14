@@ -80,7 +80,8 @@
     "assentos": "node scripts/assentos-conta.mjs",
     "ia:migrate": "node scripts/migrate-ia-conversas.mjs",
     "deck:numeros": "npx tsx --env-file=.env.local scripts/deck/numeros.ts",
-    "deck": "python scripts/deck/montar.py"
+    "deck": "python scripts/deck/montar.py",
+    "radar:prova": "node scripts/radar/prova-live.mjs"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.7.0",

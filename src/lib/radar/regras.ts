@@ -15,11 +15,40 @@ const PADROES: Array<{ tipo: CategoriaRegra; re: RegExp }> = [
   { tipo: 'habilitacao', re: /habilita|inabilita|documenta[çc]?[ãa]?o?|documento.*complement/i },
   { tipo: 'diligencia', re: /dilig[êe]nc/i },
   { tipo: 'recurso', re: /recurso|contrarraz|impugna/i },
-  { tipo: 'prazo', re: /prazo|at[ée] (o dia|as|às)|encerr|vencimento|expira/i },
+  // `encerr` SOLTO saiu daqui, e a conta é simples: quem fala de prazo escreve "prazo".
+  //
+  // "Srs. Licitantes, está encerrado o prazo para manifestação" casa por "prazo".
+  // "Prazo para recurso encerra amanhã às 18h" casa por "prazo". Mas "o ITEM 213 foi
+  // encerrado SEM prorrogação" casava só pelo `encerr` — e num pregão de 213 itens do
+  // Licitanet isso são 34 mensagens de prioridade ALTA por sessão, todas rotina de
+  // disputa, empurrando a suspensão e a intenção de recurso para fora do topo da caixa.
+  // Medido em 14/09/2026, na primeira passada real do conector.
+  //
+  // Alta demais é o mesmo que alta nenhuma: se tudo é urgente, o cliente para de olhar.
+  { tipo: 'prazo', re: /prazo|at[ée] (o dia|as|às)|vencimento|expira/i },
+  // MUDANÇA DE ESTADO DO PROCESSO — a categoria que faltava, e faltava caro.
+  //
+  // "o Processo nº 040/2026 foi SUSPENSO. A REABERTURA será no dia 24/09/2026 09:00" não
+  // casava com NADA: sem a palavra "prazo", sem "convocação", sem "recurso". Uma mensagem
+  // que remarca a agenda do fornecedor caía como prioridade BAIXA. O mesmo valia para
+  // revogação, anulação, prorrogação e adiamento.
+  //
+  // Apareceu ao ligar o Licitanet (14/09/2026), que é justamente o portal que escreve
+  // esses avisos por extenso — mas o buraco sempre esteve lá, para todos os portais.
+  { tipo: 'status_processo', re: /suspens|suspend|retomad|reabertura|reaberto|revoga|anulad|cancelad|prorrogad[oa]|prorroga[çc][ãa]o d[aeo]|adiad|remarcad/i },
+  // DESFECHO DO LOTE — não é urgência, mas também não é nada.
+  //
+  // "Lote 01 foi declarado como fracassado. Motivo: Fornecedor pediu declínio" caía como
+  // prioridade BAIXA por não casar com categoria nenhuma — ou seja, o Radar reconhecia o
+  // sentido da frase e mesmo assim a tratava como ruído. Para quem disputou, é o
+  // resultado; para quem não disputou, é o aviso de que o item volta a ser licitado.
+  //
+  // Fica FORA de `ALTA` de propósito: merece ser vista, não merece acordar ninguém.
+  { tipo: 'resultado_lote', re: /fracassad|desert[oa]|adjudicad|homologad/i },
 ]
 
 // Categorias que exigem ação rápida do fornecedor → prioridade alta.
-const ALTA = new Set<CategoriaRegra>(['convocacao', 'prazo', 'recurso', 'diligencia'])
+const ALTA = new Set<CategoriaRegra>(['convocacao', 'prazo', 'recurso', 'diligencia', 'status_processo'])
 
 /** Normaliza um CNPJ para só dígitos (menção literal). */
 function soDigitos(s: string): string {

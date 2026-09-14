@@ -36,7 +36,7 @@ import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { Paginacao } from '@/components/ui/Paginacao'
 
-const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'cnpj']
+const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'status_processo', 'resultado_lote', 'cnpj']
 
 interface Mensagem {
   id: number; processo_id: string; conector_id: string; cnpj: string; licitacao_id: string
@@ -803,7 +803,7 @@ export default function RadarPage() {
           )}
         </main>
 
-        {conectar && <ConectarModal capacidades={capacidades} onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
+        {conectar && <ConectarModal capacidades={capacidades} saude={(data?.saude ?? []) as SaudeItem[]} onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
         {detalhes && <DetalhesModal processo={detalhes} onClose={() => setDetalhes(null)} />}
       </div>
     </div>
@@ -835,8 +835,18 @@ function TextoDestacado({ texto, chaves }: { texto: string; chaves: string[] }) 
     <>
       {trechos.map((t, i) =>
         t.tipo === null ? <span key={i}>{t.texto}</span> : (
+          // TEXTO ESCURO SOBRE O TOM CLARO — como marca-texto de verdade.
+          //
+          // Era `text-amber-100` / `text-emerald-100`: tons quase brancos, que só fazem
+          // sentido sobre fundo escuro. Este produto tem UM tema, e ele é claro
+          // (globals.css, `--bg: #ffffff`), então a palavra destacada ficava com
+          // contraste de ~1,1:1 contra o próprio realce — o mínimo legível é 4,5:1.
+          // O destaque fazia o OPOSTO do que existe para fazer: apagava justamente a
+          // palavra que queríamos que o fornecedor lesse, e apagava só as importantes
+          // (o nome do arquivo anexado, a palavra-chave que ele mesmo monitorou).
+          // Agora ficam em ~8:1 (anexo) e ~7,5:1 (chave).
           <mark key={i} className={clsx('rounded px-0.5',
-            t.tipo === 'chave' ? 'bg-amber/30 text-amber-100' : 'bg-emerald-500/25 text-emerald-100')}>
+            t.tipo === 'chave' ? 'bg-amber/25 text-amber-900' : 'bg-emerald-500/20 text-emerald-900')}>
             {t.texto}
           </mark>
         ))}
@@ -999,8 +1009,8 @@ function Kpi({ label, valor, destaque }: { label: string; valor: string; destaqu
 
 type Fase = 'form' | 'live' | 'conectando' | 'ok' | 'erro'
 
-function ConectarModal({ capacidades, onClose, onSaved }: {
-  capacidades: { cofre: boolean; hosted: boolean }; onClose: () => void; onSaved: () => void
+function ConectarModal({ capacidades, saude, onClose, onSaved }: {
+  capacidades: { cofre: boolean; hosted: boolean }; saude: SaudeItem[]; onClose: () => void; onSaved: () => void
 }) {
   const [conectorId, setConectorId] = useState('comprasgov')
   const [cnpj, setCnpj] = useState('')
@@ -1187,15 +1197,39 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
               <div className="grid grid-cols-2 gap-2 mt-1">
                 {CONECTORES.map((c) => {
                   const ativo = conectorId === c.id
+
+                  // O SELO SÓ PODE DIZER UMA COISA — E TEM DE SER A QUE O CLIENTE ESTÁ
+                  // PERGUNTANDO.
+                  //
+                  // Dizia "sem login", que descreve o PORTAL (ele não exige senha). Só que
+                  // o cliente lê como ESTADO DELE — "não estou logado", "não conectei" — e
+                  // lê isso a poucos centímetros de um cartão verde dizendo Verificado. Duas
+                  // afirmações opostas sobre o mesmo portal, na mesma tela: ele acredita na
+                  // pior. Pior ainda no PCP, BLL, BNC, Licitanet e AMM, onde não existe login
+                  // nenhum a fazer — o cliente ficava procurando um botão que não devia
+                  // existir.
+                  //
+                  // Agora: se o portal já está sendo lido, o selo diz isso, com a cor do
+                  // cartão de saúde. A capacidade ("não pede senha") continua dita, mas na
+                  // descrição, que é onde se descreve o portal.
+                  const saudeDo = saude.filter((s) => s.conectorId === c.id)
+                  const monitorando = saudeDo.some((s) => s.status === 'ok')
+                  const precisaRever = saudeDo.length > 0 && !monitorando
+                  const selo = 'text-[8px] font-mono-custom uppercase tracking-wide px-1 py-0.5 rounded flex-shrink-0'
+
                   return (
                     <button key={c.id} type="button" onClick={() => setConectorId(c.id)}
                       className={clsx('text-left rounded-lg border px-3 py-2 transition-colors',
                         ativo ? 'border-accent bg-accent/10' : 'border-subtle2 bg-bg3 hover:border-subtle')}>
                       <div className="flex items-center justify-between gap-1">
                         <span className="text-[12px] font-semibold text-strong">{c.nome}</span>
-                        {c.modoPublico
-                          ? <span className="text-[8px] font-mono-custom uppercase tracking-wide bg-accent/20 text-accent px-1 py-0.5 rounded flex-shrink-0">sem login</span>
-                          : !c.disponivel && <span className="text-[8px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1 py-0.5 rounded flex-shrink-0">em breve</span>}
+                        {monitorando
+                          ? <span className={clsx(selo, 'bg-emerald-500/15 text-emerald-400')}>monitorando</span>
+                          : precisaRever
+                            ? <span className={clsx(selo, 'bg-amber/15 text-amber')}>rever</span>
+                            : c.modoPublico
+                              ? <span className={clsx(selo, 'bg-accent/20 text-accent')}>não pede senha</span>
+                              : !c.disponivel && <span className={clsx(selo, 'bg-bg4 text-faint')}>em breve</span>}
                       </div>
                       <div className="text-[10px] text-muted mt-0.5 leading-snug">{c.descricao}</div>
                     </button>
@@ -1206,15 +1240,24 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
 
             {publico ? (
               <>
+                {/* Os dois portais públicos chegam ao processo por caminhos diferentes, e
+                    dizer o caminho errado faz o cliente preencher o campo errado: o PCP
+                    precisa ser PROCURADO (o PNCP não publica o endereço da página), o
+                    BLL/BNC vêm com o link pronto no próprio PNCP. */}
                 <p className="text-[12px] text-muted mb-4">
                   O {nomeSel} publica o <strong className="text-strong">andamento de cada processo</strong> numa página pública —
-                  monitoramos <strong className="text-strong">sem login</strong>. Informe o objeto e a UF; nós achamos o processo
-                  automaticamente. Se não acharmos com segurança, cole o link do processo no portal.
+                  monitoramos <strong className="text-strong">sem login</strong>.{' '}
+                  {conectorId === 'pcp'
+                    ? <>Informe o objeto e a UF; nós achamos o processo automaticamente. Se não acharmos com segurança, cole o link do processo no portal.</>
+                    : <>As licitações deste portal já entram sozinhas pelo seu perfil, com o link do processo que o próprio PNCP publica. Use este formulário só para acompanhar um processo <strong className="text-strong">fora do perfil</strong> — aí precisamos do link da página dele.</>}
                 </p>
                 <div className="space-y-3">
                   <Campo label="Objeto / título da licitação" value={pubObjeto} onChange={setPubObjeto} placeholder="ex.: aquisição de medicamentos para a farmácia básica" />
                   <Campo label="UF (opcional, ajuda a achar)" value={pubUf} onChange={(v) => setPubUf(v.toUpperCase().slice(0, 2))} placeholder="ex.: SP" />
-                  <Campo label="Link do processo no PCP (opcional — fallback)" value={pubLink} onChange={setPubLink} placeholder="cole aqui se souber a URL exata do processo" />
+                  <Campo
+                    label={conectorId === 'pcp' ? 'Link do processo no PCP (opcional — fallback)' : `Link do processo no ${CURTO[conectorId] ?? nomeSel} (obrigatório)`}
+                    value={pubLink} onChange={setPubLink}
+                    placeholder={conectorId === 'pcp' ? 'cole aqui se souber a URL exata do processo' : 'cole a URL da página do processo no portal'} />
                 </div>
                 <p className="text-[11px] text-faint mt-3 leading-snug">
                   A sala <strong>ao vivo</strong> (lances em tempo real) usa a sua própria sessão do portal e entra numa próxima etapa —
@@ -1228,8 +1271,8 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
                 A conexão por <strong>login do gov.br</strong> está desligada neste ambiente: o cofre que guarda a
                 sessão cifrada (<span className="font-mono-custom">RADAR_CRED_KEY</span>) não está configurado, e sem
                 ele não temos onde guardar a sua sessão com segurança. O{' '}
-                <strong>Portal de Compras Públicas</strong> monitora <strong>sem login</strong> e já funciona —
-                selecione ele acima.
+                <strong>Portal de Compras Públicas</strong>, o <strong>BLL</strong> e o <strong>BNC</strong> monitoram{' '}
+                <strong>sem login</strong> e já funcionam — selecione um deles acima.
               </div>
             ) : conectorDisponivel(conectorId) ? (
               <>
@@ -1247,7 +1290,7 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
               <div className="bg-amber/10 border border-amber/30 rounded-lg px-3 py-2.5 text-[12px] text-amber leading-snug">
                 Este portal já está no modelo de dados e na seleção por perfil — a captura de chat entra na{' '}
                 <strong>próxima etapa</strong>, quando calibrarmos o login e os seletores dele. Por ora, use o{' '}
-                <strong>Compras.gov.br</strong> ou o <strong>Portal de Compras Públicas</strong> (sem login).
+                <strong>Compras.gov.br</strong> ou os portais <strong>sem login</strong> (PCP, BLL e BNC).
               </div>
             )}
 
@@ -1255,7 +1298,7 @@ function ConectarModal({ capacidades, onClose, onSaved }: {
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => { pararPoll(); onClose() }} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
               {publico ? (
-                <button onClick={adicionarPublico} disabled={salvando || !pubObjeto.trim()} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
+                <button onClick={adicionarPublico} disabled={salvando || !pubObjeto.trim() || (conectorId !== 'pcp' && !pubLink.trim())} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
                   {salvando && <Loader2 size={13} className="animate-spin" />} Monitorar sem login
                 </button>
               ) : (

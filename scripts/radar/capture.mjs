@@ -7,7 +7,7 @@
 import crypto from 'node:crypto'
 import { portalMeta } from './portais.mjs'
 
-export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/acompanhamento'
+export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor'
 
 /** Cifra com AES-256-GCM (mesma convenção de src/lib/radar/crypto.ts): iv:tag:ct base64. */
 export function encrypt(keyHex, plain) {

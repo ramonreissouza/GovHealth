@@ -38,3 +38,19 @@ export function normalizarMensagem(raw, licitacaoId) {
     raw,
   }
 }
+
+/**
+ * Converte horário BR ("10/07/2026 18:50:39" ou "10/07/2026 18:50") em ISO com o
+ * fuso de Brasília (-03:00). O banco grava em TIMESTAMPTZ — sem isso, "23/08/2024"
+ * seria lido como mês 23 e QUEBRARIA o INSERT. Sem casar → null (seguro).
+ *
+ * Vive aqui, e não em um conector, porque TODO portal brasileiro escreve a data
+ * assim: nasceu no PCP e o BLL/BNC usa exatamente o mesmo formato.
+ */
+export function horarioBrParaISO(s) {
+  const m = String(s ?? '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\D+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (!m) return null
+  const [, d, mo, y, h, mi, se] = m
+  const p = (n) => String(n).padStart(2, '0')
+  return `${y}-${p(mo)}-${p(d)}T${p(h)}:${p(mi)}:${p(se || '00')}-03:00`
+}

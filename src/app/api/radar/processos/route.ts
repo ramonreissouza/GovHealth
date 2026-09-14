@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomUUID } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
+import { conectorPublico } from '@/lib/radar/conectores'
 
 export const runtime = 'nodejs'
 
@@ -57,8 +58,10 @@ export async function POST(req: NextRequest) {
   const cnpj = (body.cnpj ?? '').replace(/\D+/g, '')
   const conectorId = body.conectorId ?? 'comprasgov'
   const uf = (body.uf ?? '').trim().toUpperCase().slice(0, 2) || null
-  // No modo público (PCP), a licitação é o próprio objeto/título — não exige nº de controle.
-  const licitacaoId = (body.licitacaoId ?? '').trim() || (conectorId === 'pcp' ? (body.titulo ?? '').trim().slice(0, 120) : '')
+  // Em portal PÚBLICO, a licitação é o próprio objeto/título — não exige nº de controle
+  // (quem adiciona à mão nem sempre tem o número em mãos). Era 'pcp' escrito na regra, e
+  // por isso adicionar um processo do BLL/BNC à mão respondia 400 sem explicar por quê.
+  const licitacaoId = (body.licitacaoId ?? '').trim() || (conectorPublico(conectorId) ? (body.titulo ?? '').trim().slice(0, 120) : '')
   if (!licitacaoId) return NextResponse.json({ error: 'licitacaoId (ou título) obrigatório' }, { status: 400 })
   const id = randomUUID()
   await query(

@@ -14,11 +14,22 @@ import { CONECTORES, licitacaoDoPortal } from '@/lib/radar/conectores'
 const CONECTOR_PADRAO = 'comprasgov'
 const PORTAL_PNCP = 'https://pncp.gov.br/app/editais'
 
-// Todos os conectores partem da mesma verdade (PNCP, o agregador nacional). O link
-// específico de cada portal (BLL/PCP/Licitações-e) entra na etapa 2, junto do
-// mapeamento do id-do-portal — por ora todos apontam para o edital no PNCP.
-function linkDoProcesso(_conectorId: string, numero: string): string {
-  return `${PORTAL_PNCP}?q=${encodeURIComponent(numero)}`
+/**
+ * Link do processo NAQUELE portal.
+ *
+ * Todos os conectores partem da mesma verdade (PNCP, o agregador nacional), e por muito
+ * tempo o link gravado era sempre a busca no PNCP. Para um conector de LOGIN tanto faz —
+ * ele acha os processos pela área do próprio cliente. Para um conector PÚBLICO, não:
+ * ele precisa da página do processo, e uma busca no PNCP não é ela. Enquanto
+ * `link_portal` guardava o link do PNCP, o passo público não tinha por onde começar.
+ *
+ * O PNCP já publica esse endereço em `link_externo`, então basta usá-lo quando a
+ * licitação for mesmo daquele portal — `licitacaoDoPortal` é quem decide. Sem link do
+ * portal, cai no PNCP como antes (e o PCP ainda tem o seu resolvedor no worker).
+ */
+function linkDoProcesso(conectorId: string, c: Pick<Candidato, 'numero_controle_pncp' | 'objeto_compra' | 'link_externo'>): string {
+  if (c.link_externo && licitacaoDoPortal(conectorId, c)) return c.link_externo
+  return `${PORTAL_PNCP}?q=${encodeURIComponent(c.numero_controle_pncp)}`
 }
 
 interface Perfil {
@@ -200,7 +211,7 @@ export async function sincronizarSelecao(
     const conectoresAlvo = [...conectoresBase, ...publicos.filter((id) => licitacaoDoPortal(id, c))]
     for (const conectorId of conectoresAlvo) {
       const id = `${conectorId}:${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
-      const link = linkDoProcesso(conectorId, c.numero_controle_pncp)
+      const link = linkDoProcesso(conectorId, c)
       const ins = await query<{ id: string; novo: boolean }>(
         `INSERT INTO radar_processos
            (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, uf, valor, motivo_match, link_portal, atualizado_em)
@@ -220,7 +231,7 @@ export async function sincronizarSelecao(
     // no nível da licitação evita duplicar quando há vários portais conectados.
     if (inseriuNovo) {
       novos++
-      const link = linkDoProcesso(CONECTOR_PADRAO, c.numero_controle_pncp)
+      const link = linkDoProcesso(CONECTOR_PADRAO, c)
       const razao = termosBatem[0] || produtosBatem[0] || c.categoria_saude || c.uf || 'perfil'
       const assunto = `Nova licitação para o seu perfil: ${titulo.slice(0, 90) || c.numero_controle_pncp}`
       await query(

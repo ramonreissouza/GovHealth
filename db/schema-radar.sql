@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS radar_regras (
   id         TEXT PRIMARY KEY,
   titular_id TEXT,                          -- NULL = built-in global
   user_id    TEXT,
-  tipo       TEXT NOT NULL,                 -- convocacao|negociacao|proposta_ajustada|habilitacao|diligencia|recurso|prazo|cnpj|keyword|qualquer
+  tipo       TEXT NOT NULL,                 -- convocacao|negociacao|proposta_ajustada|habilitacao|diligencia|recurso|prazo|status_processo|resultado_lote|cnpj|keyword|qualquer
   padrao     TEXT,                          -- regex/keyword (para 'keyword')
   prioridade TEXT NOT NULL DEFAULT 'normal',
   ativo      BOOLEAN NOT NULL DEFAULT true,
@@ -181,11 +181,16 @@ CREATE TABLE IF NOT EXISTS radar_auditoria (
 CREATE INDEX IF NOT EXISTS idx_radar_audit_titular ON radar_auditoria (titular_id, criado_em DESC);
 
 -- Seed idempotente dos conectores (espelha src/lib/radar/conectores.ts).
--- Compras.gov.br (login gov.br) e PCP (monitoramento PÚBLICO, sem login) estão
--- disponíveis; BLL/Licitações-e seguem em ETAPA 2 (login/seletores a calibrar).
+-- Compras.gov.br usa login gov.br; PCP, BLL e BNC são lidos pela página PÚBLICA do
+-- processo, sem login. Licitações-e segue em ETAPA 2 (login/seletores a calibrar).
+-- O BNC roda a MESMA aplicação do BLL, em outro domínio — um conector só atende os dois,
+-- mas os ids ficam separados para o cliente ver o nome do portal onde o pregão corre.
 INSERT INTO radar_conectores (id, nome) VALUES
   ('comprasgov',   'Compras.gov.br'),
   ('licitacoes-e', 'Licitações-e (Banco do Brasil)'),
   ('bll',          'BLL — Bolsa de Licitações e Leilões'),
+  ('bnc',          'BNC — Bolsa Nacional de Compras'),
+  ('licitanet',    'Licitanet'),
+  ('ammlicita',    'AMM Licita'),
   ('pcp',          'Portal de Compras Públicas')
 ON CONFLICT (id) DO NOTHING;

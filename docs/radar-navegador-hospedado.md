@@ -262,6 +262,54 @@ o mundo como o host enxerga. A alternativa limpa e excluir
 
 **Na instancia Oracle isto nao existe** — e um problema so desta maquina.
 
+### E o Chromium do steel precisa de OUTRA coisa (13/09/2026)
+
+A mesma interceptacao quebra o login: o Chromium dentro do container mostra
+`NET::ERR_CERT_AUTHORITY_INVALID` para `cnetmobile.estaleiro.serpro.gov.br`. E a
+interceptacao e SELETIVA — medido no mesmo minuto:
+
+```
+www.google.com ............ issuer = Google Trust Services   (limpo)
+cnetmobile.estaleiro...br . issuer = Norton Web/Mail Shield   (interceptado)
+```
+
+A armadilha: **por o certificado no armazem do sistema NAO resolve**. Depois de
+`update-ca-certificates`, o openssl de dentro do container ja dizia
+`Verify return code: 0 (ok)` — e o Chromium continuava recusando. Ele nao le
+`/etc/ssl/certs`; le o banco NSS do usuario que o executa. Sao os DOIS passos:
+
+```bash
+# 1. armazem do sistema (necessario, mas NAO suficiente)
+docker cp norton-uma.crt radar-steel:/usr/local/share/ca-certificates/norton-web-shield.crt
+docker exec radar-steel update-ca-certificates
+
+# 2. o banco NSS, que e o que o Chromium de fato consulta
+docker exec radar-steel sh -c '
+  apt-get update -qq && apt-get install -y -qq libnss3-tools
+  mkdir -p $HOME/.pki/nssdb
+  [ -f "$HOME/.pki/nssdb/cert9.db" ] || certutil -d sql:$HOME/.pki/nssdb -N --empty-password
+  certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "Norton Web Mail Shield" \
+    -i /usr/local/share/ca-certificates/norton-web-shield.crt'
+docker restart radar-steel
+```
+
+> O arquivo exportado do Windows traz a mesma raiz DUAS vezes (LocalMachine e
+> CurrentUser). O Debian exige um certificado por arquivo `.crt` — corte o
+> primeiro bloco antes de copiar.
+
+Medido depois: a pagina carrega com titulo `Compras.gov.br`.
+
+**Isto vive na camada gravavel do container.** `docker restart` preserva;
+`docker rm` ou `docker compose up --force-recreate` apagam, e ai o login volta a
+falhar com a mesma tela. A copia da raiz fica em
+`govhealth-norton-root.pem`, na pasta do usuario.
+
+**O que isto significa de verdade:** enquanto o Radar rodar nesta maquina, o
+login gov.br de um cliente e descriptografado e recriptografado pelo antivirus
+antes de chegar ao SERPRO. O contorno nao cria esse intermediario — ele ja
+existe, e e por isso que o Chromium reclamava. Numa VPS nada disto acontece, e
+esse e o argumento mais forte para sair daqui.
+
 ## 5c. Duas armadilhas na hora de ligar (13/09/2026)
 
 **O projeto na Vercel nao tem Git conectado.** Merge de PR nao publica nada;

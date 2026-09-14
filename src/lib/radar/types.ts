@@ -19,6 +19,8 @@ export type CategoriaRegra =
   | 'diligencia'
   | 'recurso'
   | 'prazo'
+  | 'status_processo'
+  | 'resultado_lote'
   | 'cnpj'
   | 'keyword'
   | 'qualquer'

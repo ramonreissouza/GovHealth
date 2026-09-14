@@ -12,14 +12,20 @@ import fs from 'node:fs'
 import pg from 'pg'
 import net from 'node:net'
 import crypto from 'node:crypto'
-import { criarSessao, idDe, cdpUrlDe, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
+import { criarSessao, idDe, cdpUrlDe, cdpUrlDaSessaoViva, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
 import { encrypt } from './capture.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
+import { PORTAIS } from './portais.mjs'
 
 function loadEnv() {
   try {
     const e = fs.readFileSync('.env.local', 'utf8')
-    for (const k of ['DATABASE_URL', 'RADAR_CRED_KEY', 'RADAR_CONNECT_TOKEN', 'RADAR_CONNECT_PORT', 'RADAR_STEEL_URL', 'RADAR_STEEL_CDP', 'RADAR_STEEL_EMBED_TEMPLATE']) {
+    // RADAR_PUBLIC_URL ESTAVA FORA DESTA LISTA, e era a única essencial de fora.
+    // Consequência: quem subisse o serviço sem exportá-la na mão caía no padrão
+    // `http://localhost:3200` — o iframe do live view apontava para a própria
+    // máquina e só funcionava nela. O aviso existia, na saída de erro, onde
+    // ninguém olha depois que o processo some para o segundo plano.
+    for (const k of ['DATABASE_URL', 'RADAR_CRED_KEY', 'RADAR_CONNECT_TOKEN', 'RADAR_CONNECT_PORT', 'RADAR_PUBLIC_URL', 'RADAR_STEEL_URL', 'RADAR_STEEL_CDP', 'RADAR_STEEL_EMBED_TEMPLATE']) {
       if (process.env[k]) continue
       const m = e.match(new RegExp(`^${k}=(.*)$`, 'm'))
       if (m) process.env[k] = m[1].trim().replace(/^["']|["']$/g, '')
@@ -49,6 +55,37 @@ async function playwright() {
   catch { throw new Error('Playwright não instalado (npx playwright install chromium)') }
 }
 
+// ZERAR O NAVEGADOR ENTRE FORNECEDORES.
+//
+// O steel NÃO reinicia o Chromium a cada `POST /v1/sessions` — ele troca a
+// contabilidade da sessão e segue com o mesmo processo e o mesmo perfil
+// (`--user-data-dir=/tmp/steel-chrome`). Medido em 13/09/2026, logo depois de um
+// fornecedor real conectar: uma sessão NOVA, pedida por OUTRA credencial, já nascia
+// com os 11 cookies do login anterior — `Session_Gov_Br_Prod`, `Govbrid`,
+// `GovbrUid_…`. Ou seja, o segundo fornecedor abriria o iframe já logado como o
+// primeiro, e o `capturar()` — que confere se EXISTE cookie, não DE QUEM ele é —
+// cifraria a sessão do primeiro e a gravaria como credencial do segundo.
+//
+// A `pista-navegador.mjs` não cobre isto: ela impede acesso SIMULTÂNEO, e este
+// vazamento é SEQUENCIAL. São defesas diferentes para riscos diferentes.
+//
+// Zeramos nos dois extremos, de propósito: ao ABRIR (para que o que for capturado
+// tenha vindo, com certeza, do login desta sessão) e ao CAPTURAR (para não deixar
+// sessão autenticada de ninguém esperando o próximo).
+async function limparEstado(ctx, page) {
+  try { await ctx.clearCookies() } catch {}
+  try {
+    const cdp = await ctx.newCDPSession(page)
+    await cdp.send('Network.clearBrowserCookies').catch(() => {})
+    await cdp.send('Network.clearBrowserCache').catch(() => {})
+    await cdp.send('Storage.clearDataForOrigin', { origin: '*', storageTypes: 'all' }).catch(() => {})
+    await cdp.detach().catch(() => {})
+  } catch {}
+  // Abas herdadas também vão embora: a do fornecedor anterior ficou aberta, e uma aba
+  // aberta numa área logada é a mesma exposição por outro caminho.
+  for (const p of ctx.pages()) { if (p !== page) await p.close().catch(() => {}) }
+}
+
 async function marcarSaude(cred, status, detalhe) {
   await q(`INSERT INTO radar_saude (credencial_id,titular_id,conector_id,status,verificado_em,tentado_em,detalhe,atualizado_em)
     VALUES ($1,$2,$3,$4, ${status === 'ok' ? 'now()' : 'NULL'}, now(), $5, now())
@@ -76,7 +113,26 @@ async function iniciar(credencialId) {
 
   let session
   try { session = await criarSessao({}) }
-  catch (e) { soltar(credencialId); return { erro: `falha ao criar a sessão: ${e.message}`, status: 502 } }
+  catch (e) {
+    soltar(credencialId)
+    // "fetch failed"/ECONNREFUSED na 3100 quer dizer UMA coisa só: o container do
+    // navegador não está no ar. Isso é problema NOSSO, e devolver a mensagem crua
+    // ("falha ao criar a sessão: fetch failed") manda o fornecedor procurar defeito
+    // na conta ou na senha dele — que estão perfeitas. Os dois casos pedem reações
+    // opostas: este ele espera, o outro ele reporta. Então têm de ser ditos
+    // diferentes.
+    //
+    // O status continua 502 de propósito: 503 é o código que a tela usa para "o
+    // navegador hospedado não está configurado, caia no fluxo local", e cair no
+    // fluxo local aqui esconderia a queda em vez de mostrá-la.
+    const foraDoAr = /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(String(e.message))
+    if (foraDoAr) {
+      console.error(`[browser-service] steel inacessível em ${STEEL}: ${e.message}`)
+      return { erro: 'navegador indisponível', status: 502,
+        detalhe: 'O navegador que abre o gov.br está fora do ar no nosso lado — não é a sua conta nem a sua senha. Tente de novo em alguns minutos; se persistir, nos avise.' }
+    }
+    return { erro: `falha ao criar a sessão: ${e.message}`, status: 502 }
+  }
   const sessionId = idDe(session)
   const cdp = cdpUrlDe(session)
 
@@ -86,13 +142,22 @@ async function iniciar(credencialId) {
   anotarSessao(credencialId, { sessionId, token })
   const embedUrl = `${PUBLICO}/live/${token}`
 
-  // Abre o gov.br dentro da sessão (para o fornecedor já cair na tela de login).
+  // Abre a TELA DE LOGIN do portal da credencial (não a área autenticada).
+  //
+  // Ia para a `ACOMPANHAMENTO_URL`, que é o destino DEPOIS do login. Como a SPA do
+  // Compras.gov.br não redireciona quem chega sem sessão, o fornecedor caía numa
+  // "Página não encontrada" dentro do iframe — com cadeado verde e tudo, o que fazia
+  // parecer problema de certificado. O registro já tinha a URL certa por portal; era
+  // só usá-la, e assim isto passa a valer para PCP, BLL e os demais também.
+  const portal = PORTAIS[cred.conector_id]
+  const urlDeEntrada = portal?.loginUrl ?? ACOMPANHAMENTO_URL
   try {
     const chromium = await playwright()
     const browser = await chromium.connectOverCDP(cdp)
     const ctx = browser.contexts()[0] ?? (await browser.newContext())
     const page = ctx.pages()[0] ?? (await ctx.newPage())
-    await page.goto(ACOMPANHAMENTO_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
+    await limparEstado(ctx, page) // ANTES de navegar — ver o comentário em limparEstado
+    await page.goto(urlDeEntrada, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
     await browser.close() // desconecta do CDP; a sessão steel continua viva
   } catch (e) {
     await encerrarSessao(sessionId).catch(() => {})
@@ -131,13 +196,36 @@ async function capturar(credencialId) {
   try {
     const chromium = await playwright()
     // Reconecta ao mesmo browser do steel para ler o estado autenticado.
-    const cdp = process.env.RADAR_STEEL_CDP || 'http://localhost:9223'
-    const browser = await chromium.connectOverCDP(cdp)
+    // NÃO use o endpoint CDP cru aqui: ver `cdpUrlDaSessaoViva()` em steel.mjs. O
+    // `iniciar()` já rebaseava e por isso funcionava; esta linha ficou para trás e
+    // derrubava a captura DEPOIS de o fornecedor ter digitado senha e 2FA.
+    const browser = await chromium.connectOverCDP(await cdpUrlDaSessaoViva())
     const ctx = browser.contexts()[0]
     if (!ctx) { await browser.close(); return { erro: 'sessão sem contexto ativo', status: 502 } }
+    // PASSAR PELA ÁREA ANTES DE GUARDAR.
+    //
+    // O login acontece em `www.comprasnet.gov.br` + `sso.acesso.gov.br`, mas o que o
+    // monitor precisa ler vive em `cnetmobile.estaleiro.serpro.gov.br` — outro domínio,
+    // outra sessão. Medido em 13/09/2026: o cofre saía com 11 cookies e NENHUM deles
+    // daquele host, e o monitor batia em "acesso não autorizado" achando que a sessão
+    // do fornecedor tinha expirado.
+    //
+    // Navegar até a área faz o próprio portal completar a troca e assentar os cookies
+    // do domínio certo. De quebra, dá conteúdo renderizado para o teste de `logado()`.
+    const pagInicial = ctx.pages()[0] ?? (await ctx.newPage())
+    const area = PORTAIS[cred.conector_id]?.areaUrl
+    if (area) {
+      await pagInicial.goto(area, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {})
+      await pagInicial.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
+    }
+
     const url = ctx.pages()[0]?.url() ?? ''
     const estado = await ctx.storageState()
     const storageState = JSON.stringify(estado)
+    // Lido o cofre, o navegador não guarda mais nada de ninguém. Se falhar daqui para
+    // baixo, o pior caso é o fornecedor refazer o login — nunca outro herdar a sessão.
+    const pagina = ctx.pages()[0]
+    if (pagina) await limparEstado(ctx, pagina)
     await browser.close()
 
     // URL NÃO PROVA LOGIN — e este projeto já pagou por isso uma vez (o falso
@@ -206,16 +294,61 @@ function alvoDoLive(caminhoRestante) {
   return caminhoRestante && caminhoRestante !== '/' ? caminhoRestante : '/v1/sessions/debug'
 }
 
-function repassar(req, res, caminho) {
+// O HTML do player traz o endereço do websocket CRAVADO, com o endereço interno do
+// container — medido em 13/09/2026:
+//
+//     const baseWsUrl = 'ws://0.0.0.0:3000/v1/sessions/cast';
+//
+// O `rebasear()` do steel.mjs não alcança isto: ele conserta as URLs que a API do steel
+// DEVOLVE, e esta vem dentro do corpo da página. Sem reescrever, o navegador do
+// fornecedor tenta abrir um websocket para 0.0.0.0 (que não existe) e ainda em `ws://`
+// dentro de uma página https — o player carrega e fica "Session not connected".
+//
+// As queries são anexadas depois (`?tabInfo=true`, `?pageId=…`), então basta trocar a
+// base: o proxy de upgrade já preserva pathname + search.
+export function reescreverPlayer(html, token, publico = PUBLICO) {
+  const base = new URL(publico)
+  const prefixo = `${base.host}/live/${token}`
+  const seguro = base.protocol === 'https:'
+  return html
+    .replace(/wss?:\/\/(?:0\.0\.0\.0|localhost|127\.0\.0\.1):3000/g, `${seguro ? 'wss:' : 'ws:'}//${prefixo}`)
+    .replace(/https?:\/\/(?:0\.0\.0\.0|localhost|127\.0\.0\.1):3000/g, `${base.protocol}//${prefixo}`)
+}
+
+function repassar(req, res, caminho, token) {
   const alvo = new URL(STEEL + caminho)
+  // Host reescrito: o steel responde para si mesmo, não para o hostname do túnel.
+  const cabecalhos = { ...req.headers, host: alvo.host }
+  // O token interno NÃO segue para o steel. Atenção: `{'x-radar-token': undefined}`
+  // NÃO remove o cabeçalho — o Node tenta escrever o valor e lança
+  // ERR_HTTP_INVALID_HEADER_VALUE, de forma SÍNCRONA, antes de existir listener de
+  // 'error'. Era uma queda do processo inteiro no primeiro live view legítimo: o
+  // porteiro recusava link inválido com 403 sem chegar aqui, então só quebrava quando
+  // um token VÁLIDO passava — isto é, exatamente quando um cliente conectava.
+  delete cabecalhos['x-radar-token']
+  // Pedimos sem compressão: precisamos LER o HTML do player para reescrevê-lo, e
+  // descomprimir aqui só para recomprimir depois seria trabalho à toa.
+  delete cabecalhos['accept-encoding']
   const r = http.request({
     hostname: alvo.hostname, port: alvo.port || 80, path: alvo.pathname + alvo.search,
     method: req.method,
-    // Host reescrito: o steel responde para si mesmo, não para o hostname do túnel.
-    headers: { ...req.headers, host: alvo.host, 'x-radar-token': undefined },
+    headers: cabecalhos,
   }, (resp) => {
-    res.writeHead(resp.statusCode ?? 502, resp.headers)
-    resp.pipe(res)
+    // Só o HTML precisa de reescrita. Todo o resto (imagens, js, o que for) passa
+    // direto, sem ficar na memória.
+    if (!String(resp.headers['content-type'] ?? '').includes('text/html')) {
+      res.writeHead(resp.statusCode ?? 502, resp.headers)
+      return resp.pipe(res)
+    }
+    const pedacos = []
+    resp.on('data', (d) => pedacos.push(d))
+    resp.on('end', () => {
+      const html = reescreverPlayer(Buffer.concat(pedacos).toString('utf8'), token)
+      const cab = { ...resp.headers, 'content-length': Buffer.byteLength(html) }
+      res.writeHead(resp.statusCode ?? 502, cab)
+      res.end(html)
+    })
+    resp.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end() })
   })
   r.on('error', (e) => { if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end(`live view indisponível: ${e.message}`) })
   req.pipe(r)
@@ -231,7 +364,15 @@ const server = http.createServer(async (req, res) => {
     const [, , tok, ...resto] = req.url.split('/')
     const dono = donoDoToken((tok ?? '').split('?')[0])
     if (!dono) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('sessão expirada ou link inválido') }
-    return repassar(req, res, alvoDoLive('/' + resto.join('/')))
+    // Rede de proteção: um defeito aqui NÃO pode derrubar o serviço. Este caminho é o
+    // único aberto à internet, e quem paga a queda é o fornecedor no meio do login.
+    try {
+      return repassar(req, res, alvoDoLive('/' + resto.join('/')), (tok ?? '').split('?')[0])
+    } catch (e) {
+      console.error('[browser-service] live view:', e)
+      if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
+      return res.end('live view indisponível')
+    }
   }
 
   if (req.method !== 'POST') return send(405, { erro: 'method' })
