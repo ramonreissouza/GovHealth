@@ -1,0 +1,91 @@
+# deploy/radar/docker-compose.vps.yml — a pilha do Radar numa VPS.
+#
+#   docker compose -f deploy/radar/docker-compose.vps.yml up -d --build
+#
+# Diferença para o docker-compose.radar.yml da raiz (que é o de desenvolvimento, na
+# máquina do operador): aqui o steel NÃO publica porta nenhuma, entra um nginx com TLS
+# e o browser-service vira imagem, em vez de processo solto no host. Com hostname fixo
+# e certificado, o túnel deixa de existir — e some junto a armadilha de ele sortear um
+# endereço novo a cada reinício, que é o que derrubou o login em 14/09/2026.
+
+name: radar
+
+services:
+  # ── O navegador. Nunca exposto. ─────────────────────────────────────────────
+  steel:
+    image: ghcr.io/steel-dev/steel-browser:latest
+    container_name: radar-steel
+    restart: unless-stopped
+    networks: [interna]
+    # SEM `ports:`. De propósito, e é a linha mais importante deste arquivo.
+    #
+    # O live view do steel é, por desenho dele, sem autenticação nenhuma, numa rota
+    # fixa e sem id. Publicar a porta — mesmo "só para o nginx" — poria na internet
+    # uma URL que DIRIGE um navegador logado no gov.br de um cliente. Pior: o Docker
+    # escreve a regra direto no iptables e PASSA POR CIMA do firewall da nuvem, então
+    # um `ufw deny` não salvaria. Sem `ports`, ele só existe dentro da rede `interna`.
+    environment:
+      - NODE_ENV=production
+    # O Chromium usa memória compartilhada para renderizar; o padrão do Docker é 64MB
+    # e ele morre em páginas pesadas — o gov.br é pesada. A aba branca que o fornecedor
+    # veria não diria "faltou /dev/shm" em lugar nenhum.
+    shm_size: 1gb
+    # Um navegador com vazamento não pode levar a instância junto.
+    mem_limit: 2g
+
+  # ── O serviço que fala com o steel e guarda a sessão cifrada ────────────────
+  browser-service:
+    build:
+      # Contexto = raiz do repo: o serviço vive em scripts/radar.
+      context: ../..
+      dockerfile: deploy/radar/Dockerfile
+    image: govhealth/radar-browser-service:1
+    container_name: radar-browser-service
+    restart: unless-stopped
+    networks: [interna]
+    depends_on: [steel]
+    # DATABASE_URL, RADAR_CRED_KEY, RADAR_CONNECT_TOKEN e RADAR_PUBLIC_URL vêm daqui.
+    # O serviço recusa subir sem os três primeiros (exit 1), o que é o comportamento
+    # certo: melhor não subir do que subir sem cofre.
+    env_file: [.env]
+    environment:
+      # Nomes de serviço da rede interna, não localhost. A porta é a INTERNA do steel
+      # (3000), não a 3100 do desenvolvimento — aquela era só o mapeamento para o host.
+      - RADAR_STEEL_URL=http://steel:3000
+      - RADAR_STEEL_CDP=http://steel:9223
+      - RADAR_CONNECT_PORT=3200
+    mem_limit: 512m
+
+  # ── A porta de entrada: TLS, WebSocket e lista de rotas permitidas ──────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: radar-nginx
+    restart: unless-stopped
+    networks: [interna]
+    depends_on: [browser-service]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/radar.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    # Recarrega a configuração de tempos em tempos para pegar certificado renovado sem
+    # derrubar conexão: um `docker restart` no meio de um login mataria o iframe.
+    command: >
+      sh -c "while :; do sleep 12h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+
+  # ── Renovação do certificado ────────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    container_name: radar-certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: >
+      sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
+networks:
+  interna:
+    driver: bridge

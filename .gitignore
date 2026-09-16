@@ -2,6 +2,17 @@
 node_modules/
 .env.local
 .env*.local
+# `.env` PURO, em qualquer pasta — o buraco que faltava.
+#
+# As duas linhas acima cobrem `.env.local` e `.env.producao.local`, mas NÃO um
+# arquivo chamado só `.env` — e é exatamente esse o nome que o compose da VPS lê
+# (deploy/radar/.env), o arquivo que carrega DATABASE_URL e a RADAR_CRED_KEY, a
+# chave que decifra a sessão gov.br de todos os clientes. Este repositório é
+# público e já tem seis senhas de produção no histórico; não vamos repetir.
+#
+# Sem barra, o padrão vale em qualquer profundidade. Não afeta `.env.exemplo`
+# nem `.env.local.example`, que são modelos sem segredo e seguem versionados.
+.env
 out/
 build/
 dist/

@@ -148,6 +148,12 @@ por mês). Vale mais que esperar sorteio quando há cliente parado.
 
 ## 5. Subir
 
+> **Há dois caminhos.** O desta seção é o **manual com túnel**, que foi como isto
+> nasceu e continua valendo para desenvolvimento na máquina do operador. Para VPS,
+> prefira a **seção 8** (pilha em Docker com nginx e hostname fixo): ela elimina o
+> túnel, e com ele a armadilha de sortear endereço novo a cada reinício — que foi o
+> que derrubou o login em 14/09/2026.
+
 Na instância nova (Ubuntu):
 
 ```bash
@@ -358,3 +364,111 @@ página de detalhes de sessão (isso era o defeito do `sessionViewerUrl`).
   a aba no meio do login não trancar a fila para sempre.
 - O `capturar()` reconecta pelo CDP global. Funciona porque há um navegador só — se um
   dia houver mais de uma sessão, isto precisa passar a usar o `websocketUrl` da sessão.
+
+---
+
+## 8. A pilha em Docker na VPS (o caminho recomendado)
+
+Tudo em `deploy/radar/`. O que muda em relação à seção 5: o steel deixa de publicar
+porta, entra um **nginx com TLS** na frente, o browser-service vira **imagem** em vez
+de processo solto — e **não há mais túnel**.
+
+| arquivo | o que é |
+|---|---|
+| `Dockerfile` | imagem do browser-service (~268MB) |
+| `package.json` | as duas dependências dele (`pg`, `playwright`) |
+| `docker-compose.vps.yml` | steel + browser-service + nginx + certbot |
+| `nginx/radar.conf` | TLS, WebSocket, `frame-ancestors`, lista de rotas |
+| `.env.exemplo` | modelo do `.env` (que fica **só na VPS**) |
+
+### Por que a imagem não tem Chromium
+
+A tentação é partir de `mcr.microsoft.com/playwright` (~2GB), porque o serviço importa
+Playwright. Mas ele **nunca abre navegador**: as duas únicas chamadas são
+`chromium.connectOverCDP(...)` — ele se conecta ao Chromium que já roda dentro do
+container do steel. Um segundo Chromium não seria só peso morto: numa instância de 6GB
+ele disputaria memória com o navegador que de fato importa, e em falta de memória o
+kernel mata o maior RSS. Daí `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, e 268MB em vez de 2GB.
+
+A imagem copia **cinco arquivos**, não `scripts/` inteiro — conferido pelo grafo de
+imports: `browser-service` → `steel`, `capture`, `pista-navegador`, `portais`; e
+`capture` → `portais`. O worker e o ETL não têm o que fazer aqui.
+
+### As três decisões do nginx
+
+1. **O steel não aparece na configuração.** Não é esquecimento: o live view dele é, por
+   desenho, "intentionally unauthenticated for fast embeds", numa rota fixa e sem id.
+   Quem alcançar a porta dele **dirige** um navegador logado no gov.br de um cliente.
+   No compose ele não tem `ports:` — e isso importa mais do que parece, porque o Docker
+   escreve regra direto no iptables e **passa por cima do firewall da nuvem**: um
+   `ufw deny` não salvaria.
+2. **`frame-ancestors`, nunca `X-Frame-Options`.** Pôr `DENY`/`SAMEORIGIN` mataria o
+   produto — o live view existe para ser embutido pela aplicação. `frame-ancestors`
+   nomeia a origem permitida em vez de proibir todas. Sem isso, qualquer site poderia
+   embutir a tela de login do gov.br do seu cliente e capturar o que ele digita por
+   cima.
+3. **Tempos longos em `/live/`.** Do outro lado há uma pessoa digitando CPF, senha e
+   2FA, com o 2FA às vezes esperando SMS. O padrão de 60s cortaria o login no meio, e a
+   tela congelaria sem erro nenhum.
+
+### Passo a passo
+
+```bash
+# 1. na VPS (Ubuntu), docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
+
+# 2. repo + segredos (NUNCA commitados — `.env` puro entrou no .gitignore)
+git clone <repo> govhealth && cd govhealth/deploy/radar
+cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
+
+# 3. o hostname, em 3 lugares do nginx/radar.conf + a origem do app em frame-ancestors
+sed -i 's/radar.EXEMPLO.com.br/radar.SEUDOMINIO.com.br/g' nginx/radar.conf
+
+# 4. certificado (antes do nginx subir com ssl, senão ele não carrega)
+mkdir -p certbot/www certbot/conf
+docker run --rm -p 80:80 -v "$PWD/certbot/conf:/etc/letsencrypt" \
+  certbot/certbot certonly --standalone -d radar.SEUDOMINIO.com.br \
+  --agree-tos -m voce@dominio --no-eff-email
+
+# 5. subir
+docker compose -f docker-compose.vps.yml up -d --build
+```
+
+Na Vercel, trocar as duas envs e **refazer o deploy** (`RADAR_EMBED_ORIGIN` entra na
+CSP em tempo de build):
+
+```
+RADAR_CONNECT_URL  = https://radar.SEUDOMINIO.com.br
+RADAR_EMBED_ORIGIN = https://radar.SEUDOMINIO.com.br
+```
+
+E o mesmo hostname vai em `RADAR_PUBLIC_URL` no `.env` da VPS — é com ele que o serviço
+reescreve o endereço do websocket cravado no HTML do player. Errado ali, o player
+carrega e fica "Session not connected", sem erro em lugar nenhum.
+
+### Conferir
+
+```bash
+# o serviço responde, e os três porteiros funcionam
+curl -s -o /dev/null -w "%{http_code}\n" https://radar.SEUDOMINIO.com.br/            # 404 (nginx)
+curl -s -o /dev/null -w "%{http_code}\n" https://radar.SEUDOMINIO.com.br/live/nada   # 403
+curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+     https://radar.SEUDOMINIO.com.br/session                                          # 401
+
+# o steel NÃO pode responder de fora — as duas devem falhar/estourar o tempo
+curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://<ip-da-vps>:3100/v1/sessions
+curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://<ip-da-vps>:9223/json/version
+```
+
+Verificado em 14/09/2026, antes de existir VPS: a imagem constrói (268MB), recusa subir
+sem cofre (`ERRO: DATABASE_URL não configurada`), responde **405** em `GET /`, **401**
+em `POST /session` sem token e **403** em `/live/<inválido>`; o `HEALTHCHECK` marca
+`healthy`; `nginx -t` passa; `docker compose config` valida.
+
+### O que esta seção NÃO cobre
+
+O **worker** (`npm run radar:sync`) continua na máquina do operador. Ele é outro
+problema: precisa de Chromium de verdade para os conectores públicos, roda por
+agendamento e não por HTTP, e por isso pede imagem própria. Mover o worker é uma
+decisão separada desta.
