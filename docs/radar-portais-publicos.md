@@ -501,3 +501,113 @@ ser o mais barato e o de melhor aproveitamento, não por volume.
 ```bash
 npm run radar:comprasbr:teste
 ```
+
+## Onda 3 — sondada em 16/09/2026, e fechada inteira
+
+A lista de candidatos da Onda 3 era ASJB/Sergipe, Bahia + Pernambuco como bloco, e
+Fiorilli. Os três foram sondados contra os servidores reais. **Nenhum vira conector**, e
+os motivos são diferentes o bastante para valerem registro — nenhum deles aparecia na
+medição que os elegeu.
+
+| candidato | abertas hoje nas UFs de cliente | veredito |
+|---|---:|---|
+| ASJB (Sergipe) | 33 | **vitrine** — a disputa corre no Licitanet |
+| Pernambuco (PE Integrado) | 43 | **servidor recusa conexão**, em duas redes |
+| Bahia (Comprasnet.BA) | 35 | **vitrine** — a disputa corre no Licitações-e BB |
+| Fiorilli | 83 (61 "com link") | link é **PDF do edital ou listagem**, 21 domínios |
+
+### Vitrine não é portal de disputa
+
+ASJB e Bahia caíram pelo mesmo motivo, e é um padrão novo que vale nomear. Os dois são
+portais de **publicação**: mostram edital, anexos, responsável e prazos — e mandam o
+fornecedor para outro lugar quando a sessão abre.
+
+- `aracajucompras.se.gov.br` responde bem (o `sistema.comprasnet.se.gov.br` não responde,
+  mas é a mesma aplicação, então isso não decide nada). Em 9 de 9 pregões eletrônicos da
+  amostra, o campo é **"Local de realização: Licitanet"**. O único conteúdo de
+  esclarecimento na página são PDFs anexados depois do fato
+  (`Pedidos_e_Respostas_de_Esclarecimentos_PE_107-2025.pdf`), e o único link para o
+  Licitanet é a **home**, sem id de sessão.
+- `comprasnet4.ba.gov.br` tem consulta pública de "Acompanhamentos" sem login e sem
+  captcha (POST em `/consultas/Licitacao/ListaEditais.asp`, detalhe em
+  `ExibirLicitacao.asp?txtNumeroAvisoLicitacao=<id>`). A página do processo traz
+  **"Local da Realização: https://licitacoes-e2.bb.com.br/"** e não tem seção de
+  comunicação nenhuma.
+
+Ou seja: os 68 processos somados de ASJB e Bahia **já correm em plataformas que
+conhecemos**. O Licitanet nós lemos; o Licitações-e está fechado por medição da Onda 1.
+O que falta não é conector, é **resolver a vitrine até a sessão** — e nem o ASJB nem o
+Licitanet oferecem isso publicamente (o `/api/processos` do Licitanet redireciona para
+`/login`).
+
+O `comprasnet.ba.gov.br` principal e todos os hostnames do PE Integrado recusam conexão
+na 443 tanto da máquina daqui quanto de uma segunda rede independente — não é bloqueio a
+nós, é servidor fora. O `comprasnet4` é o que sobrou de pé da Bahia, e só serve `/consultas/`.
+
+### Uma terceira forma do mesmo erro de régua
+
+O teste "o link tem caminho?" estava escrito assim:
+
+```
+^(?:https?://)?[^/]+/.+
+```
+
+e aprova **qualquer** url com `://`. O grupo opcional não casa, `[^/]+` engole `http:`, e
+o `.+` engole o host inteiro. Foi o que fez o Ceará aparecer com 114 links úteis tendo
+**zero** — ele publica só `http://comprasgovernamentais.gov.br/`.
+
+A régua correta tira o esquema **antes** de testar:
+
+```sql
+regexp_replace(link_externo, '^https?://', '') ~ '^[^/]+/.+'
+```
+
+Isso é a terceira vez que a mesma pergunta é respondida errado — primeiro pela coluna
+(`link_externo` em vez de `usuario_nome`), depois pelo link sem caminho (BR Conectado), e
+agora pela régua do caminho. Por isso ela deixou de ser algo que eu lembro e virou código.
+
+## `npm run radar:cobertura`
+
+`scripts/radar/cobertura-portais.mjs` responde "quanto do que está aberto HOJE o Radar
+alcança, e quem falta", com as três correções embutidas. Rode **antes** de decidir
+escrever qualquer conector.
+
+Três coisas que ele faz de propósito:
+
+- **Confere a própria régua antes de imprimir.** Roda os quatro casos em JS e em SQL e
+  aborta se divergirem — uma tabela com a régua furada é pior que nenhuma tabela.
+- **Conta quantos processos estão cobertos, não se algum está.** Com `bool_or`, o IMAP
+  aparecia como "ligado" porque 2 dos seus 66 caem num domínio coberto.
+- **Calcula o fecho.** Se sobrar sistema com link útil e sem veredito, ele manda sondar em
+  vez de declarar que acabou. Foi assim que o **M2A** apareceu: a conclusão anterior dizia
+  "não há mais nada" com duas linhas alcançáveis na própria tabela.
+
+"Aberta hoje" aqui é `data_encerramento_proposta >= current_date`. Não é a régua de
+aberto/encerrado do produto (ausência em `resultados`), que conta processo de 2024 sem
+resultado lançado e infla os números em cerca de 40x.
+
+### O que sobrou vivo: M2A tecnologia
+
+23 abertas hoje, todas no **Ceará**, um domínio, objeto de saúde. Tem lista **pública em
+JSON** — `/processos/tabela/?search=&regiao=&uf=&municipio=&modalidade=&todos=1&modo_disputa=&situacao=&page=1`,
+sem token — e o guid de cada processo é o mesmo guid que o PNCP publica no link.
+
+O limite é honesto: a página do processo mostra situação (`Recebendo propostas`,
+`Suspenso`, `Revogado`, `Anulado`…) e o **prazo** de impugnação e esclarecimento, mas o
+**teor do pedido exige login**. Daria um conector de **ruptura**, no mesmo molde da
+mensagem de status do Compras BR — não um conector de chat. É decisão de produto se vale.
+
+### Onde a cobertura pode crescer daqui
+
+Medido em 16/09/2026, nas UFs de cliente e só no que está aberto hoje:
+
+| caminho | processos | custo |
+|---|---:|---|
+| Licitações-e BB, **com login do cliente** | 96 | conector já existe; falta a conta conectada |
+| BBMNET, com login | 91 | conector novo + login |
+| M2A, público, **só ruptura** | 23 | conector novo, leitura barata (1 JSON) |
+| conector público novo de chat | **0** | não existe candidato |
+
+A última linha é o resultado principal desta onda: **não há mais portal público, alcançável
+e com chat** por escrever nas UFs onde há cliente. O crescimento daqui vem de login ou de
+resolver vitrine → plataforma, não de mais um conector público.
