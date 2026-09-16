@@ -1,0 +1,10 @@
+{
+  "name": "govhealth-radar-browser-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependencias do browser-service do Radar. DUAS, de proposito: ele so fala com o steel por HTTP (pg) e por CDP (playwright). Manter as faixas iguais as do package.json da raiz.",
+  "dependencies": {
+    "pg": "^8.21.0",
+    "playwright": "^1.61.1"
+  }
+}

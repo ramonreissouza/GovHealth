@@ -10,6 +10,10 @@ import { sync as bnc } from './connector-bnc.mjs'
 import { sync as licitanet } from './connector-licitanet.mjs'
 import { sync as ammlicita } from './connector-ammlicita.mjs'
 import { sync as pcp } from './connector-pcp.mjs'
+// Compras RS e Pregão Banrisul: mesma aplicação, dois ids — um conector só, amarrado ao
+// id para que o `detalhe` e a saúde na tela citem o portal certo.
+import { syncEgovRs, syncBanrisul } from './connector-egovrs.mjs'
+import { sync as comprasbr } from './connector-comprasbr.mjs'
 
 export const CONECTORES = {
   comprasgov,
@@ -19,6 +23,9 @@ export const CONECTORES = {
   licitanet,
   ammlicita,
   pcp,
+  egovrs: syncEgovRs,
+  banrisul: syncBanrisul,
+  comprasbr,
 }
 
 /** Função de sync de um conector, ou null se desconhecido. */

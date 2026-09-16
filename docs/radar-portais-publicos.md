@@ -212,3 +212,292 @@ O que esperar de uma passada saudável — e como ler cada estado:
 | `k página(s) não lida(s)` | falha parcial, contada e dita |
 | `nenhuma das N página(s) pôde ser lida` (status `falha`) | o portal mudou — **nunca** vira "sem novidades" |
 | `k compra(s) direta(s) sem quadro de mensagens` | não é falha: aquela tela não tem chat |
+
+---
+
+# Onda 2 — medida antes de escrita (15/09/2026)
+
+## A primeira medição da Onda 2 estava ERRADA — e o erro foi meu, não do backlog
+
+> **Correção registrada em 15/09/2026.** A versão anterior desta seção afirmava que
+> Betha, IPM, GovernançaBrasil, Megasoft, GOVTEC e Elotech tinham **0 licitações** na base
+> e concluía que a Onda 2 era "categoria errada". **As duas coisas eram falsas.** Fica
+> escrito porque o erro é instrutivo e pode se repetir.
+
+O que aconteceu: a busca foi feita por `link_externo`. Essas casas **não publicam link
+nenhum** — então voltaram zeradas, e o zero foi lido como ausência em vez de como
+ausência de URL. Procurando pelo campo certo (`usuario_nome`, que o PNCP preenche), elas
+são das maiores da base:
+
+| casa de software | licitações (180d) | abertas hoje | % com `link_externo` |
+|---|---:|---:|---:|
+| Betha Sistemas | 3.890 | 136 | **0%** |
+| IPM Sistemas | 3.880 | 358 | **0%** |
+| GovernançaBrasil | 3.714 | 157 | **0%** |
+| Megasoft Informática | 3.589 | 98 | **0%** |
+| GOVTEC | 2.499 | — | **0%** |
+| Elotech | 2.022 | 96 | **0%** |
+| E & L Produções | 1.519 | 61 | **0%** |
+| SMARAPD | 1.407 | 56 | **0%** |
+
+Confirmado na fonte, não inferido: o endpoint de consulta do PNCP
+(`/api/consulta/v1/orgaos/{cnpj}/compras/{ano}/{sequencial}`) **tem** o campo
+`linkSistemaOrigem`, e para essas casas ele vem `""`, `" "` ou `null`. O PNCP oferece o
+lugar; quem publica é que deixa vazio.
+
+**Regra que fica:** antes de concluir que um portal não existe na base, medir por
+`usuario_nome`, não por `link_externo`. O primeiro diz *quem* publicou; o segundo, só
+*onde* — e "onde" é exatamente o que falta nos casos difíceis.
+
+### Por que, ainda assim, elas continuam fora
+
+O motivo real não é volume, é **endereço**. Para ler a página de um processo é preciso
+saber onde ela está, e para essas casas não há de onde tirar isso:
+
+- o PNCP não publica (acima);
+- não há portal central: `farroupilha.atende.net` (IPM) responde, mas é **um subdomínio
+  por município** — seriam 129 domínios só para o IPM, descobertos um a um;
+- e o que responde é SPA: a página de licitações do Atende.Net não renderiza nada sem
+  navegador.
+
+A descoberta seria O(municípios), não O(portais) — outra ordem de grandeza do resolvedor
+do PCP, que tem uma API de busca única para um portal só. Elas ficam fora **por custo de
+descoberta**, com o motivo certo desta vez.
+
+## O que realmente sobrou sem cobertura
+
+Hosts com pregão ABERTO hoje que nenhum conector atende — aberto é o que importa, porque
+chat de processo encerrado não muda decisão nenhuma:
+
+| host | total | abertas | veredito |
+|---|---:|---:|---|
+| `app2.licitardigital.com.br` | 5.889 | 399 | **bloqueado** — `Cf-Mitigated: challenge`, ressondado em 15/09/2026 e segue fechado |
+| `licitacoes-e2.bb.com.br` | 5.552 | 181 | sem chat público (Onda 1) |
+| `sai.io.org.br` | 2.504 | 62 | **só repositório de arquivos** |
+| **`comprasbr.com.br`** | 329 | 54 | **ligado** — a página é inútil, a API não (ver abaixo) |
+| `www.transparencia.pr.gov.br` | 6.107 | 53 | portal de transparência, não de disputa |
+| `www1.compras.mg.gov.br` | 2.186 | 47 | estadual — candidato de Onda 3 |
+| `www.compras.rj.gov.br` | 2.516 | 42 | estadual — candidato de Onda 3 |
+| **`pregaobanrisul.com.br`** | 1.231 | 39 | **ligado** |
+| `www.peintegrado.pe.gov.br` | 3.497 | 38 | estadual — candidato de Onda 3 |
+| **`www.compras.rs.gov.br`** | 1.741 | 28 | **ligado** |
+
+Cobertura de pregões abertos antes da Onda 2: **3.990 de 7.467 (53,4%)** — contando o
+Compras.gov.br, que é conector de LOGIN e enxerga pela área do próprio cliente, sem
+precisar de link.
+
+Outros 2.286 (31%) não têm `link_externo` nenhum. **Atenção ao que isso significa e ao que
+não significa**: 2.284 desses 2.286 *têm* `usuario_nome`, então sabemos perfeitamente de
+quem são — são as casas de software da seção anterior. Não é anonimato, é falta de
+endereço. O teto não é "não sabemos de quem é"; é "não há para onde ir".
+
+### Onde medir a cobertura muda a resposta
+
+O ranking nacional engana. Restringindo às UFs em que há cliente ativo (RN, SP, GO, PB,
+PE, MT, BA, CE, AL, SE), o quadro se inverte:
+
+| | abertas | cobertas |
+|---|---:|---:|
+| Brasil | 7.467 | 3.990 (53,4%) |
+| **Só UFs de cliente** | 3.130 | **1.838 (58,7%)** |
+
+O maior gap do país — Licitar Digital, 393 abertas — **nem aparece no top 12 das UFs de
+cliente**: é plataforma do Sul/Sudeste, como IPM, Betha e GovernançaBrasil. O mesmo vale,
+com desconforto, para o eGov RS que ligamos: **0 abertas** nas UFs de cliente.
+
+Os gaps que de fato pesam para quem paga hoje são outros: Licitações-e BB (105), BBMNET
+(101), Fiorilli (85), Megasoft (84), BR Conectado (75), Bahia (46), Pernambuco (43) e
+ASJB/Sergipe (37).
+
+### BR Conectado: por que parecia o melhor e não era
+
+Ele encabeçou a lista de "vale a pena" por um motivo que não sobreviveu à conferência:
+100% das suas licitações têm `link_externo`. Só que **os 3.461 links são domínio puro, sem
+caminho** — `http://www.portaldecomprascodo.com.br`, sem id de processo — espalhados por
+**257 domínios**. O link existe e não leva a lugar nenhum. É o mesmo problema de descoberta
+das casas de software, disfarçado de link.
+
+Fica a regra: `pct_com_link` não basta; é preciso conferir se o link tem **caminho**.
+Aplicado aos candidatos, isso reduz a lista a dois — Compras BR (1 domínio, 329 com
+caminho) e ASJB/Sergipe (3 domínios, 1.767 com caminho, servidor fora do ar na sondagem de
+15/09).
+
+O `sai.io.org.br` merece nota porque parecia promissor e não era: ele **redireciona para o
+domínio da própria prefeitura** mantendo a rota
+(`lafaietecoutinho.ba.gov.br/site/licitacao/…`), o padrão "um app, muitos domínios" que já
+rendeu BLL/BNC. Mas a seção "Fases externas" é uma lista de anexos (processo
+administrativo, edital) — não há comunicação de certame.
+
+## eGov RS (Compras RS + Pregão Banrisul) — ligado
+
+Mesma aplicação em dois domínios, terceiro caso do padrão depois de BLL/BNC e AMM/Licitar
+Digital. A rota do edital é idêntica nos dois — `/editais/<numero>_<ano>/<idOffer>` — e a
+página do Banrisul aponta, nela mesma, para `compras.rs.gov.br/egov2/…`. Dois ids no
+catálogo (`egovrs`, `banrisul`), um conector só (`connector-egovrs.mjs`).
+
+### O que se lê
+
+A **ata de esclarecimentos e impugnações**, em
+`egov2/offer/offerPetition/electronicRecord.ctlx?idOfferFiltered=<idOffer>`. Não é aviso de
+que houve pergunta: é a pergunta inteira, a resposta inteira, quem respondeu, quando, e no
+caso de impugnação o **julgamento**. Capturado sem login em 15/09/2026 (edital 0038/2026,
+Veranópolis/RS):
+
+```
+Esclarecimento nº 34335 — "os serviços de Enfermeiro e Técnico de Enfermagem foram
+   desmembrados do objeto (…) e passaram a compor procedimento licitatório próprio
+   (Pregão Eletrônico nº 039/2026)"  — LILIA RECHE CENCI, 10/07/2026 13:34
+Impugnação nº 34428 — Julgamento: Negado — 21/07/2026 15:53
+```
+
+É o conteúdo mais decisivo dos portais públicos ligados até aqui: muda proposta, não só
+avisa que algo aconteceu.
+
+### O que este conector se recusa a ler
+
+A mesma página oferece a **Ata Eletrônica** (`acessarAtaEletronica.ctlx`), que traria a
+sessão de lances inteira. Ela está atrás de uma validação que o próprio portal explica:
+*"Esta validação ajuda o Portal de Compras a evitar consultas por programas automáticos
+(robôs)"*. É desafio anti-robô, e o Radar não contorna desafio anti-robô (requisito 4.2 +
+ToS) — o mesmo motivo de o Licitar Digital estar fora. Só a ata de esclarecimentos entra, e
+ela é aberta: **37 de 37** processos sondados responderam 200 sem cookie, sem `siteContext`
+e sem validação nenhuma.
+
+### Não usa navegador — e é isso que muda o teto
+
+A página é HTML servido pronto (JSP antigo, tabelas com `bgcolor`). Um `fetch` basta. Os
+outros conectores públicos custam ~12 s por processo esperando o Vue montar; aqui é ~0,5 s.
+Por isso `TETO_PROCESSOS = 400` e não 60: o gargalo deixou de ser o navegador e passou a
+ser a educação com o portal (350 ms entre chamadas).
+
+### A armadilha do parser, e por que ela não é teórica
+
+O texto plano **não** serve para achar as fronteiras dos registros. Os anexos se chamam
+`"Resposta"` e `"PEDIDO DE IMPUGNAÇÃO"` — os mesmos nomes dos marcadores. Um parser que
+procure esses textos abre um registro fantasma dentro do anterior, e o cliente recebe uma
+impugnação que nunca existiu.
+
+As fronteiras vêm da **estrutura**, que é explícita e estável: `<tr bgcolor="#dddddd">`
+abre um pedido, `<tr bgcolor="#efefef">` marca protocolo e resposta, os campos são
+`<b>Rótulo:</b> valor</td>`, e anexo é sempre `<a>`, nunca `<b>`. O teste
+(`npm run radar:egovrs:teste`, 28 asserções) trava exatamente isso: o fixture inclui os
+anexos com nome de marcador e exige **3** registros, não 5.
+
+### Pergunta e resposta são mensagens separadas
+
+O dedup é `sha256(conector, licitação, autor, texto, horário)`. Numa mensagem só, o pedido
+ainda sem resposta entraria com um texto e, ao ser respondido, o texto MUDARIA — hash novo,
+e o cliente receberia a pergunta de novo junto com a resposta. Separadas, a pergunta entra
+uma vez e depois chega só a resposta, que é a novidade.
+
+Pelo mesmo motivo `Situação:` fica fora do texto: ela vai de "Aguardando" para "Respondido"
+e ressuscitaria a mensagem inteira. Na resposta entra o `Julgamento`, que é o que decide se
+o edital mudou — e ele vem antes do texto, de propósito.
+
+### Estado honesto: ligado e ocioso
+
+Atribuição conferida contra a base inteira: 1.741 (`egovrs`) + 1.232 (`banrisul`) = 2.973
+licitações, **zero disputadas** com os portais já existentes.
+
+Mas **nenhum cliente hoje monitora o RS** — os processos ativos estão em GO, CE, BA e PE. O
+conector está ligado, testado contra páginas reais e ocioso: não produzirá mensagem nenhuma
+até existir cliente gaúcho no Setup. Isso não é defeito, e não deve ser lido como falha na
+tela de saúde — mas também não pode ser confundido com "rodando em produção".
+
+### Verificando
+
+```bash
+npm run radar:egovrs:teste
+```
+
+```bash
+node scripts/radar/run.mjs --dry --publico-only --limit 5
+```
+
+## Compras BR — o primeiro que se lê por API, e não por página
+
+`connector-comprasbr.mjs`, id `comprasbr`. É o portal da **AZ Tecnologia em Gestão**, e o
+único ligado até aqui em que **a página do processo não é lida**.
+
+### Como foi achado, porque o caminho é o aprendizado
+
+O link que o PNCP publica — `comprasbr.com.br/pregao-eletronico-detalhe/?idlicitacao=<id>`
+— **redireciona para a home**. Aberto no navegador, o conteúdo real vem de um `<iframe>`
+apontando para `app.comprasbr.com.br/licitacao-pub/`, e dentro dele um Angular consome uma
+API REST. Lendo a aba de rede, a API apareceu inteira:
+
+```
+GET app.comprasbr.com.br/licitacao-readonly/api/public/v1/licitacoes/<id>/esclarecimentosImpugnacoes
+GET app.comprasbr.com.br/licitacao-readonly/api/licitacao/public/portal/paginaInterna/idLicitacao=<id>
+```
+
+Pública, sem token, sem cookie: **25 de 25** processos responderam 200. E o `idlicitacao`
+do link do PNCP é o **mesmo id** da API — nada a resolver.
+
+Então o conector pula a página e fala com a API. Sem navegador, ~1 s por processo contra
+os ~12 s dos conectores com Playwright; daí o teto de 300 por passada.
+
+### O melhor aproveitamento medido — e o que falta nele
+
+**36%** dos processos têm esclarecimento ou impugnação registrada, contra 16% do eGov RS.
+O que entra é o `assunto`, escrito pelo próprio fornecedor, e ele costuma ser específico:
+
+```
+[Esclarecimento nº 18198] — CATETERES INFANTIS — Situação: respondido
+[Impugnação nº 18303] — Impugnação de edital — Situação: respondido
+[Esclarecimento nº 18526] — Quantas casas decimais devemos considerar? O sistema está recusando.
+```
+
+O que o portal **não** dá é o corpo da pergunta nem o da resposta: os dois vivem em PDF.
+Isso está dito no `detalhe` de toda passada ("o teor fica no documento anexado"), para
+ninguém ler o alerta achando que leu o mérito.
+
+Metade dos fornecedores escreve a pergunta inteira no `assunto`, com quebra de linha — o
+conector colapsa o espaço em branco, senão a quebra crua estraga o e-mail e a caixa.
+
+### A situação ENTRA no texto aqui — ao contrário do eGov RS
+
+No eGov RS a `Situação` fica fora, porque lá existe o texto da resposta: a resposta
+chegando já prova que foi respondida.
+
+Aqui é o oposto, pelo mesmo raciocínio. Sem corpo de resposta, **a mudança de situação é o
+único sinal** de que o órgão respondeu. Com ela no texto, o hash muda de `AGUARDANDO` para
+`RESPONDIDO` e o fornecedor recebe exatamente um aviso: *o que perguntaram foi respondido,
+vá ler o anexo*. Sem ela, esse fato nunca chegaria.
+
+### Status do processo: lista de inclusão, não de exclusão
+
+O segundo endpoint traz `status` e `fase`. Só **ruptura** vira mensagem — `SUSPENSO`,
+`REVOGADO`, `CANCELADO`, `ANULADO`, `FRACASSADO`, `DESERTO`, `REABERTO`. Rotina
+(`ABERTO`, `AGUARDANDO_ABERTURA`, `ENCERRADO` — 40 de 40 numa amostra) fica calada: emiti-la
+daria uma mensagem por processo já na primeira visita, afogando o que importa. Status novo
+que o portal invente fica de fora até alguém decidir que é notícia — aqui o erro seguro é o
+silêncio sobre rotina, não o alarme sobre tudo.
+
+O portal não data a mudança de status, e o conector **não inventa horário**: `null`. Datar
+faria a mensagem passar pela janela de 48 h do e-mail como se fosse novidade de hoje.
+
+### O que este conector se recusa a gravar
+
+Cada pedido vem com o objeto `fornecedor` **completo** de quem o protocolou — CNPJ, razão
+social, endereço, telefone, e-mail — mais o e-mail em `usuarioCadastro`. É dado de um
+terceiro (um concorrente do nosso cliente), e nada disso é necessário para avisar que o
+edital foi questionado. Os dois campos são descartados na leitura e **nunca chegam ao
+`raw`** gravado no banco. Quatro asserções do teste existem só para isso.
+
+### Quanto isso move o ponteiro
+
+| | abertas no Brasil | nas UFs de cliente |
+|---|---:|---:|
+| Compras BR | 55 | **18** |
+| eGov RS + Banrisul | 67 | **0** |
+
+Cobertura de pregões abertos depois dos dois: **54,2% no Brasil**, **58,7% nas UFs onde há
+cliente** (era 53,4% / 58,1%). É ganho pequeno — dito de frente. O Compras BR entrou por
+ser o mais barato e o de melhor aproveitamento, não por volume.
+
+### Verificando
+
+```bash
+npm run radar:comprasbr:teste
+```

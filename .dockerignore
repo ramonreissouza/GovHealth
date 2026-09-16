@@ -1,0 +1,36 @@
+# .dockerignore — o que NUNCA entra no contexto de build.
+#
+# A primeira linha é a que importa: `.env*`. O contexto inteiro é enviado ao daemon
+# antes de qualquer COPY, então um segredo aqui vaza mesmo sem nenhum COPY que o
+# mencione — e este repositório já pagou caro por credencial em lugar errado
+# (seis senhas de produção no histórico público). O cofre do Radar
+# (`RADAR_CRED_KEY`) decifra a sessão gov.br de todos os clientes.
+.env
+.env.*
+!.env.exemplo
+
+.git
+.github
+node_modules
+.next
+out
+dist
+coverage
+playwright-report
+test-results
+
+# Nada do Windows/OneDrive precisa ir junto.
+*.log
+npm-debug.log*
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# O resto da aplicação não entra na imagem do serviço de navegador: ele precisa de
+# cinco arquivos em scripts/radar e de duas dependências. Ver deploy/radar/Dockerfile.
+src
+public
+docs
+db
+scripts/*.mjs
+scripts/radar/*.teste.mjs
