@@ -182,81 +182,178 @@ export async function sincronizarSelecao(
   // cliente conclui o login.
   const conectoresBase = [...new Set(conectados.length ? conectados : [CONECTOR_PADRAO])]
 
+  // ── GRAVAÇÃO EM LOTE (2026-09-16) ──────────────────────────────────────────
+  //
+  // Antes daqui saía um `await` por candidato, POR PORTAL: 5.000 candidatos viravam
+  // 5.000+ idas ao banco, sequenciais, atravessando o PgBouncer com TLS até a VM. As
+  // rodadas que sobreviveram mediram 13 a 29 segundos — e o `maxDuration` da rota que
+  // chama isto era 30. Resultado medido na auditoria: 14 das 49 seleções começaram e
+  // NUNCA registraram o fim. Não havia erro nem log, porque timeout não é exceção: a
+  // invocação simplesmente deixa de existir no meio do laço.
+  //
+  // Montar as linhas em memória e gravar de 500 em 500 troca 5.000 idas por 10.
+  const LOTE = 500
+
+  interface LinhaProcesso {
+    id: string; conectorId: string; licitacaoId: string; titulo: string
+    uf: string | null; valor: number | null; motivo: string; link: string
+  }
+  interface Alerta { assunto: string; corpo: string; link: string }
+
+  // Chaveado pelo `id` de propósito: `ON CONFLICT DO UPDATE` RECUSA a instrução inteira
+  // se ela tocar a mesma linha duas vezes ("cannot affect row a second time"). Um
+  // `numero_controle_pncp` repetido entre os candidatos derrubaria o lote inteiro — o
+  // Map deduplica antes de o SQL ter chance de reclamar.
+  const linhas = new Map<string, LinhaProcesso>()
+  const alertas = new Map<string, Alerta>()
+
   let novos = 0
   let total = 0
-  for (const c of candidatos) {
-    const hay = normalizeText(c.objeto_compra ?? '')
-    const termosBatem = termos.filter((t) => hay.includes(t))
-    const produtosBatem = needles.filter((n) => hay.includes(n))
 
-    // Se o usuário definiu texto (termos/portfólio), exige casar. Se só definiu
-    // UF/categoria, aceita pelo próprio filtro SQL.
-    if (temFiltroTexto && termosBatem.length === 0 && produtosBatem.length === 0) continue
+  try {
+    for (const c of candidatos) {
+      const hay = normalizeText(c.objeto_compra ?? '')
+      const termosBatem = termos.filter((t) => hay.includes(t))
+      const produtosBatem = needles.filter((n) => hay.includes(n))
 
-    total++
-    const motivo = {
-      termos: termosBatem,
-      produtos: [...new Set(produtosBatem)],
-      categoria: c.categoria_saude,
-      uf: c.uf,
+      // Se o usuário definiu texto (termos/portfólio), exige casar. Se só definiu
+      // UF/categoria, aceita pelo próprio filtro SQL.
+      if (temFiltroTexto && termosBatem.length === 0 && produtosBatem.length === 0) continue
+
+      total++
+      const motivo = {
+        termos: termosBatem,
+        produtos: [...new Set(produtosBatem)],
+        categoria: c.categoria_saude,
+        uf: c.uf,
+      }
+      const titulo = (c.objeto_compra ?? '').slice(0, 240)
+
+      // Uma linha POR PORTAL conectado (cada worker de portal enxerga o seu). O portal
+      // público só entra para as licitações que realmente correm nele — do contrário o
+      // worker sai procurando no PCP a página de um pregão do BB.
+      const conectoresAlvo = [...conectoresBase, ...publicos.filter((id) => licitacaoDoPortal(id, c))]
+      for (const conectorId of conectoresAlvo) {
+        const id = `${conectorId}:${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
+        linhas.set(id, {
+          id,
+          conectorId,
+          licitacaoId: c.numero_controle_pncp,
+          titulo,
+          uf: c.uf,
+          valor: c.valor_total_estimado,
+          motivo: JSON.stringify(motivo),
+          link: linkDoProcesso(conectorId, c),
+        })
+      }
+
+      // Alerta de "nova licitação" é por LICITAÇÃO (não por portal): um e-mail só,
+      // mesmo quando a mesma licitação entra por três portais.
+      const razao = termosBatem[0] || produtosBatem[0] || c.categoria_saude || c.uf || 'perfil'
+      alertas.set(c.numero_controle_pncp, {
+        assunto: `Nova licitação para o seu perfil: ${titulo.slice(0, 90) || c.numero_controle_pncp}`,
+        corpo: JSON.stringify({
+          objeto: titulo, uf: c.uf, municipio: c.municipio,
+          valor: c.valor_total_estimado, motivo: razao, nome: titular?.nome,
+        }),
+        link: linkDoProcesso(CONECTOR_PADRAO, c),
+      })
     }
-    const titulo = (c.objeto_compra ?? '').slice(0, 240)
 
-    // UPSERT de um processo POR PORTAL conectado (cada worker de portal enxerga o
-    // seu). RETURNING (xmax=0) detecta o INÉDITO para alertar sem duplicar.
-    let inseriuNovo = false
-    let processoRef = ''
-    // O portal público só entra para as licitações que realmente correm nele — do
-    // contrário o worker sai procurando no PCP a página de um pregão do BB.
-    const conectoresAlvo = [...conectoresBase, ...publicos.filter((id) => licitacaoDoPortal(id, c))]
-    for (const conectorId of conectoresAlvo) {
-      const id = `${conectorId}:${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
-      const link = linkDoProcesso(conectorId, c)
-      const ins = await query<{ id: string; novo: boolean }>(
+    // `xmax = 0` continua sendo quem distingue o INÉDITO do já conhecido — agora lido
+    // do RETURNING do lote inteiro, em vez de linha a linha.
+    const ineditas = new Set<string>()
+    const refPorLicitacao = new Map<string, string>()
+    const todas = [...linhas.values()]
+
+    for (let i = 0; i < todas.length; i += LOTE) {
+      const bloco = todas.slice(i, i + LOTE)
+      const ins = await query<{ id: string; licitacao_id: string; novo: boolean }>(
         `INSERT INTO radar_processos
            (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, uf, valor, motivo_match, link_portal, atualizado_em)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11, now())
+         SELECT t.id, $1, $2, t.conector_id, $3, t.licitacao_id, t.titulo, t.uf, t.valor, t.motivo::jsonb, t.link, now()
+           FROM unnest($4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::numeric[], $10::text[], $11::text[])
+                AS t(id, conector_id, licitacao_id, titulo, uf, valor, motivo, link)
          ON CONFLICT (titular_id, conector_id, cnpj, licitacao_id) DO UPDATE
            SET titulo = EXCLUDED.titulo, uf = EXCLUDED.uf, valor = EXCLUDED.valor,
                motivo_match = EXCLUDED.motivo_match, atualizado_em = now()
-         RETURNING id, (xmax = 0) AS novo`,
-        [id, titularId, userId, conectorId, cnpj, c.numero_controle_pncp, titulo, c.uf,
-         c.valor_total_estimado, JSON.stringify(motivo), link],
+         RETURNING id, licitacao_id, (xmax = 0) AS novo`,
+        [
+          titularId, userId, cnpj,
+          bloco.map((l) => l.id), bloco.map((l) => l.conectorId), bloco.map((l) => l.licitacaoId),
+          bloco.map((l) => l.titulo), bloco.map((l) => l.uf), bloco.map((l) => l.valor),
+          bloco.map((l) => l.motivo), bloco.map((l) => l.link),
+        ],
       )
-      if (!processoRef) processoRef = ins[0]?.id ?? id
-      if (ins[0]?.novo) inseriuNovo = true
+      for (const r of ins) {
+        // Qualquer linha da licitação serve de referência para o alerta — o RETURNING
+        // não promete ordem, e o processo_id é só o endereço para onde o e-mail aponta.
+        if (!refPorLicitacao.has(r.licitacao_id)) refPorLicitacao.set(r.licitacao_id, r.id)
+        if (r.novo) ineditas.add(r.licitacao_id)
+      }
     }
 
-    // Alerta de "nova licitação" é por LICITAÇÃO (não por portal): id de notificação
-    // no nível da licitação evita duplicar quando há vários portais conectados.
-    if (inseriuNovo) {
-      novos++
-      const link = linkDoProcesso(CONECTOR_PADRAO, c)
-      const razao = termosBatem[0] || produtosBatem[0] || c.categoria_saude || c.uf || 'perfil'
-      const assunto = `Nova licitação para o seu perfil: ${titulo.slice(0, 90) || c.numero_controle_pncp}`
+    const aAvisar = [...ineditas]
+      .map((lic) => ({ lic, ref: refPorLicitacao.get(lic), a: alertas.get(lic) }))
+      .filter((x): x is { lic: string; ref: string; a: Alerta } => !!x.ref && !!x.a)
+    novos = aAvisar.length
+
+    for (let i = 0; i < aAvisar.length; i += LOTE) {
+      const bloco = aAvisar.slice(i, i + LOTE)
+      const ids = bloco.map((x) => `nl:${titularId}:${x.lic}`)
+      const idsApp = bloco.map((x) => `nl-app:${titularId}:${x.lic}`)
+      const refs = bloco.map((x) => x.ref)
+      const assuntos = bloco.map((x) => x.a.assunto)
+      const links = bloco.map((x) => x.a.link)
+
       await query(
         `INSERT INTO radar_notificacoes (id, titular_id, evento, processo_id, destinatario, canal, assunto, corpo, link)
-         VALUES ($1,$2,'nova_licitacao',$3,$4,'email',$5,$6,$7)
+         SELECT t.id, $1, 'nova_licitacao', t.processo, $2, 'email', t.assunto, t.corpo, t.link
+           FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+                AS t(id, processo, assunto, corpo, link)
          ON CONFLICT (id) DO NOTHING`,
-        [`nl:${titularId}:${c.numero_controle_pncp}`, titularId, processoRef, destinatario, assunto,
-         JSON.stringify({ objeto: titulo, uf: c.uf, municipio: c.municipio, valor: c.valor_total_estimado, motivo: razao, nome: titular?.nome }),
-         link],
+        [titularId, destinatario, ids, refs, assuntos, bloco.map((x) => x.a.corpo), links],
       )
       // Notificação in-app (mesmo id-base, canal distinto).
       await query(
         `INSERT INTO radar_notificacoes (id, titular_id, evento, processo_id, destinatario, canal, assunto, link, status)
-         VALUES ($1,$2,'nova_licitacao',$3,$4,'in_app',$5,$6,'entregue')
+         SELECT t.id, $1, 'nova_licitacao', t.processo, $2, 'in_app', t.assunto, t.link, 'entregue'
+           FROM unnest($3::text[], $4::text[], $5::text[], $6::text[])
+                AS t(id, processo, assunto, link)
          ON CONFLICT (id) DO NOTHING`,
-        [`nl-app:${titularId}:${c.numero_controle_pncp}`, titularId, processoRef, destinatario, assunto, link],
+        [titularId, destinatario, idsApp, refs, assuntos, links],
       )
     }
+  } catch (e) {
+    // Fecha a auditoria marcando PARCIAL antes de propagar: sem isto a linha de início
+    // fica órfã, e uma falha de verdade vira indistinguível de uma invocação morta.
+    await registrarFim(titularId, userId, {
+      candidatos: candidatos.length, total, novos, parcial: true, erro: String(e).slice(0, 200),
+    })
+    throw e
   }
 
-  await query(
-    `INSERT INTO radar_auditoria (titular_id, user_id, acao, entidade, detalhe)
-     VALUES ($1,$2,'selecao','radar_processos',$3::jsonb)`,
-    [titularId, userId, JSON.stringify({ candidatos: candidatos.length, total, novos })],
-  )
+  await registrarFim(titularId, userId, { candidatos: candidatos.length, total, novos })
 
   return { novos, total }
+}
+
+/**
+ * Carimbo de ENCERRAMENTO da seleção. É o par do carimbo de INÍCIO que a rota grava
+ * (api/radar/inbox): início sem fim significa que a invocação morreu, e é assim que o
+ * throttle de lá descobre que pode tentar de novo em vez de esperar a janela inteira.
+ *
+ * Nunca deixa o próprio registro derrubar a seleção — se o banco recusar ESTA linha, o
+ * trabalho já feito continua valendo.
+ */
+async function registrarFim(titularId: string, userId: string, detalhe: Record<string, unknown>) {
+  try {
+    await query(
+      `INSERT INTO radar_auditoria (titular_id, user_id, acao, entidade, detalhe)
+       VALUES ($1,$2,'selecao','radar_processos',$3::jsonb)`,
+      [titularId, userId, JSON.stringify(detalhe)],
+    )
+  } catch (e) {
+    console.warn('[radar/selecao] auditoria de fim:', e)
+  }
 }

@@ -11,7 +11,10 @@ import { resolverPortal } from '@/lib/portais'
 import { cofreDisponivel } from '@/lib/radar/crypto'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+// O trabalho do `after()` corre DENTRO desta invocação e gasta deste mesmo orçamento.
+// Com 30 s a seleção (13–29 s medidos) era morta no meio em 14 de 49 rodadas. A
+// gravação em lote derrubou isso para segundos; 60 s aqui é margem, não a correção.
+export const maxDuration = 60
 
 /**
  * Dispara a seleção automática FORA do caminho da resposta.
@@ -31,14 +34,23 @@ export const maxDuration = 30
  * trabalho começar, então qualquer GET concorrente dentro da janela o enxerga.
  */
 async function talvezSincronizar(titularId: string, userId: string) {
-  const ultima = await queryOne<{ criado_em: string }>(
-    `SELECT criado_em FROM radar_auditoria
+  const ultima = await queryOne<{ criado_em: string; inicio: boolean }>(
+    `SELECT criado_em, (detalhe ->> 'inicio') IS NOT NULL AS inicio
+       FROM radar_auditoria
       WHERE titular_id = $1 AND acao = 'selecao'
       ORDER BY criado_em DESC LIMIT 1`,
     [titularId],
   )
-  const recente = ultima && (Date.now() - new Date(ultima.criado_em).getTime() < 10 * 60_000)
-  if (recente) return
+  // O carimbo antecipado fecha a corrida do throttle, mas cobrava um preço: uma seleção
+  // MORTA (invocação estourada) ficava valendo como se tivesse rodado, e bloqueava a
+  // retentativa pela janela inteira. Por isso as duas linhas agora valem janelas
+  // diferentes — é a leitura honesta do que cada uma diz:
+  //   · a última é um FIM   → rodou até o fim; segura os 10 min de sempre;
+  //   · a última é um INÍCIO órfão → está em voo OU morreu sem deixar recado. Com a
+  //     gravação em lote a seleção inteira leva segundos, então passou de 2 min ela
+  //     morreu, e insistir no throttle longo só prolongaria o buraco.
+  const idadeMs = ultima ? Date.now() - new Date(ultima.criado_em).getTime() : Infinity
+  if (idadeMs < (ultima?.inicio ? 2 * 60_000 : 10 * 60_000)) return
 
   // Carimba a tentativa JÁ (fecha a janela de corrida do throttle). O registro do
   // resultado vem depois, de dentro de sincronizarSelecao.

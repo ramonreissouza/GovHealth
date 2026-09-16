@@ -11,10 +11,18 @@
 // tela. E o efeito era o inverso do requisito: o ÚNICO conector com problema virava
 // mais um cartão no meio de dezoito verdes, mais fácil de perder do que de achar.
 //
-// Agora o normal ocupa uma linha e a exceção ganha corpo:
-//   · tudo que está verificado vira um selo pequeno numa faixa só;
-//   · o que NÃO está verificado abre um cartão com o motivo, sempre, sem clique;
-//   · o detalhe do que está bem fica a um clique no selo, para quem quiser conferir.
+// SEGUNDA PASSADA, MESMO DIA: a faixa voltou a encher a tela, agora com QUATRO
+// cartões laranja. A culpa não era do layout — era da régua. A tela tratava
+// "desatualizado" como se fosse "quebrado", e o worker cicla entre os portais a cada
+// 19–85 min (medido), então o estado NORMAL caía fora da janela de 30 min e pintava
+// de âmbar. Ver JANELA_FRESCO_MIN em lib/radar/saude.ts para os números.
+//
+// A regra agora tem três níveis, e só o último ocupa espaço:
+//   · verde  — verificado há pouco; cabe num selo.
+//   · cinza  — OK, mas já faz um tempo. É informação, não chamado: o selo mostra o
+//              relógio e pronto. Ninguém precisa fazer nada.
+//   · âmbar/vermelho — QUEBRADO (sessão expirada, falha, portal fora) ou MUDO há
+//              horas. Só este abre uma linha com o motivo, sem clique.
 //
 // A faixa agrupa POR PORTAL, não por credencial: quem tem cinco CNPJs no mesmo
 // portal via cinco cartões iguais. E o selo do grupo carrega SEMPRE o pior estado
@@ -24,7 +32,7 @@
 import { useMemo, useState } from 'react'
 import { clsx } from 'clsx'
 import { ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, ChevronDown } from 'lucide-react'
-import { rotuloSaude, tempoDesde, confiavelAgora } from '@/lib/radar/saude'
+import { rotuloSaude, tempoDesde, confiavelAgora, quebrado, parado, precisaAtencao } from '@/lib/radar/saude'
 import { nomeConector } from '@/lib/radar/conectores'
 import type { StatusSaude } from '@/lib/radar/types'
 
@@ -54,6 +62,17 @@ const GRAVIDADE: Record<string, number> = { verde: 0, cinza: 1, amarelo: 2, verm
 /** A chave de lista: `credencialId` é null no monitor público, e null repetido colide. */
 const chaveDe = (s: SaudeItem) => `${s.conectorId}:${s.credencialId ?? 'publico'}`
 
+/**
+ * A cor de UM item. Repare que envelhecer não muda a cor para âmbar — leva ao cinza,
+ * que é "não sei desde agora há pouco", não "socorro".
+ */
+function corDe(s: SaudeItem, agoraMs: number): string {
+  if (s.status === 'falha') return 'vermelho'
+  if (quebrado(s) || parado(s, agoraMs)) return 'amarelo'
+  if (confiavelAgora(s, agoraMs)) return 'verde'
+  return 'cinza'
+}
+
 /** Declarado fora do render: atribuir o componente a uma `const` maiúscula dentro do
  *  corpo faz o React remontar o ícone a cada render (e o lint reclama, com razão). */
 function IconeEstado({ cor, size }: { cor: string; size: number }) {
@@ -62,34 +81,45 @@ function IconeEstado({ cor, size }: { cor: string; size: number }) {
   return <ShieldAlert size={size} />
 }
 
-/** A linha de estado de um item, na mesma redação do cartão antigo. */
+/** O que o estado quer dizer, numa frase. */
+function tituloDe(s: SaudeItem, agoraMs: number): string {
+  if (quebrado(s)) return rotuloSaude(s.status).titulo
+  if (parado(s, agoraMs)) return 'Sem verificar há horas — o coletor pode estar parado'
+  if (confiavelAgora(s, agoraMs)) return 'Verificado'
+  if (s.status === 'nunca_verificado') return 'Aguardando primeira verificação'
+  return 'Aguardando a próxima passada'
+}
+
+/** A linha do relógio: até quando a gente olhou, sem prometer o que não leu. */
 function linhaEstado(s: SaudeItem, agoraMs: number) {
-  if (confiavelAgora(s, agoraMs)) return `verificado ${tempoDesde(s.verificadoEm, agoraMs)} · sem novidades`
+  if (confiavelAgora(s, agoraMs)) return `verificado ${tempoDesde(s.verificadoEm, agoraMs)} · sem novidades até então`
   if (s.verificadoEm) return `última verificação OK ${tempoDesde(s.verificadoEm, agoraMs)}`
   return `tentativa ${tempoDesde(s.tentadoEm, agoraMs)}`
 }
 
-/** O cartão completo — agora reservado a quem precisa ser lido, não a todo mundo. */
-function Cartao({ s, agoraMs }: { s: SaudeItem; agoraMs: number }) {
-  const r = rotuloSaude(s.status)
-  const confiavel = confiavelAgora(s, agoraMs)
-  // Um `ok` VELHO não é verde. O status diz "deu certo"; a janela diz "ainda vale".
-  const cor = confiavel ? r.cor : r.cor === 'verde' ? 'amarelo' : r.cor
+/**
+ * Uma LINHA (não mais um cartão). Duas alturas de texto no total: a primeira diz o que
+ * houve, a segunda diz desde quando e o detalhe do conector, truncado. O detalhe
+ * inteiro fica no `title` — quem precisa dele passa o mouse; quem não precisa não paga
+ * três linhas de tela por ele.
+ */
+function Linha({ s, agoraMs }: { s: SaudeItem; agoraMs: number }) {
+  const cor = corDe(s, agoraMs)
   return (
-    <div className={clsx('rounded-xl border p-3', COR_CLS[cor])}>
-      <div className="flex items-center gap-2">
-        <IconeEstado cor={cor} size={14} />
-        <span className="text-[12px] font-semibold">{nomeConector(s.conectorId)}</span>
-        {s.cnpj && <span className="text-[10px] font-mono-custom opacity-70">CNPJ {s.cnpj}</span>}
+    <div className={clsx('rounded-lg border px-2.5 py-1.5 flex items-start gap-2', COR_CLS[cor])}>
+      <span className="mt-[2px] shrink-0"><IconeEstado cor={cor} size={13} /></span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-1.5 flex-wrap">
+          <span className="text-[12px] font-semibold">{nomeConector(s.conectorId)}</span>
+          {s.cnpj && <span className="text-[10px] font-mono-custom opacity-70">CNPJ {s.cnpj}</span>}
+          <span className="text-[12px] opacity-90">— {tituloDe(s, agoraMs)}</span>
+        </div>
+        <div className="text-[10.5px] opacity-75 flex items-center gap-1 truncate" title={s.detalhe ?? undefined}>
+          {s.status === 'nunca_verificado' && <Loader2 size={10} className="animate-spin shrink-0" />}
+          <span className="shrink-0">{linhaEstado(s, agoraMs)}</span>
+          {s.detalhe && <span className="truncate">· {s.detalhe}</span>}
+        </div>
       </div>
-      <div className="text-[12px] mt-1.5 leading-snug">
-        {confiavel ? r.titulo : r.cor === 'verde' ? 'Verificação vencida — pode haver mensagem nova não lida' : r.titulo}
-      </div>
-      <div className="text-[10.5px] opacity-80 mt-1 flex items-center gap-1">
-        {s.status === 'nunca_verificado' && <Loader2 size={10} className="animate-spin" />}
-        {linhaEstado(s, agoraMs)}
-      </div>
-      {s.detalhe && <div className="text-[10.5px] opacity-70 mt-1 line-clamp-2" title={s.detalhe}>{s.detalhe}</div>}
     </div>
   )
 }
@@ -106,17 +136,16 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
     }
     return [...porPortal.entries()]
       .map(([conectorId, itens]) => {
-        const problemas = itens.filter((s) => !confiavelAgora(s, agoraMs))
-        const cor = itens.reduce((pior, s) => {
-          const r = rotuloSaude(s.status)
-          const c = confiavelAgora(s, agoraMs) ? r.cor : r.cor === 'verde' ? 'amarelo' : r.cor
-          return GRAVIDADE[c] > GRAVIDADE[pior] ? c : pior
-        }, 'verde')
+        const atencao = itens.filter((s) => precisaAtencao(s, agoraMs))
+        const cor = itens.reduce(
+          (pior, s) => (GRAVIDADE[corDe(s, agoraMs)] > GRAVIDADE[pior] ? corDe(s, agoraMs) : pior),
+          'verde',
+        )
         // O relógio do grupo é o do item MENOS recente: dizer "há 3 min" porque uma
         // das contas acabou de rodar esconderia a que está parada há um dia.
         const maisAntigo = itens.reduce((a, s) =>
           new Date(s.verificadoEm ?? 0).getTime() < new Date(a.verificadoEm ?? 0).getTime() ? s : a)
-        return { conectorId, itens, problemas, cor, maisAntigo }
+        return { conectorId, itens, atencao, cor, maisAntigo }
       })
       .sort((a, b) => GRAVIDADE[b.cor] - GRAVIDADE[a.cor] || a.conectorId.localeCompare(b.conectorId))
   }, [saude, agoraMs])
@@ -129,11 +158,11 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
     )
   }
 
-  const comProblema = grupos.filter((g) => g.problemas.length > 0)
-  const saudaveis = grupos.filter((g) => g.problemas.length === 0)
+  const pedemAtencao = grupos.flatMap((g) => g.atencao)
+  const verificados = grupos.filter((g) => g.itens.every((s) => confiavelAgora(s, agoraMs))).length
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {/* A faixa: um selo por portal, tudo numa linha só. */}
       <div className="flex flex-wrap items-center gap-1.5">
         {grupos.map((g) => {
@@ -167,25 +196,34 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
             </button>
           )
         })}
-        <span className="text-[10.5px] text-faint ml-1">
-          {saudaveis.length} de {grupos.length} verificado{grupos.length === 1 ? '' : 's'}
-        </span>
+        {/* O contador é o sinal de topo — quando algo precisa de ação ele deixa de
+            contabilizar e passa a chamar, sem custar um pixel a mais de altura. */}
+        {pedemAtencao.length > 0 ? (
+          <span className="text-[10.5px] text-amber font-semibold ml-1">
+            {pedemAtencao.length} precisa{pedemAtencao.length === 1 ? '' : 'm'} de atenção
+          </span>
+        ) : (
+          <span className="text-[10.5px] text-faint ml-1">
+            {verificados} de {grupos.length} verificado{grupos.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
-      {/* Quem está com problema abre sozinho, sem clique: é o que precisa ser lido. */}
-      {comProblema.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-          {comProblema.flatMap((g) => g.problemas).map((s) => <Cartao key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
+      {/* Só quem PRECISA DE AÇÃO abre sozinho. Envelhecer não entra aqui: o selo já
+          mostra o relógio, e quem quiser o detalhe clica. */}
+      {pedemAtencao.length > 0 && (
+        <div className="space-y-1.5">
+          {pedemAtencao.map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
         </div>
       )}
 
-      {/* E o detalhe do que está bem, só para quem pediu. */}
+      {/* E o detalhe do resto, só para quem pediu. */}
       {abertos.size > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+        <div className="space-y-1.5">
           {grupos
             .filter((g) => abertos.has(g.conectorId))
-            .flatMap((g) => g.itens.filter((s) => confiavelAgora(s, agoraMs)))
-            .map((s) => <Cartao key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
+            .flatMap((g) => g.itens.filter((s) => !precisaAtencao(s, agoraMs)))
+            .map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
         </div>
       )}
     </div>
