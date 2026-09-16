@@ -49,6 +49,11 @@ const csp = [
 ].join('; ')
 
 const nextConfig = {
+  // `standalone` faz o build emitir `.next/standalone` com um server.js e SÓ as
+  // dependências que o runtime usa. É o que permite a imagem Docker rodar sem
+  // `node_modules` inteiro — aqui isso é a diferença entre ~1,4 GB e ~250 MB, e a
+  // Vercel ignora a opção, então não muda nada no deploy atual.
+  output: 'standalone',
   serverExternalPackages: ['maplibre-gl'],
   images: {
     remotePatterns: [

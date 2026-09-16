@@ -177,3 +177,74 @@ A VM atual tem **954MB de RAM e 324MB livres** — foi ela que reprovou para hos
 navegador do Radar (ver `radar-navegador-hospedado.md`). Uma VPS de **4GB** acomoda os
 dois com folga: o Postgres deste banco e o steel, que consome **565MB** medidos com uma
 sessão aberta. Mover o banco e subir o Radar podem ser a mesma compra, em vez de duas.
+
+## 11. Levar a aplicação junto (Docker) — `deploy/app/`
+
+As seções acima movem só o banco, com a aplicação seguindo na Vercel. Se a VPS nova
+for hospedar **as duas coisas**, é aqui.
+
+```bash
+cd deploy/app
+cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
+docker compose up -d db                              # 1. só o banco
+DUMP_DIR=/caminho/do/dump docker compose --profile restore run --rm restore
+docker compose up -d --build app                     # 3. constrói e sobe
+```
+
+Três coisas que este arranjo resolve porque foram encontradas construindo de verdade,
+não previstas:
+
+- **O volume do Postgres 18 mudou de lugar.** É `pgdata:/var/lib/postgresql`, **não**
+  `/var/lib/postgresql/data`. Com o caminho antigo o container sobe, escreve na pasta
+  errada e morre no healthcheck cuspindo um aviso de 30 linhas que nunca diz "corrija
+  o volume". Foi exatamente o que o ensaio pegou.
+- **O `.dockerignore` da raiz é do OUTRO serviço.** Ele exclui `src`, `public`, `db` e
+  `scripts/*.mjs` porque foi escrito para a imagem do navegador do Radar; com ele
+  valendo, o build da aplicação falha em "src not found". Por isso existe
+  `deploy/app/Dockerfile.dockerignore` — o BuildKit procura `<Dockerfile>.dockerignore`
+  antes do da raiz, e é assim que as duas imagens convivem no mesmo repositório.
+- **`output: 'standalone'`** no `next.config.js`. Sem isso a imagem carrega o
+  `node_modules` inteiro (~1,4 GB); com isso fica em ~250 MB. A Vercel ignora a opção,
+  então ligar não muda nada no deploy atual.
+
+### O que quebra ao sair da Vercel — e não avisa
+
+**Os 5 crons do `vercel.json` param.** `sync-pncp` 03:00, `sync-emendas` 04:00,
+`sync-transferegov` 06:00, `alertas-email` 11:00, `trial-reminders` 12:00. Eles são
+agendamento **da Vercel**, não do Next: subir a app em Docker não os traz junto, e o
+sintoma é silencioso — a base simplesmente para de atualizar e ninguém recebe alerta.
+
+Na VPS eles viram cron do sistema batendo nas mesmas rotas com o `CRON_SECRET`:
+
+```cron
+0 3 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-pncp
+0 4 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-emendas
+0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-transferegov
+0 11 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/alertas-email
+0 12 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/trial-reminders
+```
+
+Outros três pontos que mudam de mãos junto:
+
+- **TLS.** O compose publica a app em `127.0.0.1:3000`, de propósito. Quem termina
+  HTTPS é o nginx da VPS — o mesmo que já atende o Radar (`deploy/radar/nginx/`).
+- **`NEXTAUTH_SECRET`.** Se mudar de valor, toda sessão viva cai. Para a migração ser
+  invisível ao cliente, traga o valor que está em produção hoje.
+- **`RADAR_CRED_KEY`.** Tem de ser o MESMO. Ela decifra a sessão gov.br já guardada de
+  cada cliente; com chave nova o cofre vira lixo ilegível e todo mundo precisa
+  reconectar o portal.
+
+### Env de BUILD × env de runtime
+
+Tudo que é `NEXT_PUBLIC_*` e a `RADAR_EMBED_ORIGIN` são gravados no bundle durante o
+build. Editar no `.env` depois **não muda nada** — é preciso `--build` de novo. O
+`DATABASE_URL` é o contrário: só runtime, e o compose o monta a partir de
+`POSTGRES_USER/PASSWORD/DB` apontando para o serviço `db`. Isso é deliberado: um
+`.env.local` copiado da máquina de desenvolvimento apontaria para o banco ANTIGO, e a
+app subiria bonita gravando no lugar errado.
+
+### O dump não pode encostar no repositório
+
+São 159 MB com dado pessoal de todos os clientes e o cofre cifrado do Radar dentro. Por
+isso o caminho é parâmetro (`DUMP_DIR`) em vez de uma pasta versionada, e `*.dump` +
+`deploy/app/dump/` entraram no `.gitignore`. Este repositório é público.

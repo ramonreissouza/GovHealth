@@ -68,3 +68,8 @@ scripts/deck/out/
 # Lock cooperativo do PNCP (etl-refresh-loop.mjs avisa o pipeline)
 .pncp-ocupado
 .pncp-fila/
+
+# Dump de migração do banco: dados pessoais de produção + cofre cifrado.
+# Nunca versionado. Ver deploy/app/docker-compose.yml (DUMP_DIR).
+deploy/app/dump/
+*.dump
