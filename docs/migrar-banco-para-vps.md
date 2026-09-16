@@ -8,15 +8,22 @@ Roteiro medido em 11/09/2026 contra a instalação real, não genérico.
 |---|---|
 | versão | PostgreSQL **18.4** (Ubuntu, pgdg) |
 | banco / papel | `govhealth` / `govhealth` |
-| tamanho | **1.433 MB** (dump comprimido: **143 MB**) |
-| tabelas | 32 · maiores: `itens` 583MB, `contratacoes` 500MB, `resultados` 272MB |
+| tamanho | **1.544 MB** em 16/09 (era 1.433 MB em 11/09 — cresce ~22 MB/dia) |
+| tabelas | 32 · maiores: `itens` 649MB, `contratacoes` 500MB, `resultados` 296MB |
 | extensões | `pg_trgm 1.6`, `plpgsql` |
 | Postgres escuta | **127.0.0.1:5432** (não exposto) |
 | PgBouncer escuta | **0.0.0.0:6432**, `client_tls_sslmode = require`, cert próprio |
 | backup | diário 03:15 → `/var/backups/pg/govhealth-AAAAMMDD-0315.dump`, 7 dias |
 
 O backup está saudável: o de 11/09 tem 143MB, 205 entradas e **32 tabelas com dados** —
-o mesmo número de tabelas do banco.
+o mesmo número de tabelas do banco. Conferido de novo em **16/09**: a versão (18.4), as
+extensões, os papéis e as 32 tabelas seguem iguais; só o volume subiu. **`radar_saude`
+continua sendo a única tabela sem chave primária**, que é o fato que decide o método na
+seção 2 — se um dia ela ganhar PK, a replicação lógica passa a ser uma opção real.
+
+O que cresce é `itens` (+66 MB em 5 dias), porque o backfill de itens está rodando. Se a
+janela de migração for depois de muito tempo, remeça — o dump de hoje sai perto de
+**155 MB**, não mais 143 MB.
 
 ## 2. Método: `pg_dump` / `pg_restore`
 
