@@ -8,15 +8,22 @@ Roteiro medido em 11/09/2026 contra a instalação real, não genérico.
 |---|---|
 | versão | PostgreSQL **18.4** (Ubuntu, pgdg) |
 | banco / papel | `govhealth` / `govhealth` |
-| tamanho | **1.433 MB** (dump comprimido: **143 MB**) |
-| tabelas | 32 · maiores: `itens` 583MB, `contratacoes` 500MB, `resultados` 272MB |
+| tamanho | **1.544 MB** em 16/09 (era 1.433 MB em 11/09 — cresce ~22 MB/dia) |
+| tabelas | 32 · maiores: `itens` 649MB, `contratacoes` 500MB, `resultados` 296MB |
 | extensões | `pg_trgm 1.6`, `plpgsql` |
 | Postgres escuta | **127.0.0.1:5432** (não exposto) |
 | PgBouncer escuta | **0.0.0.0:6432**, `client_tls_sslmode = require`, cert próprio |
 | backup | diário 03:15 → `/var/backups/pg/govhealth-AAAAMMDD-0315.dump`, 7 dias |
 
 O backup está saudável: o de 11/09 tem 143MB, 205 entradas e **32 tabelas com dados** —
-o mesmo número de tabelas do banco.
+o mesmo número de tabelas do banco. Conferido de novo em **16/09**: a versão (18.4), as
+extensões, os papéis e as 32 tabelas seguem iguais; só o volume subiu. **`radar_saude`
+continua sendo a única tabela sem chave primária**, que é o fato que decide o método na
+seção 2 — se um dia ela ganhar PK, a replicação lógica passa a ser uma opção real.
+
+O que cresce é `itens` (+66 MB em 5 dias), porque o backfill de itens está rodando. Se a
+janela de migração for depois de muito tempo, remeça — o dump de hoje sai perto de
+**155 MB**, não mais 143 MB.
 
 ## 2. Método: `pg_dump` / `pg_restore`
 
@@ -170,3 +177,94 @@ A VM atual tem **954MB de RAM e 324MB livres** — foi ela que reprovou para hos
 navegador do Radar (ver `radar-navegador-hospedado.md`). Uma VPS de **4GB** acomoda os
 dois com folga: o Postgres deste banco e o steel, que consome **565MB** medidos com uma
 sessão aberta. Mover o banco e subir o Radar podem ser a mesma compra, em vez de duas.
+
+## 11. Levar a aplicação junto (Docker) — `deploy/app/`
+
+As seções acima movem só o banco, com a aplicação seguindo na Vercel. Se a VPS nova
+for hospedar **as duas coisas**, é aqui.
+
+```bash
+cd deploy/app
+cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
+docker compose up -d db                              # 1. só o banco
+DUMP_DIR=/caminho/do/dump docker compose --profile restore run --rm restore
+docker compose up -d --build app                     # 3. constrói e sobe
+```
+
+Três coisas que este arranjo resolve porque foram encontradas construindo de verdade,
+não previstas:
+
+- **O volume do Postgres 18 mudou de lugar.** É `pgdata:/var/lib/postgresql`, **não**
+  `/var/lib/postgresql/data`. Com o caminho antigo o container sobe, escreve na pasta
+  errada e morre no healthcheck cuspindo um aviso de 30 linhas que nunca diz "corrija
+  o volume". Foi exatamente o que o ensaio pegou.
+- **O `.dockerignore` da raiz é do OUTRO serviço.** Ele exclui `src`, `public`, `db` e
+  `scripts/*.mjs` porque foi escrito para a imagem do navegador do Radar; com ele
+  valendo, o build da aplicação falha em "src not found". Por isso existe
+  `deploy/app/Dockerfile.dockerignore` — o BuildKit procura `<Dockerfile>.dockerignore`
+  antes do da raiz, e é assim que as duas imagens convivem no mesmo repositório.
+- **`output: 'standalone'`** no `next.config.js`. Sem isso a imagem carrega o
+  `node_modules` inteiro (~1,4 GB); com isso fica em ~250 MB. A Vercel ignora a opção,
+  então ligar não muda nada no deploy atual.
+
+### O ensaio, medido (16/09/2026)
+
+Rodado de ponta a ponta contra o dump real de produção, com a origem **no ar e
+escrevendo** — de propósito, para ver o que isso custa.
+
+| | |
+|---|---|
+| dump | 159 MB, 201 entradas, 32 tabelas com dados, sha256 idêntico dos dois lados |
+| `pg_restore -j 2` | **17 min 48 s** (Docker Desktop no Windows; numa VPS Linux tende a ser menos) |
+| índices | **93** na origem, 93 no destino |
+| sequences | todas à frente do `max(id)` |
+| contagem | **27 das 32 tabelas idênticas** |
+
+As 5 que diferem são `itens`, `resultados`, `radar_mensagens`, `radar_auditoria` e
+`radar_notificacoes` — e a diferença é inteira de linhas escritas DEPOIS do dump, não
+de perda. A prova: a linha mais recente no destino é de `12:16:27`, o dump começou
+`12:18`, e a origem tem 134 linhas em `radar_mensagens` com `capturado_em` posterior a
+isso. É a seção 5 deste documento em números: sem desligar quem escreve, o que entra
+durante a janela fica para trás.
+
+### O que quebra ao sair da Vercel — e não avisa
+
+**Os 5 crons do `vercel.json` param.** `sync-pncp` 03:00, `sync-emendas` 04:00,
+`sync-transferegov` 06:00, `alertas-email` 11:00, `trial-reminders` 12:00. Eles são
+agendamento **da Vercel**, não do Next: subir a app em Docker não os traz junto, e o
+sintoma é silencioso — a base simplesmente para de atualizar e ninguém recebe alerta.
+
+Na VPS eles viram cron do sistema batendo nas mesmas rotas com o `CRON_SECRET`:
+
+```cron
+0 3 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-pncp
+0 4 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-emendas
+0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-transferegov
+0 11 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/alertas-email
+0 12 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/trial-reminders
+```
+
+Outros três pontos que mudam de mãos junto:
+
+- **TLS.** O compose publica a app em `127.0.0.1:3000`, de propósito. Quem termina
+  HTTPS é o nginx da VPS — o mesmo que já atende o Radar (`deploy/radar/nginx/`).
+- **`NEXTAUTH_SECRET`.** Se mudar de valor, toda sessão viva cai. Para a migração ser
+  invisível ao cliente, traga o valor que está em produção hoje.
+- **`RADAR_CRED_KEY`.** Tem de ser o MESMO. Ela decifra a sessão gov.br já guardada de
+  cada cliente; com chave nova o cofre vira lixo ilegível e todo mundo precisa
+  reconectar o portal.
+
+### Env de BUILD × env de runtime
+
+Tudo que é `NEXT_PUBLIC_*` e a `RADAR_EMBED_ORIGIN` são gravados no bundle durante o
+build. Editar no `.env` depois **não muda nada** — é preciso `--build` de novo. O
+`DATABASE_URL` é o contrário: só runtime, e o compose o monta a partir de
+`POSTGRES_USER/PASSWORD/DB` apontando para o serviço `db`. Isso é deliberado: um
+`.env.local` copiado da máquina de desenvolvimento apontaria para o banco ANTIGO, e a
+app subiria bonita gravando no lugar errado.
+
+### O dump não pode encostar no repositório
+
+São 159 MB com dado pessoal de todos os clientes e o cofre cifrado do Radar dentro. Por
+isso o caminho é parâmetro (`DUMP_DIR`) em vez de uma pasta versionada, e `*.dump` +
+`deploy/app/dump/` entraram no `.gitignore`. Este repositório é público.

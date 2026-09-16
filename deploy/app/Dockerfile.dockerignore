@@ -1,0 +1,35 @@
+# deploy/app/Dockerfile.dockerignore — o contexto de build DESTA imagem.
+#
+# Existe porque o `.dockerignore` da raiz foi escrito para a imagem do navegador do
+# Radar e exclui `src`, `public`, `db` e `scripts/*.mjs`. Com ele valendo, o build da
+# aplicação quebra em "src not found". O BuildKit procura este arquivo primeiro,
+# pelo nome do Dockerfile + `.dockerignore`, e só cai no da raiz se não existir.
+#
+# A primeira regra é a que importa: o contexto inteiro vai para o daemon ANTES de
+# qualquer COPY, então um `.env` aqui vaza mesmo sem nenhuma linha que o mencione.
+.env
+.env.*
+!.env.exemplo
+
+.git
+.github
+node_modules
+.next
+out
+dist
+coverage
+playwright-report
+test-results
+
+# Artefatos de execução local que só engordam o contexto.
+*.log
+npm-debug.log*
+Thumbs.db
+desktop.ini
+.DS_Store
+.calibra
+audit/resultados
+
+# O deploy não entra na imagem da aplicação (e o Dockerfile do Radar mora lá).
+deploy
+docs

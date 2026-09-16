@@ -1,0 +1,108 @@
+# deploy/app/docker-compose.yml — Postgres + aplicação na VPS nova.
+#
+#   cd deploy/app
+#   cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
+#   docker compose up -d db                      # 1. sobe só o banco
+#   docker compose --profile restore run --rm restore   # 2. restaura o dump
+#   docker compose up -d --build app             # 3. constrói e sobe a app
+#
+# O Postgres NÃO é publicado na internet: `127.0.0.1:5432` só aceita conexão da
+# própria VPS. A app fala com ele pela rede interna do compose (`db:5432`), e quem
+# precisar de acesso remoto usa túnel SSH — `ssh -L 5432:127.0.0.1:5432 vps`. É o
+# mesmo desenho da VM atual, onde o Postgres escuta em 127.0.0.1 e só o PgBouncer
+# se expõe, com TLS.
+
+name: govhealth
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-govhealth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-govhealth}
+      # UTC explícito. O banco de origem roda em Etc/UTC e a máquina de
+      # desenvolvimento não — já houve dia da semana lido errado por causa disso.
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      # ATENÇÃO: `/var/lib/postgresql`, NÃO `/var/lib/postgresql/data`. A imagem 18
+      # mudou a convenção — os dados passam a ficar numa subpasta com o número da
+      # major, para permitir `pg_upgrade --link` sem cruzar fronteira de mount. Com o
+      # caminho antigo o container sobe, escreve no lugar errado e morre no
+      # healthcheck com um aviso de 30 linhas que não diz "corrija o volume".
+      - pgdata:/var/lib/postgresql
+    ports:
+      - '127.0.0.1:5432:5432'
+    healthcheck:
+      # `pg_isready` sem -U responde pelo usuário do SO; com -U confere o papel certo.
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-govhealth} -d ${POSTGRES_DB:-govhealth}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Restauração do dump. Só roda quando chamado com --profile restore, para não
+  # correr risco de ser executado por engano num `up` e passar por cima do banco.
+  #
+  #   docker compose --profile restore run --rm restore
+  #
+  # `--no-owner --no-privileges` porque o papel de origem pode não existir aqui;
+  # `-j 2` porque a VPS não precisa de mais paralelismo para 159 MB, e mais jobs em
+  # disco compartilhado costuma piorar. Erros de "extension already exists" são
+  # esperados e inofensivos — o que importa é a contagem por tabela no fim.
+  restore:
+    profiles: ['restore']
+    image: postgres:18-alpine
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      # DUMP_DIR aponta para a pasta que contém o .dump. O padrão é `./dump`, mas
+      # mantenha o arquivo FORA do repositório se puder: são 159 MB com os dados
+      # pessoais de todos os clientes e o cofre cifrado do Radar dentro.
+      - ${DUMP_DIR:-./dump}:/dump:ro
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        set -e
+        arq=$${DUMP:-/dump/govhealth-migracao.dump}
+        echo ">> restaurando $$arq"
+        pg_restore -h db -U "$${POSTGRES_USER:-govhealth}" -d "$${POSTGRES_DB:-govhealth}" \
+          -j 2 --no-owner --no-privileges "$$arq" || echo ">> pg_restore terminou com avisos (veja acima)"
+        echo ">> ANALYZE"
+        psql -h db -U "$${POSTGRES_USER:-govhealth}" -d "$${POSTGRES_DB:-govhealth}" -c 'ANALYZE;'
+        echo ">> contagem por tabela (compare com contagem-origem.txt)"
+        psql -h db -U "$${POSTGRES_USER:-govhealth}" -d "$${POSTGRES_DB:-govhealth}" -Atc \
+          "select table_name||' '||(xpath('/row/c/text()', query_to_xml('select count(*) c from public.'||quote_ident(table_name), false, true, '')))[1]::text::bigint from information_schema.tables where table_schema='public' and table_type='BASE TABLE' order by table_name;"
+
+  app:
+    build:
+      # O contexto é a raiz do repositório; o .dockerignore que vale é o
+      # deploy/app/Dockerfile.dockerignore (ver o cabeçalho do Dockerfile).
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+      args:
+        # LIDOS EM TEMPO DE BUILD. Mudar no .env sem reconstruir não tem efeito.
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+        NEXT_PUBLIC_CONTATO_EMAIL: ${NEXT_PUBLIC_CONTATO_EMAIL}
+        NEXT_PUBLIC_IA_HABILITADA: ${NEXT_PUBLIC_IA_HABILITADA}
+        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
+        RADAR_EMBED_ORIGIN: ${RADAR_EMBED_ORIGIN}
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    env_file: [.env]
+    environment:
+      # Dentro do compose o host do banco é o nome do serviço. Esta linha vem DEPOIS
+      # do env_file e vence o que estiver lá — evita a app da VPS tentar falar com o
+      # banco antigo porque o .env foi copiado da máquina de desenvolvimento.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
+      TZ: UTC
+    ports:
+      - '127.0.0.1:3000:3000'
+
+volumes:
+  pgdata:
