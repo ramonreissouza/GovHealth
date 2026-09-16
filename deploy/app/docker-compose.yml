@@ -1,10 +1,20 @@
-# deploy/app/docker-compose.yml — Postgres + aplicação na VPS nova.
+# deploy/app/docker-compose.yml — Postgres + aplicação + worker na VPS.
 #
 #   cd deploy/app
 #   cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
 #   docker compose up -d db                      # 1. sobe só o banco
 #   docker compose --profile restore run --rm restore   # 2. restaura o dump
-#   docker compose up -d --build app             # 3. constrói e sobe a app
+#   docker compose up -d --build app worker      # 3. constrói e sobe app + worker
+#
+# SEM nginx nem certbot aqui dentro — esta VPS é COMPARTILHADA (tem outro projeto
+# rodando junto, tecsuply) e a porta 80/443 já é do nginx DO SISTEMA
+# (`systemctl status nginx`), gerenciado fora do Docker, com certbot no modo
+# `--nginx` (`/etc/nginx/sites-available/`). Ver deploy/app/nginx/govhealth.conf
+# para o arquivo de site e o passo a passo de como ligá-lo.
+#
+# `worker` é quem agenda os 4 jobs que antes eram crons da Vercel (sync-pncp,
+# sync-emendas, alertas-email, trial-reminders) via pg-boss — ver src/worker/index.ts.
+# Suba-o só DEPOIS de desativar os crons na Vercel, para não rodar em duplicidade.
 #
 # O Postgres NÃO é publicado na internet: `127.0.0.1:5432` só aceita conexão da
 # própria VPS. A app fala com ele pela rede interna do compose (`db:5432`), e quem
@@ -84,6 +94,12 @@ services:
       # deploy/app/Dockerfile.dockerignore (ver o cabeçalho do Dockerfile).
       context: ../..
       dockerfile: deploy/app/Dockerfile
+      # EXPLÍCITO, não confiar no "último stage do Dockerfile" — o `worker` foi
+      # acrescentado DEPOIS do `runner`, e sem `target:` o build cai por padrão
+      # no último stage do arquivo. Sem esta linha, `app` builda o `worker` calado:
+      # a imagem sobe (build "funciona"), só não tem `.next/standalone` nem
+      # `server.js` dentro. Medido: as duas imagens saíam idênticas.
+      target: runner
       args:
         # LIDOS EM TEMPO DE BUILD. Mudar no .env sem reconstruir não tem efeito.
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
@@ -102,7 +118,29 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
       TZ: UTC
     ports:
-      - '127.0.0.1:3000:3000'
+      # 3001, NÃO 3000: nesta VPS a porta 3000 já é do `tecsuply-app-1` (outro
+      # projeto, outro docker-compose). O container por dentro continua na 3000
+      # (é a porta que o Next escuta, fixa no Dockerfile) — só o lado do HOST
+      # muda. O nginx do sistema aponta para 127.0.0.1:3001 (ver nginx/govhealth.conf).
+      - '127.0.0.1:3001:3000'
+
+  # Substitui os 5 crons da Vercel (vercel.json). Processo de longa duração: faz
+  # polling no schema `pgboss` do próprio banco (ver src/worker/index.ts) — não é
+  # chamado por HTTP nem depende de cron do sistema. Roda via `tsx` direto, sem
+  # passo de build próprio, por isso não recebe `args:` de build-time como a `app`.
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+      target: worker
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    env_file: [.env]
+    environment:
+      # Mesma regra da app: vence o que vier do .env, para não apontar pro banco antigo.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
+      TZ: America/Sao_Paulo
 
 volumes:
   pgdata:

@@ -1,4 +1,5 @@
-// src/lib/db.ts — cliente Postgres (Neon) compartilhado.
+// src/lib/db.ts — cliente Postgres compartilhado (Neon em dev, Postgres próprio
+// na VPS em produção).
 // Pool lazy: não instancia no import, para o build não exigir DATABASE_URL.
 
 import { Pool, types, type QueryResultRow } from 'pg'
@@ -10,15 +11,27 @@ types.setTypeParser(1082, (v) => v)
 
 let pool: Pool | null = null
 
+// Neon exige SSL. O Postgres da VPS (deploy/app/docker-compose.yml, host `db`) não
+// tem TLS — e não precisa: essa conexão nunca sai da rede interna do compose, só o
+// nginx termina HTTPS pra fora. Exigir SSL contra um Postgres sem TLS não degrada,
+// FALHA a conexão inteira ("the server does not support SSL connections"), então
+// isto não pode ser um default único — decide pelo host da própria connection string.
+function sslParaHost(connectionString: string): false | { rejectUnauthorized: boolean } {
+  let host = ''
+  try { host = new URL(connectionString).hostname } catch { /* connectionString malformada: cai pro default (SSL) abaixo */ }
+  const semTls = host === 'db' || host === 'localhost' || host === '127.0.0.1'
+  return semTls ? false : { rejectUnauthorized: false }
+}
+
 function getPool(): Pool {
   if (!pool) {
     const connectionString = process.env.DATABASE_URL
     if (!connectionString) {
-      throw new Error('DATABASE_URL não configurada — defina a connection string do Neon no .env.local')
+      throw new Error('DATABASE_URL não configurada — defina a connection string do banco no .env.local')
     }
     pool = new Pool({
       connectionString,
-      ssl: { rejectUnauthorized: false }, // Neon exige SSL
+      ssl: sslParaHost(connectionString),
       max: 5,
       connectionTimeoutMillis: 5000,
     })

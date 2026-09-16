@@ -73,3 +73,10 @@ scripts/deck/out/
 # Nunca versionado. Ver deploy/app/docker-compose.yml (DUMP_DIR).
 deploy/app/dump/
 *.dump
+
+# Certificado + CHAVE PRIVADA do Let's Encrypt do Radar (docker-compose.vps.yml
+# monta isto do disco da VPS). Nunca versionar — mesmo motivo do `.env`: repositório
+# público. (O app principal usa o nginx/certbot DO SISTEMA na VPS, fora do
+# repositório — ver deploy/app/nginx/govhealth.conf — então não há pasta
+# equivalente aqui.)
+deploy/radar/certbot/

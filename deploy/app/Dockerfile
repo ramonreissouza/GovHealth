@@ -76,3 +76,22 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/inicio').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "server.js"]
+
+# ── 4. worker (pg-boss) ────────────────────────────────────────────────────────
+# Ramo independente a partir de `deps` — não passa pelo `npm run build` do Next, só
+# roda src/worker/index.ts via `tsx` (sem passo de build próprio). Por isso precisa
+# do `node_modules` completo (incl. devDependencies do npm ci) e do código-fonte, ao
+# contrário do `runner`, que só leva o output `standalone` já podado.
+FROM node:24-alpine AS worker
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
+COPY src ./src
+
+USER nextjs
+CMD ["npx", "tsx", "src/worker/index.ts"]

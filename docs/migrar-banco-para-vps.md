@@ -234,20 +234,37 @@ durante a janela fica para trás.
 agendamento **da Vercel**, não do Next: subir a app em Docker não os traz junto, e o
 sintoma é silencioso — a base simplesmente para de atualizar e ninguém recebe alerta.
 
-Na VPS eles viram cron do sistema batendo nas mesmas rotas com o `CRON_SECRET`:
+Na VPS, 4 deles (`sync-pncp`, `sync-emendas`, `alertas-email`, `trial-reminders`)
+**não** viram cron do sistema batendo em rota HTTP — viram o serviço `worker` do
+compose, rodando pg-boss (`src/worker/index.ts`; lógica em `src/jobs/*.ts`). O
+agendamento fica persistido no próprio banco (schema `pgboss`), então subir o
+worker já é suficiente, sem crontab nem `CRON_SECRET` externo:
 
-```cron
-0 3 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-pncp
-0 4 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-emendas
-0 6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/sync-transferegov
-0 11 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/alertas-email
-0 12 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://app.EXEMPLO.com.br/api/cron/trial-reminders
+```bash
+docker compose up -d --build app worker
 ```
 
-Outros três pontos que mudam de mãos junto:
+Suba o `worker` só DEPOIS de desativar os crons na Vercel — os dois ativos ao
+mesmo tempo rodam a mesma janela em duplicidade. As rotas em
+`src/app/api/cron/*` continuam existindo, mas agora só para disparo manual/debug
+(`curl -H "Authorization: Bearer $CRON_SECRET" .../api/cron/sync-pncp`).
 
-- **TLS.** O compose publica a app em `127.0.0.1:3000`, de propósito. Quem termina
-  HTTPS é o nginx da VPS — o mesmo que já atende o Radar (`deploy/radar/nginx/`).
+O quinto, `sync-transferegov`, ficou de fora dessa migração: a rota nunca existiu
+no código — o `vercel.json` aponta para um path que sempre respondeu 404 na
+Vercel, então não havia lógica real para portar. Decidir se vale construir essa
+ingestão (e o que ela grava) é trabalho separado, não parte deste roteiro.
+
+Outros quatro pontos que mudam de mãos junto:
+
+- **TLS público.** O compose publica a app em `127.0.0.1:3000`, de propósito. Quem
+  termina HTTPS é o nginx da VPS — o mesmo que já atende o Radar
+  (`deploy/radar/nginx/`).
+- **SSL do Postgres (interno, não confundir com o TLS público acima).** Neon exige
+  SSL; o Postgres do compose (host `db`) não tem TLS e não precisa — a conexão
+  nunca sai da rede interna do compose. `src/lib/db.ts` decide isso sozinho pelo
+  host da `DATABASE_URL`, então não há nada a configurar aqui — mas se algum
+  código novo abrir uma conexão própria ao banco (em vez de usar `@/lib/db`),
+  replique essa lógica, ou vai herdar o mesmo problema.
 - **`NEXTAUTH_SECRET`.** Se mudar de valor, toda sessão viva cai. Para a migração ser
   invisível ao cliente, traga o valor que está em produção hoje.
 - **`RADAR_CRED_KEY`.** Tem de ser o MESMO. Ela decifra a sessão gov.br já guardada de
