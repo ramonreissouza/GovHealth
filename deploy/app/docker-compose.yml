@@ -1,10 +1,21 @@
 # deploy/app/docker-compose.yml — Postgres + aplicação + worker na VPS.
 #
-#   cd deploy/app
-#   cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
+# SEGREDOS NÃO VÊM DE `.env` NESTA PASTA — vêm do ambiente do shell, no mesmo
+# padrão do outro projeto desta VPS (tecsuply, ~/tecsupply-secrets.env):
+#
+#   source ~/govhealth-secrets.env      # export KEY=valor, um por linha
+#   cd ~/govhealth/deploy/app
 #   docker compose up -d db                      # 1. sobe só o banco
 #   docker compose --profile restore run --rm restore   # 2. restaura o dump
-#   docker compose up -d --build app worker      # 3. constrói e sobe app + worker
+#   docker compose build app worker              # 3. constrói
+#   docker compose up -d --wait --wait-timeout 120 app worker   # 4. sobe
+#
+# `deploy/app/.env.exemplo` continua sendo a lista canônica de variáveis (com o
+# porquê de cada uma) — só troque `KEY=valor` por `export KEY=valor` ao montar o
+# `~/govhealth-secrets.env`. Nada com `export` pode se chamar `.env` dentro do
+# repositório: esse nome é lido automaticamente pelo próprio `docker compose`
+# (não em formato de shell) e o `.gitignore` trata `.env` como segredo — dois
+# motivos para não reaproveitar o nome.
 #
 # SEM nginx nem certbot aqui dentro — esta VPS é COMPARTILHADA (tem outro projeto
 # rodando junto, tecsuply) e a porta 80/443 já é do nginx DO SISTEMA
@@ -24,13 +35,49 @@
 
 name: govhealth
 
+# Uma chave sem valor (ou `null`) faz o compose repassar a variável de mesmo nome
+# do AMBIENTE DO SHELL para o container — é o que liga isto ao `source` acima.
+# Âncora YAML (`x-` é ignorado pelo schema do compose) para não repetir a mesma
+# lista em `app` e `worker`.
+x-app-env: &app-env
+  SITE_URL:
+  NEXT_PUBLIC_APP_URL:
+  NEXT_PUBLIC_CONTATO_EMAIL:
+  NEXTAUTH_SECRET:
+  NEXTAUTH_URL:
+  GOOGLE_CLIENT_ID:
+  GOOGLE_CLIENT_SECRET:
+  AUTH_SESSAO_UNICA:
+  RADAR_CRED_KEY:
+  RADAR_CONNECT_URL:
+  RADAR_CONNECT_TOKEN:
+  RADAR_EMBED_ORIGIN:
+  CRON_SECRET:
+  RESEND_API_KEY:
+  RESEND_FROM_EMAIL:
+  ZAI_API_KEY:
+  ZAI_BASE_URL:
+  ZAI_MODEL:
+  NEXT_PUBLIC_IA_HABILITADA:
+  STRIPE_SECRET_KEY:
+  STRIPE_WEBHOOK_SECRET:
+  STRIPE_PRICE_ESSENCIAL:
+  STRIPE_PRICE_PRO:
+  STRIPE_PRICE_EMPRESA:
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:
+  PORTAL_TRANSPARENCIA_API_KEY:
+  SERASA_API_KEY:
+  SERASA_API_URL:
+  UPSTASH_REDIS_REST_URL:
+  UPSTASH_REDIS_REST_TOKEN:
+
 services:
   db:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-govhealth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD em ~/govhealth-secrets.env e dê source}
       POSTGRES_DB: ${POSTGRES_DB:-govhealth}
       # UTC explícito. O banco de origem roda em Etc/UTC e a máquina de
       # desenvolvimento não — já houve dia da semana lido errado por causa disso.
@@ -101,7 +148,8 @@ services:
       # `server.js` dentro. Medido: as duas imagens saíam idênticas.
       target: runner
       args:
-        # LIDOS EM TEMPO DE BUILD. Mudar no .env sem reconstruir não tem efeito.
+        # LIDOS EM TEMPO DE BUILD. Mudar em ~/govhealth-secrets.env sem reconstruir
+        # a imagem (docker compose build) não tem efeito.
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
         NEXT_PUBLIC_CONTATO_EMAIL: ${NEXT_PUBLIC_CONTATO_EMAIL}
         NEXT_PUBLIC_IA_HABILITADA: ${NEXT_PUBLIC_IA_HABILITADA}
@@ -110,11 +158,11 @@ services:
     restart: unless-stopped
     depends_on:
       db: { condition: service_healthy }
-    env_file: [.env]
     environment:
-      # Dentro do compose o host do banco é o nome do serviço. Esta linha vem DEPOIS
-      # do env_file e vence o que estiver lá — evita a app da VPS tentar falar com o
-      # banco antigo porque o .env foi copiado da máquina de desenvolvimento.
+      <<: *app-env
+      # DATABASE_URL não está na âncora: aqui o host é o nome do serviço (`db`),
+      # não o valor que estaria no `~/govhealth-secrets.env` — construído a partir
+      # de POSTGRES_USER/PASSWORD/DB, que também vêm do ambiente do shell.
       DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
       TZ: UTC
     ports:
@@ -136,9 +184,8 @@ services:
     restart: unless-stopped
     depends_on:
       db: { condition: service_healthy }
-    env_file: [.env]
     environment:
-      # Mesma regra da app: vence o que vier do .env, para não apontar pro banco antigo.
+      <<: *app-env
       DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
       TZ: America/Sao_Paulo
 

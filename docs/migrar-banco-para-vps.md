@@ -184,11 +184,14 @@ As seções acima movem só o banco, com a aplicação seguindo na Vercel. Se a 
 for hospedar **as duas coisas**, é aqui.
 
 ```bash
+# segredos vêm do ambiente do shell, não de um .env nesta pasta — ver o
+# cabeçalho de deploy/app/docker-compose.yml e deploy/app/.env.exemplo
+source ~/govhealth-secrets.env
 cd deploy/app
-cp .env.exemplo .env && chmod 600 .env && $EDITOR .env
 docker compose up -d db                              # 1. só o banco
 DUMP_DIR=/caminho/do/dump docker compose --profile restore run --rm restore
-docker compose up -d --build app                     # 3. constrói e sobe
+docker compose build app worker                      # 3. constrói
+docker compose up -d --wait --wait-timeout 120 app worker   # 4. sobe
 ```
 
 Três coisas que este arranjo resolve porque foram encontradas construindo de verdade,
