@@ -27,6 +27,8 @@
     "pncp:breaker:teste": "node scripts/pncp-breaker.teste.mjs",
     "cobertura:regua:teste": "node scripts/cobertura-regua.teste.mjs",
     "radar:pista:teste": "node scripts/radar/pista-navegador.teste.mjs",
+    "radar:egovrs:teste": "node scripts/radar/connector-egovrs.teste.mjs",
+    "radar:comprasbr:teste": "node scripts/radar/connector-comprasbr.teste.mjs",
     "portais:migrate": "node scripts/migrate-portais.mjs",
     "portais:backfill": "node scripts/backfill-portais.mjs",
     "portais:harvest": "node scripts/harvest-portais.mjs",

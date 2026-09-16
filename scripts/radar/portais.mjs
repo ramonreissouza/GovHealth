@@ -135,6 +135,44 @@ export const PORTAIS = {
     emLogin: ({ url }) => /account\/login|\/login/i.test(url),
     logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
   },
+  // eGov RS (Compras RS) e Pregão Banrisul: mesma aplicação, dois domínios. A ata de
+  // esclarecimentos e impugnações é PÚBLICA — 37 de 37 processos sondados em 15/09/2026
+  // responderam 200 sem cookie nenhum. `loginUrl`/`areaUrl` ficam registrados só para a
+  // área do fornecedor, que este conector NÃO lê.
+  egovrs: {
+    id: 'egovrs',
+    nome: 'Compras RS',
+    publico: true,
+    dominio: 'compras.rs.gov.br',
+    loginUrl: 'https://www.compras.rs.gov.br/',
+    areaUrl: 'https://www.compras.rs.gov.br/',
+    emLogin: ({ url }) => /\/login|\/entrar|autentica/i.test(url),
+    logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
+  },
+  banrisul: {
+    id: 'banrisul',
+    nome: 'Pregão Banrisul',
+    publico: true,
+    dominio: 'pregaobanrisul',
+    loginUrl: 'https://pregaobanrisul.com.br/',
+    areaUrl: 'https://pregaobanrisul.com.br/',
+    emLogin: ({ url }) => /\/login|\/entrar|autentica/i.test(url),
+    logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
+  },
+  // Compras BR: o `dominio` casa o link que o PNCP publica (comprasbr.com.br/
+  // pregao-eletronico-detalhe/?idlicitacao=<id>), mas o conector NÃO abre essa página —
+  // ela redireciona para a home. Quem serve o conteúdo é a API em app.comprasbr.com.br,
+  // que o próprio iframe da página consome. Ver connector-comprasbr.mjs.
+  comprasbr: {
+    id: 'comprasbr',
+    nome: 'Compras BR',
+    publico: true,
+    dominio: 'comprasbr.com.br',
+    loginUrl: 'https://comprasbr.com.br/',
+    areaUrl: 'https://comprasbr.com.br/',
+    emLogin: ({ url }) => /\/login|\/entrar|autentica/i.test(url),
+    logado: ({ url, conteudo }) => !/\/login/i.test(url) && /(sair|logout|painel)/i.test(conteudo || ''),
+  },
 }
 
 /** Meta de um portal (fallback: comprasgov, o único totalmente calibrado). */

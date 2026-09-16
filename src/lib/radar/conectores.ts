@@ -95,6 +95,50 @@ export const CONECTORES: Conector[] = [
     modoPublico: true,
     dominio: 'bnccompras',
   },
+  // eGov RS: Compras RS e Pregão Banrisul são a MESMA aplicação em dois domínios (o
+  // segundo é a fachada usada por municípios gaúchos), com a mesma rota de edital
+  // (/editais/<numero>_<ano>/<id>) — o mesmo caso do BLL/BNC. Um conector só atende os
+  // dois (scripts/radar/connector-egovrs.mjs); os ids ficam separados para o cliente ler
+  // o nome do portal onde o pregão realmente corre.
+  //
+  // O que entra é a ATA DE ESCLARECIMENTOS E IMPUGNAÇÕES: pergunta e resposta na íntegra,
+  // quem respondeu, quando, e o julgamento da impugnação (Negado/Deferido). É o conteúdo
+  // mais decisivo dos portais públicos ligados até aqui — muda proposta, não só avisa.
+  //
+  // A sessão de lances ("Ata Eletrônica") está atrás de um desafio anti-robô declarado
+  // pelo próprio portal e NÃO é lida.
+  {
+    id: 'egovrs',
+    nome: 'Compras RS',
+    descricao: 'Esclarecimentos e impugnações com a resposta na íntegra. Lemos a página pública do processo — não pede senha.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'compras.rs.gov.br',
+  },
+  {
+    id: 'banrisul',
+    nome: 'Pregão Banrisul',
+    descricao: 'Mesma plataforma do Compras RS, usada por municípios gaúchos. Lemos a página pública do processo — não pede senha.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'pregaobanrisul',
+  },
+  // Compras BR (AZ Tecnologia): API REST pública, sem token. Único portal ligado em que
+  // o link do PNCP NÃO é lido — a página redireciona para a home e o conteúdo vive num
+  // iframe; o conector fala direto com a API que esse iframe consome.
+  //
+  // Melhor aproveitamento medido (36% dos processos têm pedido registrado, contra 16% do
+  // eGov RS), mas o teor da pergunta e da resposta fica em PDF: entram o ASSUNTO, o tipo,
+  // a situação e o nome do anexo — mais a situação do processo quando ela é ruptura
+  // (suspenso, revogado, anulado…).
+  {
+    id: 'comprasbr',
+    nome: 'Compras BR',
+    descricao: 'Esclarecimentos, impugnações e suspensões do processo. Lemos a página pública do processo — não pede senha.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'comprasbr.com.br',
+  },
 ]
 
 const POR_ID = new Map(CONECTORES.map((c) => [c.id, c]))

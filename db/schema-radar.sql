@@ -185,6 +185,8 @@ CREATE INDEX IF NOT EXISTS idx_radar_audit_titular ON radar_auditoria (titular_i
 -- processo, sem login. Licitações-e segue em ETAPA 2 (login/seletores a calibrar).
 -- O BNC roda a MESMA aplicação do BLL, em outro domínio — um conector só atende os dois,
 -- mas os ids ficam separados para o cliente ver o nome do portal onde o pregão corre.
+-- Compras RS e Pregão Banrisul são o mesmo caso do BLL/BNC: uma aplicação, dois
+-- domínios, dois ids. O que se lê ali é a ata PÚBLICA de esclarecimentos e impugnações.
 INSERT INTO radar_conectores (id, nome) VALUES
   ('comprasgov',   'Compras.gov.br'),
   ('licitacoes-e', 'Licitações-e (Banco do Brasil)'),
@@ -192,5 +194,8 @@ INSERT INTO radar_conectores (id, nome) VALUES
   ('bnc',          'BNC — Bolsa Nacional de Compras'),
   ('licitanet',    'Licitanet'),
   ('ammlicita',    'AMM Licita'),
-  ('pcp',          'Portal de Compras Públicas')
+  ('pcp',          'Portal de Compras Públicas'),
+  ('egovrs',       'Compras RS'),
+  ('banrisul',     'Pregão Banrisul'),
+  ('comprasbr',    'Compras BR')
 ON CONFLICT (id) DO NOTHING;
