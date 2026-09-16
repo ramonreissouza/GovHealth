@@ -27,7 +27,6 @@ import {
   Search, Star, Archive, ArchiveRestore, CheckCheck, MessageSquare, Paperclip,
   Inbox as InboxIcon, MoreVertical, RefreshCw, Info, BellOff, Settings,
 } from 'lucide-react'
-import { comProblema } from '@/lib/radar/saude'
 import { CONECTORES, conectorDisponivel, conectorPublico } from '@/lib/radar/conectores'
 import { destacar, temChave } from '@/lib/radar/destaque'
 import { nomePortal } from '@/lib/portais'
@@ -365,8 +364,6 @@ export default function RadarPage() {
     }
   }
 
-  const problemas = data ? comProblema(data.saude, agoraMs) : []
-
   // Dois estados diferentes, e a tela dizia a mesma coisa nos dois (REQUISITO 4.2):
   //  • semConectorOk  — nenhuma credencial verificada, então o chat dos portais que
   //    EXIGEM login (Compras.gov) não está sendo lido. Independe de já ter mensagem:
@@ -500,15 +497,13 @@ export default function RadarPage() {
                   : <>A conexão por login do gov.br não está habilitada neste ambiente; o Portal de Compras Públicas monitora sem login.</>}
               </p>
             </div>
-          ) : problemas.length > 0 && (
-            <div className="mb-4 flex items-start gap-2 bg-amber/10 border border-amber/30 rounded-lg px-4 py-3">
-              <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
-              <p className="text-[12px] text-amber">
-                Não foi possível verificar {problemas.length} conector(es) recentemente — a lista pode estar
-                <strong> incompleta</strong>. Reconecte as credenciais para voltar a monitorar com segurança.
-              </p>
-            </div>
-          )}
+          ) : null}
+          {/* O banner genérico de "não foi possível verificar N conector(es)" saiu daqui
+              (16/09/2026). Ele dizia a mesma coisa que a faixa logo abaixo — que ainda
+              por cima diz QUAL portal e POR QUÊ — e custava mais 60 px de primeira tela
+              para repetir uma informação pior. O requisito 4.2 continua atendido: a
+              faixa abre uma linha âmbar por conector que precisa de ação, e o contador
+              dela vira "N precisa(m) de atenção" no mesmo instante. */}
 
           {/* Aviso quando a notificação está desligada — o valor da ferramenta é o alerta. */}
           {!config.notificar && (
