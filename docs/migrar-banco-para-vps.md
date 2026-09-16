@@ -207,6 +207,26 @@ não previstas:
   `node_modules` inteiro (~1,4 GB); com isso fica em ~250 MB. A Vercel ignora a opção,
   então ligar não muda nada no deploy atual.
 
+### O ensaio, medido (16/09/2026)
+
+Rodado de ponta a ponta contra o dump real de produção, com a origem **no ar e
+escrevendo** — de propósito, para ver o que isso custa.
+
+| | |
+|---|---|
+| dump | 159 MB, 201 entradas, 32 tabelas com dados, sha256 idêntico dos dois lados |
+| `pg_restore -j 2` | **17 min 48 s** (Docker Desktop no Windows; numa VPS Linux tende a ser menos) |
+| índices | **93** na origem, 93 no destino |
+| sequences | todas à frente do `max(id)` |
+| contagem | **27 das 32 tabelas idênticas** |
+
+As 5 que diferem são `itens`, `resultados`, `radar_mensagens`, `radar_auditoria` e
+`radar_notificacoes` — e a diferença é inteira de linhas escritas DEPOIS do dump, não
+de perda. A prova: a linha mais recente no destino é de `12:16:27`, o dump começou
+`12:18`, e a origem tem 134 linhas em `radar_mensagens` com `capturado_em` posterior a
+isso. É a seção 5 deste documento em números: sem desligar quem escreve, o que entra
+durante a janela fica para trás.
+
 ### O que quebra ao sair da Vercel — e não avisa
 
 **Os 5 crons do `vercel.json` param.** `sync-pncp` 03:00, `sync-emendas` 04:00,
