@@ -521,19 +521,20 @@ export default function RadarPage() {
             </div>
           )}
 
-          {/* KPIs */}
+          {/* KPIs. Os dois contadores de conector saíram daqui: a faixa de saúde logo
+              abaixo diz "4 de 5 verificados" E quem é cada um — dois números soltos
+              repetiam a informação e custavam metade da linha. */}
           {data && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <div className="grid grid-cols-2 gap-3 mb-4">
               <Kpi label="Mensagens não lidas" valor={String(data.kpis.naoLidas)} destaque={data.kpis.naoLidas > 0} />
               <Kpi label="Pregões monitorados" valor={String(data.kpis.processosAtivos)} />
-              <Kpi label="Conectores OK" valor={String(data.saude.length - problemas.length)} />
-              <Kpi label="Conectores c/ problema" valor={String(problemas.length)} destaque={problemas.length > 0} />
             </div>
           )}
 
-          {/* Saúde dos conectores */}
-          <div className="mb-5">
-            <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-2">Saúde dos conectores</div>
+          {/* Saúde dos conectores — uma faixa, não uma grade. Ver o cabeçalho do
+              componente para o porquê. */}
+          <div className="mb-4">
+            <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">Saúde dos conectores</div>
             <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} />
           </div>
 
