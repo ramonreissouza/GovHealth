@@ -21,7 +21,9 @@
 //   3) `dataAberturaProposta` vem como string VAZIA, não nula. Qualquer coisa que
 //      confie em `?? null` para datas quebra aqui.
 
-import { montarMensagens, idDoProcesso, rotuloDoAnexo } from './connector-licitacoes-e.mjs'
+import {
+  montarMensagens, idDoProcesso, rotuloDoAnexo, sync, usarBuscador, esquecerRecusa,
+} from './connector-licitacoes-e.mjs'
 
 let ok = 0, falhou = 0
 function afirmar(nome, valor, esperado) {
@@ -133,6 +135,85 @@ afirmar('tudo vazio dá zero', montarMensagens({ basicos: {}, anexos: {} }).leng
 afirmar('anexo sem nome é ignorado',
   montarMensagens({ basicos: {}, anexos: { data: [{ nomeArquivo: '   ', timestampInclusaoArquivo: '01/01/2026 10:00:00' }] } }).length,
   0)
+
+// ── 6. rótulos compostos: a ordem das regras inverte o fato ──────────────
+//
+// `impugna` está em PADROES['recurso'] (run.mjs) e `recurso` está no conjunto ALTA:
+// rotular a RESPOSTA do órgão como "Impugnação" manda e-mail de prioridade alta sobre
+// um fato que não aconteceu. As asserções antigas só exercitavam nomes simples.
+console.log('\nrótulos compostos')
+afirmar('RESPOSTA_IMPUGNACAO não vira impugnação', rotuloDoAnexo('RESPOSTA_IMPUGNACAO_SIEMENS.pdf'), 'Resposta a impugnação')
+afirmar('RESP_IMPUGNACAO idem', rotuloDoAnexo('RESP_IMPUGNACAO.pdf'), 'Resposta a impugnação')
+afirmar('JULGAMENTO_IMPUGNACAO idem', rotuloDoAnexo('JULGAMENTO_IMPUGNACAO.pdf'), 'Resposta a impugnação')
+afirmar('RESPOSTA_RECURSO é decisão, não esclarecimento', rotuloDoAnexo('RESPOSTA_RECURSO.pdf'), 'Decisão de recurso')
+afirmar('impugnação de verdade continua impugnação', rotuloDoAnexo('IMPUGNACAO_SIEMENS.pdf'), 'Impugnação')
+// /ATA/ sem âncora casava dentro de outras palavras — e catálogo de produtos é peça
+// corriqueira em pregão de saúde.
+afirmar('CATALOGO_PRODUTOS não é ata', rotuloDoAnexo('CATALOGO_PRODUTOS.pdf'), 'Documento')
+afirmar('DATA_BASE não é ata', rotuloDoAnexo('DATA_BASE.pdf'), 'Documento')
+afirmar('PLATAFORMA não é ata', rotuloDoAnexo('PLATAFORMA.pdf'), 'Documento')
+afirmar('ATA_SESSAO continua ata', rotuloDoAnexo('ATA_SESSAO.pdf'), 'Ata')
+afirmar('ATA DE REGISTRO continua ata', rotuloDoAnexo('ATA DE REGISTRO.pdf'), 'Ata')
+
+// ── 7. o host precisa estar ancorado ─────────────────────────────
+console.log('\nhost ancorado')
+// Sem âncora isto devolvia '999': o conector pediria ao BB OUTRO certame e gravaria
+// os eventos dele sob o licitacaoId deste cliente.
+afirmar('host embutido em querystring não casa',
+  idDoProcesso('https://outro.example/x?u=licitacoes-e2.bb.com.br/a/visualizar-processo-publico/999'), null)
+afirmar('subdomínio parecido não casa',
+  idDoProcesso('https://licitacoes-e2.bb.com.br.evil.test/aop/visualizar-processo-publico/999'), null)
+afirmar('o endereço de verdade continua casando',
+  idDoProcesso('https://licitacoes-e2.bb.com.br/aop-inter-estatico/visualizar-processo-publico/1100862'), '1100862')
+
+// ── 8. o `sync` — os três caminhos que sustentam o `disponivel: true` ─────
+//
+// O PR argumentava: "depois do commit 1 o conector não consegue mais mentir. Método
+// errado → 'resposta não é JSON'. BB bloqueando → portal_indisponivel. Em nenhum
+// caminho ele diz 'sem novidades'." As três afirmações são sobre `pedir()`/`sync()`, e
+// nenhuma era exercitada — `montarMensagens` é pura e não vê status HTTP nem envelope.
+// Duas delas não se sustentavam. Agora são fato verificável, não argumento.
+console.log('\nsync — o que o conector diz quando o portal NÃO entrega')
+
+const PROC = [{ licitacaoId: 'X-1/2026', urlPublica: 'https://licitacoes-e2.bb.com.br/aop-inter-estatico/visualizar-processo-publico/1099465' }]
+const resposta = (status, corpo = '{}') => ({ status, text: async () => corpo })
+
+async function syncCom(responder) {
+  esquecerRecusa()   // o flag de rodada é de módulo: sem isto um teste herda o anterior
+  usarBuscador(async () => responder())
+  try { return await sync({ processos: PROC, simulado: false }) }
+  finally { usarBuscador(null); esquecerRecusa() }
+}
+
+const r403 = await syncCom(() => resposta(403, '<html>403 Forbidden</html>'))
+afirmar('403 → portal_indisponivel', r403.status, 'portal_indisponivel')
+afirmar('403 → o detalhe diz o que houve', /recusou a conex/.test(r403.detalhe), true)
+
+// O bloqueio que NÃO usa 403: interstitial de WAF servido com 200 + HTML.
+const rHtml = await syncCom(() => resposta(200, '<html><body>Access Denied</body></html>'))
+afirmar('bloqueio com 200 → não diz ok', rHtml.status !== 'ok', true)
+afirmar('bloqueio com 200 → nem diz falha (o código está certo)', rHtml.status, 'portal_indisponivel')
+
+// O envelope de erro do BB DENTRO de um HTTP 200 — o falso "sem novidades".
+const rEnv = await syncCom(() => resposta(200, '{"status":"ERRO","statusCode":500,"messages":["x"],"data":null}'))
+afirmar('envelope de erro → não diz ok', rEnv.status !== 'ok', true)
+
+// E o contraste, que é o que impede a correção de virar paranoia: entrega de verdade
+// CONTINUA dizendo ok.
+const rOk = await syncCom(() => resposta(200, JSON.stringify(BASICOS)))
+afirmar('payload bom → ok', rOk.status, 'ok')
+
+// A recusa é fato sobre o PORTAL: o 2º tenant da mesma rodada não bate de novo.
+esquecerRecusa()
+usarBuscador(async () => resposta(403, 'x'))
+const t1 = await sync({ processos: PROC, simulado: false })
+let bateu = 0
+usarBuscador(async () => { bateu++; return resposta(200, JSON.stringify(BASICOS)) })
+const t2 = await sync({ processos: PROC, simulado: false })
+usarBuscador(null); esquecerRecusa()
+afirmar('1º tenant → portal_indisponivel', t1.status, 'portal_indisponivel')
+afirmar('2º tenant → não repete a batida', bateu, 0)
+afirmar('2º tenant → diz que já recusou', /já recusou/.test(t2.detalhe), true)
 
 console.log(`\n${ok} ok, ${falhou} falharam`)
 process.exit(falhou ? 1 : 0)

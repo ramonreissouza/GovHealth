@@ -1,4 +1,9 @@
 // scripts/radar/connector-scaffold.mjs — fábrica de conector-scaffold (ETAPA 2).
+//
+// SEM IMPORTADOR HOJE. O Licitações-e era o último que a usava e passou a ler o
+// dossiê público do BB de verdade. Fica como SEMENTE do próximo portal — é o molde
+// que garante status honesto antes de a captura existir. Se o próximo portal nascer
+// sem ela, apague o arquivo em vez de deixá-lo apodrecendo aqui.
 // Portais além do Compras.gov.br já têm modelo de dados, seleção por portal e
 // registro no worker prontos. A captura REAL do chat (login + seletores de DOM)
 // é calibrada por portal na etapa 2 — até lá o conector é HONESTO: exercita todo

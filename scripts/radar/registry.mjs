@@ -1,7 +1,8 @@
 // scripts/radar/registry.mjs — REGISTRO de conectores do worker (id → função sync).
 // O worker (run.mjs) despacha por cred.conector_id. Compras.gov.br lê a área logada
 // (sessão capturada); PCP, BLL e BNC leem a página PÚBLICA do processo, sem credencial.
-// Licitações-e segue scaffold honesto até a etapa 2 (ver connector-scaffold.mjs).
+// Licitações-e lê o DOSSIÊ público do portal novo do BB pela API REST — sem login e
+// sem navegador (ver connector-licitacoes-e.mjs).
 
 import { sync as comprasgov } from './connector-comprasgov.mjs'
 import { sync as licitacoesE } from './connector-licitacoes-e.mjs'

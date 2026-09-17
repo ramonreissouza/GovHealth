@@ -117,12 +117,36 @@ async function lerSessao(page, url) {
   return { linhas }
 }
 
+/**
+ * RECUSA É FATO SOBRE O PORTAL, NÃO SOBRE O TENANT.
+ *
+ * O `break` no laço abaixo protege a passada de UM titular — mas o `run.mjs` chama este
+ * `sync` uma vez POR TITULAR. Com 5 tenants monitorando o Licitanet, um 403 produzia 5
+ * `chromium.launch()` (~12 s cada) e 5 batidas novas na mesma porta fechada, mais 5
+ * linhas de `portal_indisponivel` gravadas como se fossem verificações independentes.
+ * Se a regra do WAF for por taxa, é isso que renova o bloqueio.
+ *
+ * O flag vive no escopo do módulo. O processo do worker morre ao fim da passada, então
+ * ele se limpa sozinho entre rodadas; `esquecerRecusa()` existe para os testes.
+ */
+let recusadoNestaRodada = null
+export function esquecerRecusa() { recusadoNestaRodada = null }
+
 export async function sync({ credencial, processos = [], simulado }) {
   if (simulado) {
     const mensagens = []
     const alvos = processos.length ? processos : [{ licitacaoId: 'SIMULADO-licitanet' }]
     for (const p of alvos) for (const f of SIMULADO_FIXTURES) mensagens.push(normalizarMensagem(f, p.licitacaoId))
     return { status: 'ok', detalhe: `simulado (${META.nome})`, mensagens }
+  }
+
+  // Já recusou nesta rodada, para outro tenant? Então nem abrimos o navegador.
+  if (recusadoNestaRodada) {
+    return {
+      status: 'portal_indisponivel',
+      mensagens: [],
+      detalhe: `o ${META.nome} já recusou a conexão (HTTP ${recusadoNestaRodada}) nesta rodada — não insisti`,
+    }
   }
 
   const todos = processos.filter((p) => urlDeSessao(p?.urlPublica))
@@ -176,7 +200,7 @@ export async function sync({ credencial, processos = [], simulado }) {
         // para nós inteiro, não para este processo: as outras 59 tentativas seriam
         // 59 páginas de erro — e, se a regra do WAF for por taxa, renovariam o
         // bloqueio em vez de esperá-lo passar.
-        if (e instanceof PortalRecusou) { recusa = e; break }
+        if (e instanceof PortalRecusou) { recusa = e; recusadoNestaRodada = e.status; break }
         falhas.push(`${p.licitacaoId}: ${String(e?.message ?? e).slice(0, 80)}`)
       }
     }
