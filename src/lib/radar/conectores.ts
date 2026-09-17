@@ -7,8 +7,8 @@
 //   página pública; não pede credencial). É o caso do PCP: monitoramos o andamento
 //   (convocação, habilitação, recurso, prazo, homologação) de graça; a sessão do
 //   próprio cliente só é necessária para a sala AO VIVO (lances em tempo real).
-// Compras.gov.br usa captura de sessão (login gov.br). PCP, BLL e BNC são públicos.
-// Licitações-e segue em ETAPA 2 (login/seletores a calibrar).
+// Compras.gov.br usa captura de sessão (login gov.br). PCP, BLL, BNC, Licitanet,
+// AMM Licita e Licitações-e são públicos.
 
 export interface Conector {
   id: string
@@ -42,11 +42,22 @@ export const CONECTORES: Conector[] = [
     // é de longe o sinal mais presente de que o pregão corre no PCP.
     marcaObjeto: '[portal de compras públicas]',
   },
+  // O Único conector que NÃO abre navegador: o Licitações-e novo
+  // (licitacoes-e2.bb.com.br) é um Angular sobre API REST pública, sem token nem
+  // cookie. Duas chamadas de JSON por processo no lugar de ~12 s de Chromium.
+  //
+  // E o que ele entrega NÃO É CHAT — este portal não tem mensageria pública
+  // (conferido até num processo com `exibirMensageria: true`). O que abre para quem
+  // não é participante é o DOSSIÊ: a situação do certame e cada peça anexada com
+  // carimbo de hora — impugnação e pedido de esclarecimento de concorrente inclusive.
+  // A descrição abaixo promete isso e nada além.
   {
     id: 'licitacoes-e',
     nome: 'Licitações-e (Banco do Brasil)',
-    descricao: 'Pregões conduzidos no portal do BB. Em calibração (etapa 2).',
-    disponivel: false,
+    descricao: 'Pregões do portal do BB. Lemos o dossiê público — situação do certame, impugnações e pedidos de esclarecimento, com hora. Não pede senha.',
+    disponivel: true,
+    modoPublico: true,
+    dominio: 'licitacoes-e2.bb.com.br',
   },
   // BLL e BNC são a MESMA aplicação em dois domínios — mesma rota de processo, mesmas
   // abas, mesmo quadro de mensagens (medido em 13/09/2026 nos dois, sem cookie). Um
