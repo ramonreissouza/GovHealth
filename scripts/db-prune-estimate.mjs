@@ -1,9 +1,10 @@
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 if (!process.env.DATABASE_URL) {
   try { const env = fs.readFileSync('.env.local','utf8'); const m=env.match(/^DATABASE_URL=(.*)$/m); if(m) process.env.DATABASE_URL=m[1].trim().replace(/^["']|["']$/g,'') } catch {}
 }
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl:{rejectUnauthorized:false} })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   // Como itens/resultados se ligam a contratacoes?

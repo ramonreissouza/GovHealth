@@ -19,7 +19,9 @@ function senhaSeed(varName, quem) {
 }
 
 const url = fs.readFileSync('.env.local', 'utf8').match(/DATABASE_URL=(.*)/)[1].trim().replace(/^["']|["']$/g, '')
-const c = new pg.Client({ connectionString: url, ssl: sslParaHost(process.env.DATABASE_URL) })
+// A `url` acima vem do .env.local direto, sem passar por process.env: decidir o
+// TLS pelo ambiente daria undefined → default → TLS contra localhost.
+const c = new pg.Client({ connectionString: url, ssl: sslParaHost(url) })
 await c.connect()
 
 // CNPJ real da Siemens nos resultados (para a conta Pro casar com o dado real).

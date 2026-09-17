@@ -24,20 +24,66 @@
 //
 // Isso continua certo se um dia o pooler for exposto de novo num IP público: o host
 // deixa de ser localhost e o TLS volta sozinho, sem tocar em script nenhum.
+//
+// MAS O QUE VOLTA É CIFRAGEM, NÃO IDENTIDADE. `rejectUnauthorized: false` cifra o
+// canal e NÃO verifica o certificado do servidor: protege contra escuta passiva, não
+// contra MITM ativo — e o caminho em questão leva credenciais de produção por IP
+// público. Os 66 scripts já faziam isso antes deste helper existir, então não é
+// regressão; o que mudou é que agora há UMA linha para corrigir quando houver uma CA
+// para confiar. `PGSSLROOTCERT` liga a verificação sem tocar em nenhum call site.
+
+import fs from 'node:fs'
+import pg from 'pg'
+
+/** Lê a CA de `PGSSLROOTCERT`, quando houver. Sem ela, segue cifrando sem verificar. */
+function caDoAmbiente() {
+  const caminho = process.env.PGSSLROOTCERT
+  if (!caminho) return null
+  try { return fs.readFileSync(caminho, 'utf8') } catch (e) {
+    console.warn(`[pg-ssl] PGSSLROOTCERT aponta para ${caminho}, que não deu para ler:`, String(e?.message ?? e))
+    return null
+  }
+}
 
 /**
  * @param {string | undefined} connectionString
- * @returns {false | { rejectUnauthorized: boolean }}
+ * @returns {false | { rejectUnauthorized: boolean, ca?: string }}
  */
 export function sslParaHost(connectionString) {
-  let host = ''
-  // connectionString malformada cai no default seguro (com TLS) lá embaixo.
-  try { host = new URL(String(connectionString ?? '')).hostname } catch { /* ignore */ }
+  const bruta = String(connectionString ?? '')
+  let host = null
+  try { host = new URL(bruta).hostname } catch { /* tratado abaixo */ }
+
+  // O SILÊNCIO FOI O QUE DEIXOU O BUG ORIGINAL SOBREVIVER UM ANO E MEIO. Quando não dá
+  // para ler o host, o default é o seguro (TLS), mas ele passa a ser DITO: formato
+  // `key=value` (`host=localhost port=5432`) e socket unix são aceitos pelo `pg` e
+  // rejeitados pelo `URL`, e senha com `/`, `#` ou `@` não escapado faz o parse errar o
+  // hostname em vez de lançar. Nesses casos quem lê o log fica sabendo.
+  if (host === null) {
+    console.warn('[pg-ssl] não consegui ler o host da connection string — assumindo TLS.'
+      + ' Se o destino não tem TLS (túnel/localhost), a conexão vai falhar com'
+      + ' "The server does not support SSL connections".')
+  }
+
   const semTls = host === 'db' || host === 'localhost' || host === '127.0.0.1'
-  return semTls ? false : { rejectUnauthorized: false }
+  if (semTls) return false
+  const ca = caDoAmbiente()
+  return ca ? { rejectUnauthorized: true, ca } : { rejectUnauthorized: false }
 }
 
-/** Atalho para o caso comum: decidir a partir do DATABASE_URL do ambiente. */
-export function sslDoAmbiente() {
-  return sslParaHost(process.env.DATABASE_URL)
+/**
+ * FÁBRICAS — use estas, não o `sslParaHost` solto.
+ *
+ * A assinatura de `sslParaHost(s)` aceita uma string sem relação obrigatória com a que
+ * vai para `connectionString`, e foi exatamente assim que 5 scripts saíram errados na
+ * conversão em massa: decidiam o TLS por `process.env.DATABASE_URL` e conectavam numa
+ * URL vinda do `argv`, de `dbUrl()` ou do `.env.local`. Aqui isso é impossível por
+ * construção — a mesma `url` decide e conecta.
+ */
+export function novoClient(url = process.env.DATABASE_URL, extra = {}) {
+  return new pg.Client({ connectionString: url, ssl: sslParaHost(url), ...extra })
+}
+
+export function novoPool(url = process.env.DATABASE_URL, extra = {}) {
+  return new pg.Pool({ connectionString: url, ssl: sslParaHost(url), ...extra })
 }

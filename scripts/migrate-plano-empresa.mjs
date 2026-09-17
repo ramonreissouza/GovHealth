@@ -13,7 +13,10 @@ function dbUrl() {
   return m[1].trim().replace(/^["']|["']$/g, '')
 }
 
-const c = new pg.Client({ connectionString: dbUrl(), ssl: sslParaHost(process.env.DATABASE_URL) })
+// Resolvida UMA vez: `dbUrl()` cai no `.env.local` quando a variável não está no
+// ambiente, e nesse caminho `process.env.DATABASE_URL` é undefined.
+const URL_BANCO = dbUrl()
+const c = new pg.Client({ connectionString: URL_BANCO, ssl: sslParaHost(URL_BANCO) })
 await c.connect()
 try {
   // Admin: todo master (independe do e-mail configurado em ADMIN_EMAIL).
