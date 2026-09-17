@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import pg from 'pg'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try { const e = fs.readFileSync('.env.local', 'utf8').match(/^DATABASE_URL=(.*)$/m); if (e) process.env.DATABASE_URL = e[1].trim().replace(/^["']|["']$/g, '') } catch {}
@@ -22,7 +23,7 @@ function senhaForte() {
 }
 const senha = process.env.ADMIN_PASSWORD || senhaForte()
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   const hash = bcrypt.hashSync(senha, 10)

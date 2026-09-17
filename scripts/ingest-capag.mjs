@@ -8,6 +8,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import * as XLSXns from 'xlsx'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 const XLSX = XLSXns.default ?? XLSXns
 
 if (!process.env.DATABASE_URL) {
@@ -57,7 +58,7 @@ async function recursoMaisRecente(id, formato) {
   return rs[0]
 }
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await db.connect()
 
 // UPSERT em lote (chunks) para não fazer milhares de round-trips.

@@ -43,6 +43,7 @@ import pg from 'pg'
 import { isSaude } from './saude-filter.mjs'
 import { soltarNaSaida } from './pncp-lock.mjs'
 import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const arg = (n, d) => {
   const m = process.argv.find((a) => a.startsWith(`--${n}=`))
@@ -124,7 +125,7 @@ async function doPncp(dia, uf, mod) {
   return { lista: out, parcial: true }
 }
 
-const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await c.connect()
 
 console.log(`sonda · ${DATAS.length} data(s) · UFs ${UFS.join(',')} · modalidades ${MODS.join(',')}`)

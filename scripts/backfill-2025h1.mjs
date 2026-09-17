@@ -61,6 +61,7 @@ import path from 'node:path'
 import pg from 'pg'
 import { soltar, soltarNaSaida } from './pncp-lock.mjs'
 import { CODIGO_CEDER, ceder, devoCeder, esperarVez, limparNaSaida, trabalhandoDesdeMs } from './pncp-prioridade.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const arg = (n, d) => {
   const m = process.argv.find((a) => a.startsWith(`--${n}=`))
@@ -127,7 +128,7 @@ const PLANO = fatias(DE, ATE)
 
 // ── retrato do antes/depois ──────────────────────────────────────────────────
 async function retrato() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   await c.connect()
   const { rows } = await c.query(
     `SELECT to_char(date_trunc('month', data_publicacao),'YYYY-MM') mes, count(*)::int n

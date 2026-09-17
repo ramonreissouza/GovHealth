@@ -29,6 +29,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const APLICAR = process.argv.includes('--aplicar')
 
@@ -46,7 +47,7 @@ const norm = (s) => (s ?? '')
 const VAZIOS = new Set(['de', 'da', 'do', 'com', 'sem', 'para', 'em', 'e', 'ou', 'a', 'o',
   'tipo', 'uso', 'un', 'und', 'unidade', 'aquisicao', 'material', 'p'])
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await db.connect()
 
 // ── índice de PDMs por primeiro token ────────────────────────────────────────

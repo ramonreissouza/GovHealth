@@ -49,6 +49,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude, categoria } from './saude-filter.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // ── env ──────────────────────────────────────────────────────────────────────
 if (!process.env.DATABASE_URL) {
@@ -95,7 +96,7 @@ const contar = async (p) => (await buscar({ ...p, pagina: '1', tam_pagina: '1' }
 
 // ── DB ───────────────────────────────────────────────────────────────────────
 function novoDb() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   c.on('error', (e) => console.warn(`  [db] ${e.message} (reconecta sob demanda)`))
   return c
 }

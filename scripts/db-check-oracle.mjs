@@ -1,6 +1,7 @@
 // Teste rápido de conectividade + leitura/escrita no Oracle VM (IP novo).
 // Uso: node scripts/db-check-oracle.mjs "postgresql://.../govhealth?sslmode=require&uselibpqcompat=true"
 import pg from 'pg';
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const url = process.argv[2];
 if (!url) {
@@ -10,7 +11,7 @@ if (!url) {
 
 const pool = new pg.Pool({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslParaHost(process.env.DATABASE_URL),
   connectionTimeoutMillis: 10000,
 });
 

@@ -16,6 +16,7 @@ import { criarSessao, idDe, cdpUrlDe, cdpUrlDaSessaoViva, encerrarSessao, sessao
 import { encrypt } from './capture.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
 import { PORTAIS } from './portais.mjs'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 function loadEnv() {
   try {
@@ -47,7 +48,7 @@ const PORT = Number(process.env.RADAR_CONNECT_PORT || '3200')
 // RADAR_EMBED_ORIGIN na Vercel, que é o que libera a origem na CSP.
 const PUBLICO = (process.env.RADAR_PUBLIC_URL || `http://localhost:${PORT}`).replace(/\/$/, '')
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 })
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL), max: 3 })
 const q = (sql, params) => pool.query(sql, params).then((r) => r.rows)
 
 async function playwright() {

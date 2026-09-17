@@ -28,6 +28,7 @@ import fs from 'node:fs'
 import pg from 'pg'
 import { soltar, soltarNaSaida } from './pncp-lock.mjs'
 import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -78,7 +79,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let client = null
 
 async function conectar() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   // Sem este ouvinte, a queda vira 'unhandled error event' e mata o processo.
   c.on('error', (e) => { console.warn(`[enriq] conexão caiu: ${e.message}`); if (client === c) client = null })
   await c.connect()

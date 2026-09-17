@@ -11,6 +11,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import pg from 'pg'
 import bcrypt from 'bcryptjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // Senhas de seed: SEMPRE via variável de ambiente. Sem env, gera uma senha ALEATÓRIA
 // e a imprime (nunca embute senha em texto no repositório).
@@ -45,7 +46,7 @@ const SEED = [
 ]
 
 const sql = fs.readFileSync(path.join('db', 'schema-admin.sql'), 'utf8')
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   console.log('→ aplicando schema-admin.sql…')

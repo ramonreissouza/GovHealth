@@ -16,6 +16,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // ---- carrega variáveis do .env.local (mesma convenção dos outros scripts) ----
 function loadEnv(name) {
@@ -56,7 +57,7 @@ const CHECKS = {
 }
 
 function conn(url) {
-  return new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
+  return new pg.Client({ connectionString: url, ssl: sslParaHost(process.env.DATABASE_URL) })
 }
 
 async function tableList(client) {

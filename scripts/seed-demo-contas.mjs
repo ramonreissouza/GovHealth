@@ -7,6 +7,7 @@ import fs from 'fs'
 import crypto from 'node:crypto'
 import pg from 'pg'
 import bcrypt from 'bcryptjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // Senha de seed via env; sem env, gera aleatória e avisa (nunca hardcode no repo).
 function senhaSeed(varName, quem) {
@@ -18,7 +19,7 @@ function senhaSeed(varName, quem) {
 }
 
 const url = fs.readFileSync('.env.local', 'utf8').match(/DATABASE_URL=(.*)/)[1].trim().replace(/^["']|["']$/g, '')
-const c = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
+const c = new pg.Client({ connectionString: url, ssl: sslParaHost(process.env.DATABASE_URL) })
 await c.connect()
 
 // CNPJ real da Siemens nos resultados (para a conta Pro casar com o dado real).

@@ -5,6 +5,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -20,7 +21,7 @@ const SQL = `
   ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS data_encerramento_proposta DATE;
 `
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   console.log('→ adicionando data_abertura_proposta / data_encerramento_proposta…')

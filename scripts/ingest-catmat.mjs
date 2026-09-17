@@ -7,6 +7,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const BASE = 'https://dadosabertos.compras.gov.br'
 // 6505 medicamentos · 6510 curativos · 6515 instrumentos/equip. médicos · 6520 dentários
@@ -42,7 +43,7 @@ async function getJson(url, tent = 0) {
   }
 }
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await db.connect()
 
 let gravados = 0

@@ -18,6 +18,7 @@ import { conectorSync } from './registry.mjs'
 import { PORTAIS_PUBLICOS } from './portais.mjs'
 import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 import { sessaoTemCredencial } from './capture.mjs'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 // ── env ────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -250,7 +251,7 @@ async function gravarMensagens(client, ctx, mensagens) {
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 
 let totalMsgs = 0, novasMsgs = 0, emailsMsgs = 0, contidasMsgs = 0, conectores = 0

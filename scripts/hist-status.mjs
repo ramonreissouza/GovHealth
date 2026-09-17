@@ -10,6 +10,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   const m = fs.readFileSync('.env.local', 'utf8').match(/^DATABASE_URL=(.*)$/m)
@@ -18,7 +19,7 @@ if (!process.env.DATABASE_URL) {
 const SALVAR = process.argv.includes('--salvar')
 const ARQ = '.hist-status.json'
 
-const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await c.connect()
 const q = async (s, p) => (await c.query(s, p)).rows
 

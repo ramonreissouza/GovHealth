@@ -3,6 +3,7 @@
 // (Radar de Chat + equipe). Idempotente. Uso: node scripts/migrate-plano-empresa.mjs
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 function dbUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL
@@ -12,7 +13,7 @@ function dbUrl() {
   return m[1].trim().replace(/^["']|["']$/g, '')
 }
 
-const c = new pg.Client({ connectionString: dbUrl(), ssl: { rejectUnauthorized: false } })
+const c = new pg.Client({ connectionString: dbUrl(), ssl: sslParaHost(process.env.DATABASE_URL) })
 await c.connect()
 try {
   // Admin: todo master (independe do e-mail configurado em ADMIN_EMAIL).

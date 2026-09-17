@@ -32,6 +32,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import pg from 'pg'
 import { estado as estadoLockPncp } from './pncp-lock.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const ESPERA_RECUSA = 15 * 60 * 1000   // PNCP recusando: espera longa
 const ESPERA_NORMAL = 60 * 1000        // rodada produtiva que parou por outro motivo
@@ -63,7 +64,7 @@ const log = (m) => console.log(`[pipeline] ${hora()} ${m}`)
 async function medir(tentativas = 6) {
   let ultimoErro
   for (let t = 1; t <= tentativas; t++) {
-    const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+    const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
     try {
       await db.connect()
       const { rows: [r] } = await db.query(`

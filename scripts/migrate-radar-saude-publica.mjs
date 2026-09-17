@@ -16,6 +16,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -28,7 +29,7 @@ if (!process.env.DATABASE_URL) {
   process.exit(1)
 }
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 
 try {

@@ -20,6 +20,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { categoria } from './saude-filter.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const DRY = process.argv.includes('--dry')
 const LOTE = 2000
@@ -29,7 +30,7 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = env.match(/^DATABASE_URL=(.*)$/m)[1].trim().replace(/^["']|["']$/g, '')
 }
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await db.connect()
 
 const { rows } = await db.query(

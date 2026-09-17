@@ -18,6 +18,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { categoria } from './saude-filter.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // ── env ──
 if (!process.env.DATABASE_URL) {
@@ -60,7 +61,7 @@ async function fetchJson(url, tent = 0) {
 
 // ── DB (recriável, reconecta sob demanda) ──
 function novoDb() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   c.on('error', (e) => console.warn(`  [db] ${e.message} (reconecta)`))
   return c
 }

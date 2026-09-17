@@ -13,6 +13,7 @@ import pg from 'pg'
 import { isSaude, categoria } from './saude-filter.mjs'
 import { CODIGO_CEDER, devoCeder } from './pncp-prioridade.mjs'
 import { podeEnriquecer, registrarSucesso, registrarFalha, resumo as resumoBreaker } from './pncp-breaker.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // ── env ──────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -134,7 +135,7 @@ async function pncpVivo(mod, uf) {
 // do pg.Client encerra o processo. Aqui o cliente é recriável e dbQuery reconecta
 // sob demanda — assim um drop vira uma reconexão, não um crash + restart.
 function novoDb() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   c.on('error', (e) => console.warn(`  [db] evento de erro de conexão: ${e.message} (reconecta sob demanda)`))
   return c
 }

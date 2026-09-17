@@ -3,11 +3,12 @@
 // checkpoint. Ordena por volume. Uso: node scripts/etl-status.mjs
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 if (!process.env.DATABASE_URL) {
   const m = fs.readFileSync('.env.local', 'utf8').match(/^DATABASE_URL=(.*)$/m)
   if (m) process.env.DATABASE_URL = m[1].trim().replace(/^["']|["']$/g, '')
 }
-const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await c.connect()
 
 const contr = await c.query(`SELECT uf, count(*)::int n FROM contratacoes GROUP BY uf`)

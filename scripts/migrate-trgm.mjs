@@ -10,6 +10,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -23,7 +24,7 @@ if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configur
 // Precisa bater LETRA A LETRA com o SEM_ACENTO de src/lib/radar/selecao.ts.
 const EXPR = `translate(lower(objeto_compra), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn')`
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   console.log('→ CREATE EXTENSION pg_trgm…')
