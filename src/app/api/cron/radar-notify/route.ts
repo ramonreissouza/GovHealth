@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { enviarNovaLicitacaoRadar, enviarAlertaRadar } from '@/lib/email'
+import { leituraDoConector } from '@/lib/radar/conectores'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -56,7 +57,9 @@ export async function GET(req: NextRequest) {
           const r = await enviarAlertaRadar({
             to: n.destinatario, processo: n.proc_titulo ?? 'Processo monitorado',
             autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
-            fonte: n.conector_id === 'licitacoes-e' ? 'dossie' : 'chat',
+            // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
+            // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
+            fonte: leituraDoConector(n.conector_id),
           })
           ok = r.enviado; motivo = r.motivo
         }

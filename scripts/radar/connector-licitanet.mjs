@@ -141,11 +141,16 @@ export async function sync({ credencial, processos = [], simulado }) {
   }
 
   // Já recusou nesta rodada, para outro tenant? Então nem abrimos o navegador.
-  if (recusadoNestaRodada) {
+  // `0` quer dizer "a porta não abriu" (falha de transporte, sem status HTTP), e a frase
+  // muda de acordo — "recusou a conexão (HTTP 0)" não diria nada a quem lê.
+  if (recusadoNestaRodada !== null) {
+    const porque = recusadoNestaRodada
+      ? `já recusou a conexão (HTTP ${recusadoNestaRodada})`
+      : 'já estava inalcançável'
     return {
       status: 'portal_indisponivel',
       mensagens: [],
-      detalhe: `o ${META.nome} já recusou a conexão (HTTP ${recusadoNestaRodada}) nesta rodada — não insisti`,
+      detalhe: `o ${META.nome} ${porque} nesta rodada — não insisti`,
     }
   }
 
@@ -208,6 +213,11 @@ export async function sync({ credencial, processos = [], simulado }) {
     const msg = String(e?.message ?? e)
     try { if (browser) await browser.close() } catch { /* ignore */ }
     if (/timeout|net::|ECONN|ENOTFOUND|navigation/i.test(msg)) {
+      // ESTE é o caminho mais comum de portal fora do ar — `chromium.launch()` falhando,
+      // DNS fora, `net::ERR_CONNECTION_REFUSED` — e é mais comum que o 403 que motivou a
+      // correção. Sem marcar o flag aqui, os outros tenants da rodada continuavam
+      // pagando `chromium.launch()` (~12 s cada) para chegar à mesma conclusão.
+      recusadoNestaRodada = 0 // 0 = a porta não abriu; não há status HTTP
       return { status: 'portal_indisponivel', detalhe: msg.slice(0, 180), mensagens: [] }
     }
     return { status: 'falha', detalhe: msg.slice(0, 180), mensagens: [] }

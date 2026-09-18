@@ -130,7 +130,10 @@ export function idDoProcesso(url) {
 export function rotuloDoAnexo(nome) {
   const n = String(nome ?? '').toUpperCase()
   // Respostas e decisões primeiro — elas contêm o nome da peça original.
-  if (/^RESP|RESPOSTA|JULGAMENTO|DECISAO|DEFERI|INDEFERI/.test(n)) {
+  // `^RESP` precisa do separador: sem ele engole palavra que só COMEÇA por RESP, e
+  // "RESPONSAVEL_TECNICO.pdf" (peça comum de habilitação em pregão de saúde) virava
+  // "Resposta a esclarecimento".
+  if (/^RESP[_\s.\-]|RESPOSTA|JULGAMENTO|DECISAO|DEFERI|INDEFERI/.test(n)) {
     if (/IMPUGNA/.test(n)) return 'Resposta a impugnação'
     if (/RECURSO|CONTRARRAZ/.test(n)) return 'Decisão de recurso'
     return 'Resposta a esclarecimento'
@@ -166,11 +169,17 @@ async function pedir(caminho) {
   // POST é o que o próprio portal usa (lido do tráfego dele). O GET fica como rede de
   // segurança para 404/405 e SÓ para isso — não pude confirmar o GET ao vivo, porque
   // o BB estava respondendo 403 a esta máquina quando o conector foi escrito.
-  const opcoes = { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }
-  let r = await withBackoff(() => buscar(url, { method: 'POST', ...opcoes }), 2)
-  if (r.status === 404 || r.status === 405) {
-    r = await withBackoff(() => buscar(url, { method: 'GET', ...opcoes }), 2)
-  }
+  //
+  // O SINAL NASCE POR TENTATIVA. `AbortSignal.timeout()` começa a contar quando é
+  // CRIADO: um sinal só, criado antes do laço, atravessava as duas tentativas do
+  // `withBackoff` e o fallback GET. A tentativa 1 abortava aos 20 s, o backoff dormia
+  // 2 s, e a tentativa 2 recebia um sinal JÁ abortado — rejeitava em ~0 ms. Ou seja: o
+  // retry era no-op exatamente no caso que o timeout existe para tratar, e o GET herdava
+  // o prazo que o POST gastou.
+  const tentar = (method) => withBackoff(
+    () => buscar(url, { method, headers, signal: AbortSignal.timeout(TIMEOUT_MS) }), 2)
+  let r = await tentar('POST')
+  if (r.status === 404 || r.status === 405) r = await tentar('GET')
 
   // UM protocolo de recusa, não dois. O commit anterior criou `PortalRecusou` na base e
   // o Licitanet o reconhece por `instanceof`; um campo solto `e.recusa` aqui seria um
@@ -200,14 +209,20 @@ async function pedir(caminho) {
  *
  * É o requisito 4.2 ao contrário, e é o mesmo pecado que o commit do Licitanet corrigiu
  * — incerteza não pode parecer silêncio. Por isso o envelope ruim LANÇA.
+ *
+ * MAS NÃO COMO `PortalRecusou`, NEM QUANDO O CÓDIGO INTERNO É 5xx. Aqui o portal
+ * RESPONDEU: HTTP 200, JSON bem formado, dizendo que deu erro NAQUELE recurso. Recusa é
+ * sobre a conexão; isto é sobre um processo. Tratar como recusa fazia UMA contratação
+ * com registro malformado no backend do BB (a base tem 5.534) derrubar a passada de
+ * TODOS os tenants da rodada, via o flag de módulo, com um detalhe que ainda por cima
+ * descrevia errado o que houve. Se for sistêmico, o `doPortal` lá embaixo reconhece
+ * "envelope de erro" em TODAS as falhas e devolve `portal_indisponivel` — por
+ * corroboração, em vez de no primeiro.
  */
 function dados(resposta) {
   if (resposta && typeof resposta === 'object' && 'status' in resposta
       && String(resposta.status).toUpperCase() !== 'OK') {
     const codigo = resposta.statusCode
-    // 5xx dentro do envelope é o portal falhando, não este processo: vira recusa para
-    // o laço parar em vez de repetir o erro 120 vezes.
-    if (Number(codigo) >= 500) throw new PortalRecusou(Number(codigo), API)
     const e = new Error(`envelope de erro do BB (${resposta.status}${codigo ? ` / ${codigo}` : ''})`)
     e.status = codigo ?? null
     throw e
@@ -310,6 +325,19 @@ export async function sync({ processos = [], simulado }) {
   let lidos = 0
   let comNovidade = 0
   let recusa = null
+  // Falha de TRANSPORTE seguida (DNS fora, conexão recusada, timeout) não é
+  // `PortalRecusou` e por isso não quebrava o laço — e o retry tornou isso caro: com
+  // `withBackoff` são ~6 s por processo quando a conexão é recusada e ~26 s quando o BB
+  // aceita e não responde. Vezes 120, é de 12 a 52 min POR TENANT, com o run.mjs
+  // rodando os portais em sequência e todo o resto do Radar esperando atrás.
+  //
+  // O argumento é o mesmo da recusa: insistir contra uma porta fechada não é só
+  // desperdício. A diferença é que aqui a conclusão precisa de corroboração — uma falha
+  // de rede isolada é normal.
+  const TETO_FALHAS_SEGUIDAS = 5
+  const DE_TRANSPORTE = /fetch failed|ECONN|ENOTFOUND|timeout|abort/i
+  let seguidas = 0
+  let desistiu = false
 
   for (const p of alvos) {
     try {
@@ -318,6 +346,7 @@ export async function sync({ processos = [], simulado }) {
       const anexos = await pedir(`anexosDossie/listar-s3/${p.bbId}`)
       const linhas = montarMensagens({ basicos, anexos })
       lidos++
+      seguidas = 0
       if (linhas.length) comNovidade++
       for (const l of linhas) mensagens.push(normalizarMensagem(l, p.licitacaoId))
     } catch (e) {
@@ -325,7 +354,11 @@ export async function sync({ processos = [], simulado }) {
       // Continuar seria bater 119 vezes contra a mesma porta fechada — e o flag de
       // módulo impede que os outros tenants da mesma rodada repitam a batida.
       if (e instanceof PortalRecusou) { recusa = e; recusadoNestaRodada = e.status; break }
-      falhas.push(`${p.licitacaoId}: ${String(e?.message ?? e).slice(0, 80)}`)
+      const msg = String(e?.message ?? e)
+      falhas.push(`${p.licitacaoId}: ${msg.slice(0, 80)}`)
+      if (DE_TRANSPORTE.test(msg)) {
+        if (++seguidas >= TETO_FALHAS_SEGUIDAS) { desistiu = true; break }
+      } else seguidas = 0
     }
     if (PAUSA_MS) await new Promise((r) => setTimeout(r, PAUSA_MS))
   }
@@ -336,6 +369,19 @@ export async function sync({ processos = [], simulado }) {
       status: 'portal_indisponivel',
       mensagens,
       detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — ${parcial}; parei na 1ª recusa para não insistir contra o bloqueio`,
+    }
+  }
+
+  // DESISTIR NÃO PODE VIRAR `ok`. Parar na 5ª falha de transporte deixa
+  // `falhas.length < alvos.length`, e sem este bloco a passada caía no caminho de
+  // sucesso e reportava "0 evento(s) em 0/40 processo(s)" com status `ok` — que o Radar
+  // lê como "sem novidades". É o requisito 4.2 ao contrário, reintroduzido justamente
+  // pela correção que veio poupar tempo. Quem desiste tem de dizer que desistiu.
+  if (desistiu) {
+    return {
+      status: 'portal_indisponivel',
+      mensagens,
+      detalhe: `o ${META.nome} não respondeu em ${TETO_FALHAS_SEGUIDAS} processo(s) seguidos — parei por aí; ${lidos} de ${alvos.length} lido(s) antes — ${falhas[falhas.length - 1]}`,
     }
   }
 

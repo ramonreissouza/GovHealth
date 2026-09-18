@@ -215,5 +215,76 @@ afirmar('1º tenant → portal_indisponivel', t1.status, 'portal_indisponivel')
 afirmar('2º tenant → não repete a batida', bateu, 0)
 afirmar('2º tenant → diz que já recusou', /já recusou/.test(t2.detalhe), true)
 
+// ── 9. o que a 2ª revisão achou dentro das próprias correções ─────────
+console.log('\ncorreções da 2ª revisão')
+
+// `^RESP` sem separador engolia palavra que só COMEÇA por RESP — e "termo de
+// responsável técnico" é peça comum de habilitação em pregão de saúde.
+afirmar('RESPONSAVEL_TECNICO não é resposta', rotuloDoAnexo('RESPONSAVEL_TECNICO.pdf'), 'Documento')
+afirmar('RESP_ESC continua resposta', rotuloDoAnexo('RESP_ESC_GE.pdf'), 'Resposta a esclarecimento')
+afirmar('RESP_IMPUGNACAO continua resposta', rotuloDoAnexo('RESP_IMPUGNACAO.pdf'), 'Resposta a impugnação')
+
+// O 5xx DENTRO do envelope não é recusa de conexão: o portal respondeu 200 com JSON
+// bem formado dizendo que deu erro NAQUELE recurso. Tratar como recusa fazia UMA
+// contratação malformada derrubar a passada de todos os tenants da rodada.
+{
+  esquecerRecusa()
+  let chamadas = 0
+  const doisProcessos = [PROC[0], { licitacaoId: 'X-2/2026', urlPublica: PROC[0].urlPublica }]
+  usarBuscador(async () => {
+    chamadas++
+    // só o 1º pedido do 1º processo devolve envelope 5xx; o resto vem bom
+    return chamadas === 1
+      ? resposta(200, '{"status":"ERRO","statusCode":500,"data":null}')
+      : resposta(200, JSON.stringify(BASICOS))
+  })
+  const r = await sync({ processos: doisProcessos, simulado: false })
+  usarBuscador(null)
+  afirmar('envelope 5xx isolado não derruba a passada', r.status, 'ok')
+  afirmar('o processo seguinte foi lido', r.detalhe.includes('em 1/2 processo'), true)
+  // e o flag de rodada NÃO pode ter subido
+  const seguinte = await sync({ processos: PROC, simulado: false })
+  afirmar('o próximo tenant não herda bloqueio', /já recusou|já estava/.test(seguinte.detalhe ?? ''), false)
+  usarBuscador(null); esquecerRecusa()
+}
+
+// Mas envelope de erro em TODOS → aí é o portal, por corroboração.
+{
+  const r = await syncCom(() => resposta(200, '{"status":"ERRO","statusCode":500,"data":null}'))
+  afirmar('envelope de erro em todos → portal_indisponivel', r.status, 'portal_indisponivel')
+}
+
+// O sinal de timeout nasce POR TENTATIVA. Com um sinal só, a 2ª tentativa recebia um
+// sinal já abortado e o retry virava no-op exatamente no caso do timeout.
+{
+  esquecerRecusa()
+  const sinais = []
+  let n = 0
+  usarBuscador(async (_url, opcoes) => {
+    sinais.push(opcoes.signal)
+    if (++n === 1) throw new Error('fetch failed')   // força o withBackoff a tentar de novo
+    return resposta(200, JSON.stringify(BASICOS))
+  })
+  await sync({ processos: PROC, simulado: false })
+  usarBuscador(null); esquecerRecusa()
+  afirmar('houve 2 tentativas', sinais.length >= 2, true)
+  afirmar('cada tentativa tem o SEU sinal', sinais[0] !== sinais[1], true)
+  afirmar('o sinal da 2ª não nasce abortado', sinais[1].aborted, false)
+}
+
+// Falha de transporte seguida para o laço: sem isso são até 52 min por tenant, com
+// todo o resto do Radar esperando atrás (o run.mjs roda os portais em sequência).
+{
+  esquecerRecusa()
+  let tentativas = 0
+  const muitos = Array.from({ length: 40 }, (_, i) => ({ licitacaoId: `X-${i}/2026`, urlPublica: PROC[0].urlPublica }))
+  usarBuscador(async () => { tentativas++; throw new Error('fetch failed') })
+  const r = await sync({ processos: muitos, simulado: false })
+  usarBuscador(null); esquecerRecusa()
+  // 5 processos × 2 tentativas do withBackoff = 10; sem o teto seriam 80.
+  afirmar('para na 5ª falha de transporte seguida', tentativas <= 12, true)
+  afirmar('e conclui que é o portal', r.status, 'portal_indisponivel')
+}
+
 console.log(`\n${ok} ok, ${falhou} falharam`)
 process.exit(falhou ? 1 : 0)
