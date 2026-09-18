@@ -3,6 +3,7 @@
 // devolvida exatamente como o iframe buscaria. Cancela no fim, sempre.
 import fs from 'node:fs'
 import pg from 'pg'
+import { novoClient } from '../lib/pg-ssl.mjs'
 
 const env = Object.fromEntries(
   fs.readFileSync('.env.local', 'utf8').split(/\r?\n/)
@@ -13,7 +14,7 @@ const env = Object.fromEntries(
 const TOKEN = env.RADAR_CONNECT_TOKEN
 const BASE = 'http://127.0.0.1:3200'
 
-const cli = new pg.Client({ connectionString: env.DATABASE_URL })
+const cli = novoClient(env.DATABASE_URL)
 await cli.connect()
 // Prefere uma credencial que NÃO esteja conectada. A sonda abre e cancela sessão; se
 // escolhesse a credencial de um cliente em produção, mexeria na saúde dele por nada.

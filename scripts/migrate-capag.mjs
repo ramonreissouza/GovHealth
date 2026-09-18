@@ -4,6 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -15,7 +16,7 @@ if (!process.env.DATABASE_URL) {
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada.'); process.exit(1) }
 
 const sql = fs.readFileSync(path.join('db', 'schema-capag.sql'), 'utf8')
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   console.log('→ aplicando schema-capag.sql…')

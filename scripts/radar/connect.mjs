@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { capturarSessaoPortal, encrypt } from './capture.mjs'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 function loadEnv() {
   try {
@@ -32,7 +33,7 @@ if (!process.env.RADAR_CRED_KEY) { console.error('ERRO: RADAR_CRED_KEY não conf
 if (!CRED_ID && !CNPJ) { console.error('Informe --cred <id> ou --cnpj <cnpj>.'); process.exit(1) }
 const KEY = process.env.RADAR_CRED_KEY
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   const { rows } = CRED_ID

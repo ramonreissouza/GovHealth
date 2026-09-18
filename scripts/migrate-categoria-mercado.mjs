@@ -23,6 +23,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import pg from 'pg'
 import { categoriaCaseSql } from '../src/lib/categoria-mercado.ts'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -38,7 +39,7 @@ if (!process.env.DATABASE_URL) {
 const EXPR = categoriaCaseSql('nome_catmat')
 const FINGERPRINT = `categoria-mercado:${crypto.createHash('sha1').update(EXPR).digest('hex').slice(0, 12)}`
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 // A recriação da coluna reescreve 288 mil linhas; o padrão de 30 s não dá conta.
 await client.query("SET statement_timeout = '900s'")

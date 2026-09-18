@@ -1,6 +1,7 @@
 // Teste rápido de conectividade + leitura/escrita no Oracle VM (IP novo).
 // Uso: node scripts/db-check-oracle.mjs "postgresql://.../govhealth?sslmode=require&uselibpqcompat=true"
 import pg from 'pg';
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const url = process.argv[2];
 if (!url) {
@@ -10,7 +11,11 @@ if (!url) {
 
 const pool = new pg.Pool({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
+  // O TLS tem de ser decidido para a MESMA string que se conecta. Este script existe
+  // para checar OUTRO banco (passado no argv), e quem o roda normalmente nem tem
+  // DATABASE_URL no ambiente — o helper cairia no default (TLS ligado) contra um
+  // túnel em localhost, que é exatamente o crash que este PR conserta.
+  ssl: sslParaHost(url),
   connectionTimeoutMillis: 10000,
 });
 

@@ -7,6 +7,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 function loadEnv() {
   if (process.env.DATABASE_URL) return
@@ -19,7 +20,7 @@ function loadEnv() {
 loadEnv()
 if (!process.env.DATABASE_URL) { console.error('ERRO: DATABASE_URL não configurada (.env.local).'); process.exit(1) }
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 try {
   await client.query(`ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS fonte TEXT NOT NULL DEFAULT 'pncp'`)

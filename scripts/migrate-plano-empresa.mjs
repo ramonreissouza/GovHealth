@@ -3,6 +3,7 @@
 // (Radar de Chat + equipe). Idempotente. Uso: node scripts/migrate-plano-empresa.mjs
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 function dbUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL
@@ -12,7 +13,10 @@ function dbUrl() {
   return m[1].trim().replace(/^["']|["']$/g, '')
 }
 
-const c = new pg.Client({ connectionString: dbUrl(), ssl: { rejectUnauthorized: false } })
+// Resolvida UMA vez: `dbUrl()` cai no `.env.local` quando a variável não está no
+// ambiente, e nesse caminho `process.env.DATABASE_URL` é undefined.
+const URL_BANCO = dbUrl()
+const c = new pg.Client({ connectionString: URL_BANCO, ssl: sslParaHost(URL_BANCO) })
 await c.connect()
 try {
   // Admin: todo master (independe do e-mail configurado em ADMIN_EMAIL).

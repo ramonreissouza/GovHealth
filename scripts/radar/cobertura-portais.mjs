@@ -30,6 +30,7 @@
 
 import pg from 'pg'
 import { PORTAIS } from './portais.mjs'
+import { novoPool } from '../lib/pg-ssl.mjs'
 
 // UFs com cliente ativo. É fato comercial, não deduzível do banco: `usuarios` não tem
 // UF, só `endereco` em texto livre. Atualize quando a base de clientes mudar — todo o
@@ -117,7 +118,7 @@ async function main() {
     console.error('DATABASE_URL não está no ambiente. Rode com `node --env-file=.env.local`.')
     process.exit(1)
   }
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 })
+  const pool = novoPool(process.env.DATABASE_URL, { max: 3 })
   try {
     await teste(pool)
 

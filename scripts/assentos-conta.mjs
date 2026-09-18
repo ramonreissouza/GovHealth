@@ -20,6 +20,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -42,7 +43,7 @@ const ENSAIO = process.argv.includes('--ensaio')
 const ASSENTOS_DO_PLANO = { empresa: 3 }
 const efetivos = (assentos, plano) => assentos ?? ASSENTOS_DO_PLANO[plano ?? ''] ?? 1
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 client.on('error', (e) => console.warn(`[assentos] conexão: ${e.message}`))
 await client.connect()
 

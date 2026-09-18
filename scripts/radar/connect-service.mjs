@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import pg from 'pg'
 import { capturarSessaoPortal, encrypt } from './capture.mjs'
 import { portalMeta } from './portais.mjs'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 function loadEnv() {
   try {
@@ -41,7 +42,7 @@ const KEY = process.env.RADAR_CRED_KEY
 // conexao morta por outra sozinho; o handler abaixo garante que o evento nao suba.
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslParaHost(process.env.DATABASE_URL),
   max: 2,
   idleTimeoutMillis: 10_000,
 })

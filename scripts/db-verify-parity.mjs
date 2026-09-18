@@ -16,6 +16,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 // ---- carrega variáveis do .env.local (mesma convenção dos outros scripts) ----
 function loadEnv(name) {
@@ -56,7 +57,9 @@ const CHECKS = {
 }
 
 function conn(url) {
-  return new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
+  // `conn` é chamada para a origem E para o destino, que são hosts diferentes por
+  // definição — é a razão de ser deste script. O TLS sai da string de cada uma.
+  return new pg.Client({ connectionString: url, ssl: sslParaHost(url) })
 }
 
 async function tableList(client) {

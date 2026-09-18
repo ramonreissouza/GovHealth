@@ -27,6 +27,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { ocupado as pncpOcupado } from './pncp-lock.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const [k, v] = a.replace(/^--/, '').split('=')
@@ -72,7 +73,7 @@ if (!process.env.DATABASE_URL) {
 // pedir ao servidor para se policiar quebraria a conexão em vez de protegê-la.
 const CONEXAO = {
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslParaHost(process.env.DATABASE_URL),
   keepAlive: true,                 // o SO passa a detectar peer morto
   query_timeout: 180000,           // pendurado vira erro (folga p/ os counts grandes)
   connectionTimeoutMillis: 30000,

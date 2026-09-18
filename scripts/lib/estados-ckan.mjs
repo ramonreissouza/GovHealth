@@ -11,6 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { Readable } from 'node:stream'
+import { sslParaHost } from './pg-ssl.mjs'
 
 // O cert TLS de alguns portais estaduais (ex.: dados.ba.gov.br) não valida na cadeia
 // padrão do Node. Como é download de dado público oficial, relaxamos só aqui.
@@ -155,7 +156,7 @@ export function normKey(s) {
 // Cliente pg resiliente (Neon derruba conexões ociosas em ingests longos).
 export function novoPg(pg) {
   let db = null
-  const conectar = () => { db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } }); db.on('error', () => { db = null }); return db }
+  const conectar = () => { db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) }); db.on('error', () => { db = null }); return db }
   return {
     async query(text, params, tent = 0) {
       try { if (!db) { db = conectar(); await db.connect() } return await db.query(text, params) }

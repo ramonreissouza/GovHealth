@@ -39,6 +39,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { isSaude } from './saude-filter.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const APLICAR = process.argv.includes('--aplicar')
 const SO_VALOR = process.argv.includes('--so-valor')
@@ -53,7 +54,7 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = env.match(/^DATABASE_URL=(.*)$/m)[1].trim().replace(/^["']|["']$/g, '')
 }
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await db.connect()
 const brl = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 

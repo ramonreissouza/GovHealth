@@ -10,6 +10,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 function loadEnv() {
   try {
@@ -55,7 +56,7 @@ const SQL = `INSERT INTO emendas_saude (codigo_emenda, numero_emenda, ano, autor
     localidade_gasto=EXCLUDED.localidade_gasto, valor_empenhado=EXCLUDED.valor_empenhado,
     valor_liquidado=EXCLUDED.valor_liquidado, valor_pago=EXCLUDED.valor_pago, coletado_em=now()`
 
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await client.connect()
 console.log(`[emendas] início ${ts()} — anos=${ANOS.join(',')} · delay=${DELAY}ms · maxpag=${MAXPAG}`)
 try {

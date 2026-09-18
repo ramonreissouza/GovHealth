@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/lib/pg-ssl.teste.mjs",
     "build": "next build",
     "start": "next start",
     "worker": "tsx src/worker/index.ts",
@@ -31,6 +32,9 @@
     "radar:egovrs:teste": "node scripts/radar/connector-egovrs.teste.mjs",
     "radar:comprasbr:teste": "node scripts/radar/connector-comprasbr.teste.mjs",
     "radar:licitacoes-e:teste": "node scripts/radar/connector-licitacoes-e.teste.mjs",
+    "radar:delta": "node --env-file=.env.local scripts/migrar-delta-radar.mjs",
+    "radar:delta:aplicar": "node --env-file=.env.local scripts/migrar-delta-radar.mjs --aplicar",
+    "ssl:teste": "node scripts/lib/pg-ssl.teste.mjs",
     "radar:cobertura": "node --env-file=.env.local scripts/radar/cobertura-portais.mjs",
     "portais:migrate": "node scripts/migrate-portais.mjs",
     "portais:backfill": "node scripts/backfill-portais.mjs",

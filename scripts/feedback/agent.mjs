@@ -20,6 +20,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import pg from 'pg'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 // ── env ───────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -46,7 +47,7 @@ const ts = () => new Date().toLocaleString('pt-BR')
 const log = (...a) => console.log(`[feedback-agent ${ts()}]`, ...a)
 
 // ── pg ────────────────────────────────────────────────────────────────────────
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
 await db.connect()
 async function q(text, params) { return db.query(text, params) }
 

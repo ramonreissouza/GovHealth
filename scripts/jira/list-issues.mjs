@@ -8,6 +8,7 @@
 // NÃO implementa nada; é só leitura (barato). O ranking/seleção é feito pelo Claude.
 
 import fs from 'node:fs'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 function loadEnv() {
   try {
@@ -72,7 +73,7 @@ async function fromJira() {
 async function fromDb() {
   const pg = (await import('pg')).default
   if (!process.env.DATABASE_URL) throw new Error('Sem JIRA_* e sem DATABASE_URL — nada para listar.')
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   await c.connect()
   try {
     const r = await c.query(

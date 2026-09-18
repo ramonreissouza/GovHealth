@@ -17,6 +17,7 @@
 
 import fs from 'node:fs'
 import pg from 'pg'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const arg = (nome, padrao) => {
   const m = process.argv.find((a) => a.startsWith(`--${nome}=`))
@@ -39,7 +40,7 @@ const log = (m) => console.log(`[vigia] ${hora()} ${m}`)
 async function medir() {
   const db = new pg.Client({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: sslParaHost(process.env.DATABASE_URL),
   })
   try {
     await db.connect()

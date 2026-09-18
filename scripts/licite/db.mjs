@@ -9,9 +9,10 @@
 import pg from 'pg'
 import { categoria } from '../saude-filter.mjs'
 import { linkDetalhe } from './collect.mjs'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 export function novoDb() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   c.on('error', (e) => console.warn(`  [db] erro de conexão: ${e.message}`))
   return c
 }

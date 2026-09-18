@@ -89,6 +89,7 @@ import { spawn } from 'node:child_process'
 import { soltar, soltarNaSaida } from './pncp-lock.mjs'
 import { esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
 import { classificar, avaliar, mereceConfirmacao, FERIADO } from './cobertura-regua.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -136,7 +137,7 @@ const ts = () => new Date().toLocaleString('pt-BR')
 // A resposta é a mesma do etl-pncp.mjs: cliente RECRIÁVEL e query que reconecta sob
 // demanda. Um drop vira reconexão, não um crash.
 function novoDb() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   c.on('error', (e) => console.warn(`[cobertura] evento de conexão: ${e.message} (reconecta sob demanda)`))
   return c
 }

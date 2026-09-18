@@ -31,6 +31,7 @@ import fs from 'node:fs'
 import pg from 'pg'
 import { soltar, soltarNaSaida } from './pncp-lock.mjs'
 import { ceder, devoCeder, esperarVez, limparNaSaida } from './pncp-prioridade.mjs'
+import { sslParaHost } from './lib/pg-ssl.mjs'
 
 const arg = (n, d) => { const m = process.argv.find((a) => a.startsWith(`--${n}=`)); return m ? m.slice(n.length + 3) : d }
 const MIN = Number(arg('min', '10000000'))
@@ -120,7 +121,7 @@ async function fetchOuNulo(url) {
 // Sem o ouvinte de 'error', a queda de uma conexão ociosa vira exceção não tratada e
 // mata o processo — foi assim que o daemon do Radar morreu em 20/08.
 function novoDb() {
-  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
   c.on('error', (e) => log(`conexão caiu: ${e.message} (reconecta sob demanda)`))
   return c
 }
