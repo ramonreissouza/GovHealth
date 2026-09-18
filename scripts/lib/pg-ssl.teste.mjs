@@ -72,21 +72,64 @@ for (const f of arquivos) {
 }
 afirmar('nenhum arquivo crava rejectUnauthorized', cravados, [])
 
+/**
+ * COMENTÁRIO NÃO PODE CEGAR O GUARDA — e cegava.
+ *
+ * A primeira versão do guarda 2 casava `connectionString: X … ssl: sslParaHost(Y)` com
+ * uma janela de 200 caracteres entre os dois. Só que a correção de `db-check-oracle.mjs`
+ * pôs um comentário de 4 linhas (~320 chars) explicando o defeito exatamente ali no
+ * meio — e o guarda deixou de enxergar o arquivo que o motivou. Reintroduzi o defeito
+ * lá e o teste continuou verde: 11/11.
+ *
+ * O detalhe é perverso: quanto melhor o comentário, mais cego o guarda. Provei o guarda
+ * mordendo nos seeds, que são o par adjacente, e não no arquivo que importava.
+ *
+ * Então o texto é lido SEM comentários. A janela some como critério de segurança.
+ */
+function semComentarios(texto) {
+  return texto
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')  // bloco
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1') // linha — o `[^:]` evita comer `https://`
+}
+
 // ── GUARDA 2: o TLS decidido para uma string, a conexão feita com outra ────
 console.log('\nguarda 2 — TLS decidido para a string errada')
 const descasados = []
 for (const f of arquivos) {
   const rel = path.relative(RAIZ, f).replace(/\\/g, '/')
   if (DONOS.includes(rel)) continue
-  const texto = fs.readFileSync(f, 'utf8')
-  // `connectionString: X` e `ssl: sslParaHost(Y)` dentro da mesma expressão de objeto —
-  // o par tem de citar a MESMA fonte.
-  const re = /connectionString:\s*([A-Za-z_$][\w$.]*(?:\(\))?)[\s,\S]{0,200}?ssl:\s*sslParaHost\(\s*([A-Za-z_$][\w$.]*(?:\(\))?)\s*\)/g
+  const texto = semComentarios(fs.readFileSync(f, 'utf8'))
+  // `connectionString: X` e `ssl: sslParaHost(Y)` na mesma expressão de objeto — o par
+  // tem de citar a MESMA fonte. Sem comentários no caminho, 400 chars é folga de sobra.
+  const re = /connectionString:\s*([A-Za-z_$][\w$.]*(?:\(\))?)[\s\S]{0,400}?ssl:\s*sslParaHost\(\s*([A-Za-z_$][\w$.]*(?:\(\))?)\s*\)/g
   for (const m of texto.matchAll(re)) {
     if (m[1] !== m[2]) descasados.push(`${rel}: connectionString=${m[1]} mas ssl=sslParaHost(${m[2]})`)
   }
 }
 afirmar('toda conexão decide o TLS pela própria string', descasados, [])
+
+// ── GUARDA 3: conexão SEM decisão de TLS nenhuma ───────────────────────────
+//
+// Os guardas 1 e 2 olham para quem DECIDE errado. Ninguém olhava para quem não decide:
+// `new pg.Pool({ connectionString: … })` sem a chave `ssl` — o node-pg assume SEM TLS.
+// Funciona hoje, porque tudo passa pelo túnel em localhost; quebra no dia em que o
+// pooler voltar a ser exposto num IP público, que é justamente o cenário que o cabeçalho
+// do helper anuncia como reversível "sem tocar em script nenhum".
+console.log('\nguarda 3 — conexão sem decisão de TLS')
+const semDecisao = []
+for (const f of arquivos) {
+  const rel = path.relative(RAIZ, f).replace(/\\/g, '/')
+  if (DONOS.includes(rel)) continue
+  const texto = semComentarios(fs.readFileSync(f, 'utf8'))
+  // O literal de objeto passado ao construtor, até o `}` que o fecha.
+  for (const m of texto.matchAll(/new\s+(?:pg\.)?(?:Client|Pool)\s*\(\s*\{([^{}]*)\}/g)) {
+    const corpo = m[1]
+    if (/connectionString\s*:/.test(corpo) && !/\bssl\s*:/.test(corpo)) {
+      semDecisao.push(`${rel}: ${m[0].replace(/\s+/g, ' ').slice(0, 72)}…`)
+    }
+  }
+}
+afirmar('nenhuma conexão sem decisão de TLS', semDecisao, [])
 
 console.log(`\n${ok} ok, ${falhou} falharam`)
 process.exit(falhou ? 1 : 0)

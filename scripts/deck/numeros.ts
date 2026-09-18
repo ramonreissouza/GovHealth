@@ -14,6 +14,7 @@ import { Pool } from 'pg'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ABERTA, UNIVERSO, ANO_CORRENTE } from '../../src/lib/licitacoes/universo'
+import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 const url = process.env.DATABASE_URL
 if (!url) {
@@ -21,7 +22,7 @@ if (!url) {
   process.exit(1)
 }
 
-const pool = new Pool({ connectionString: url })
+const pool = new Pool({ connectionString: url, ssl: sslParaHost(url) })
 
 async function main() {
   const { rows: [r] } = await pool.query<Record<string, number | string>>(

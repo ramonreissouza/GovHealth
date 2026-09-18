@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/lib/pg-ssl.teste.mjs",
     "build": "next build",
     "start": "next start",
     "worker": "tsx src/worker/index.ts",
