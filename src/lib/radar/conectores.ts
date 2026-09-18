@@ -7,14 +7,31 @@
 //   página pública; não pede credencial). É o caso do PCP: monitoramos o andamento
 //   (convocação, habilitação, recurso, prazo, homologação) de graça; a sessão do
 //   próprio cliente só é necessária para a sala AO VIVO (lances em tempo real).
-// Compras.gov.br usa captura de sessão (login gov.br). PCP, BLL e BNC são públicos.
-// Licitações-e segue em ETAPA 2 (login/seletores a calibrar).
+// Compras.gov.br usa captura de sessão (login gov.br). PCP, BLL, BNC, Licitanet,
+// AMM Licita e Licitações-e são públicos.
 
 export interface Conector {
   id: string
   nome: string
   descricao: string
   disponivel: boolean
+  /**
+   * O QUE O CONECTOR LÊ NESTE PORTAL — e é obrigatório de propósito.
+   *
+   *   'chat'   → quadro de mensagens do certame (pregoeiro × fornecedor × sistema)
+   *   'dossie' → peças e andamento publicados (impugnações, atas, anexos, log)
+   *
+   * Isto decide a FRASE do e-mail de alerta (`enviarAlertaRadar`). Estava cravado
+   * como um `if (conector_id === 'licitacoes-e')` dentro do cron de notificação —
+   * e o Licitações-e não é o único portal sem chat: BLL, BNC, eGov RS, Banrisul e
+   * Compras BR também leem peças, não conversa. Os cinco prometiam "nova mensagem
+   * no chat" para quem só recebe documento.
+   *
+   * Sem tipo obrigatório, ligar o próximo portal público exigiria LEMBRAR de editar
+   * um ternário num cron de e-mail — e esquecer não quebra nada, só volta a
+   * prometer chat. Aqui o compilador cobra a decisão.
+   */
+  leitura: 'chat' | 'dossie'
   /** Monitora pela página pública, sem exigir login. */
   modoPublico?: boolean
   /** Trecho do host do `link_externo` quando a licitação corre neste portal. */
@@ -29,12 +46,14 @@ export const CONECTORES: Conector[] = [
     nome: 'Compras.gov.br',
     descricao: 'Portal federal (ex-ComprasNet). Login via gov.br.',
     disponivel: true,
+    leitura: 'chat', // a área logada tem as mensagens do certame
   },
   {
     id: 'pcp',
     nome: 'Portal de Compras Públicas',
     descricao: 'Prefeituras, consórcios e órgãos estaduais. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'chat', // comunicação da sessão: negociação, prazo de recurso, motivo de desclassificação
     modoPublico: true,
     dominio: 'portaldecompraspublicas',
     // O PNCP preserva o prefixo do portal no objeto ("[Portal de Compras Públicas] - …").
@@ -42,11 +61,37 @@ export const CONECTORES: Conector[] = [
     // é de longe o sinal mais presente de que o pregão corre no PCP.
     marcaObjeto: '[portal de compras públicas]',
   },
+  // O Único conector que NÃO abre navegador: o Licitações-e novo
+  // (licitacoes-e2.bb.com.br) é um Angular sobre API REST pública, sem token nem
+  // cookie. Duas chamadas de JSON por processo no lugar de ~12 s de Chromium.
+  //
+  // E o que ele entrega NÃO É CHAT — este portal não tem mensageria pública
+  // (conferido até num processo com `exibirMensageria: true`). O que abre para quem
+  // não é participante é o DOSSIÊ: a situação do certame e cada peça anexada com
+  // carimbo de hora — impugnação e pedido de esclarecimento de concorrente inclusive.
+  // A descrição abaixo promete isso e nada além.
+  //
+  // DESLIGADO À ESPERA DE UMA REQUISIÇÃO REAL QUE COMPLETE.
+  //
+  // O conector está inteiro e testado — 58 asserções, incluindo os caminhos de recusa,
+  // bloqueio com 200, envelope de erro e queda de transporte. O que NUNCA aconteceu foi
+  // uma chamada bem-sucedida: o BB responde 403 à máquina do coletor e também a outras
+  // redes testadas, então o método (POST, lido do tráfego do próprio portal) jamais foi
+  // confirmado contra o portal vivo.
+  //
+  // Ligar é trocar esta linha para `true`. A partir daí a seleção passa a criar
+  // processos (85 abertos hoje na Bahia, 41 no RS) e o coletor passa a bater no BB — e,
+  // se o método estiver errado, o Radar diz `portal_indisponivel` ou `falha` com o
+  // motivo, nunca "sem novidades". A espera não é por segurança do dado; é para não
+  // anunciar ao cliente um portal que ninguém viu funcionar.
   {
     id: 'licitacoes-e',
     nome: 'Licitações-e (Banco do Brasil)',
-    descricao: 'Pregões conduzidos no portal do BB. Em calibração (etapa 2).',
+    descricao: 'Pregões do portal do BB. Lemos o dossiê público — situação do certame, impugnações e pedidos de esclarecimento, com hora. Não pede senha.',
     disponivel: false,
+    leitura: 'dossie', // não tem mensageria pública — só situação e anexos
+    modoPublico: true,
+    dominio: 'licitacoes-e2.bb.com.br',
   },
   // BLL e BNC são a MESMA aplicação em dois domínios — mesma rota de processo, mesmas
   // abas, mesmo quadro de mensagens (medido em 13/09/2026 nos dois, sem cookie). Um
@@ -61,6 +106,7 @@ export const CONECTORES: Conector[] = [
     nome: 'BLL — Bolsa de Licitações e Leilões',
     descricao: 'Portal privado usado por muitos municípios. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'dossie', // log público do processo; a sala ao vivo exige a sessão do fornecedor
     modoPublico: true,
     dominio: 'bllcompras',
   },
@@ -72,6 +118,7 @@ export const CONECTORES: Conector[] = [
     nome: 'Licitanet',
     descricao: 'Sessão pública com a comunicação do certame. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'chat', // painel "Comunicação da sessão", com prazo dentro do texto
     modoPublico: true,
     dominio: 'licitanet',
   },
@@ -84,6 +131,7 @@ export const CONECTORES: Conector[] = [
     nome: 'AMM Licita',
     descricao: 'Impugnações, esclarecimentos, recursos e avisos do condutor. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'dossie', // impugnações, esclarecimentos e avisos publicados
     modoPublico: true,
     dominio: 'ammlicita',
   },
@@ -92,6 +140,7 @@ export const CONECTORES: Conector[] = [
     nome: 'BNC — Bolsa Nacional de Compras',
     descricao: 'Mesma plataforma do BLL, em outro domínio. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'dossie', // mesma aplicação do BLL — log público
     modoPublico: true,
     dominio: 'bnccompras',
   },
@@ -112,6 +161,7 @@ export const CONECTORES: Conector[] = [
     nome: 'Compras RS',
     descricao: 'Esclarecimentos e impugnações com a resposta na íntegra. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'dossie', // ata de esclarecimentos e impugnações
     modoPublico: true,
     dominio: 'compras.rs.gov.br',
   },
@@ -120,6 +170,7 @@ export const CONECTORES: Conector[] = [
     nome: 'Pregão Banrisul',
     descricao: 'Mesma plataforma do Compras RS, usada por municípios gaúchos. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'dossie', // mesma aplicação do Compras RS
     modoPublico: true,
     dominio: 'pregaobanrisul',
   },
@@ -136,6 +187,7 @@ export const CONECTORES: Conector[] = [
     nome: 'Compras BR',
     descricao: 'Esclarecimentos, impugnações e suspensões do processo. Lemos a página pública do processo — não pede senha.',
     disponivel: true,
+    leitura: 'dossie', // esclarecimentos, impugnações e suspensões; teor em PDF
     modoPublico: true,
     dominio: 'comprasbr.com.br',
   },
@@ -176,4 +228,14 @@ export function licitacaoDoPortal(
   if (c.dominio && link.includes(c.dominio)) return true
   const objeto = (lic.objeto_compra ?? '').trim().toLowerCase()
   return !!c.marcaObjeto && objeto.startsWith(c.marcaObjeto)
+}
+
+/**
+ * A frase do alerta: este portal entrega conversa ou peça?
+ *
+ * Default 'dossie' para id desconhecido — prometer menos do que se entrega é o erro
+ * barato; prometer chat onde só há documento é o que o requisito 4.2 proíbe.
+ */
+export function leituraDoConector(conectorId: string | null | undefined): 'chat' | 'dossie' {
+  return POR_ID.get(String(conectorId ?? ''))?.leitura ?? 'dossie'
 }

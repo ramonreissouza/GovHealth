@@ -31,6 +31,7 @@
     "radar:pista:teste": "node scripts/radar/pista-navegador.teste.mjs",
     "radar:egovrs:teste": "node scripts/radar/connector-egovrs.teste.mjs",
     "radar:comprasbr:teste": "node scripts/radar/connector-comprasbr.teste.mjs",
+    "radar:licitacoes-e:teste": "node scripts/radar/connector-licitacoes-e.teste.mjs",
     "radar:delta": "node --env-file=.env.local scripts/migrar-delta-radar.mjs",
     "radar:delta:aplicar": "node --env-file=.env.local scripts/migrar-delta-radar.mjs --aplicar",
     "ssl:teste": "node scripts/lib/pg-ssl.teste.mjs",

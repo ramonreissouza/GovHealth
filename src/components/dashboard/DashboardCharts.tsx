@@ -7,6 +7,7 @@ import {
 } from 'recharts'
 
 import { CATEGORIA_CHART_COLOR as CAT_COLORS, CATEGORIA_LABEL as CAT_LABELS } from '@/lib/categorias'
+import { TOOLTIP_TEMA } from '@/lib/chart-tooltip'
 import type { OpportunitiesData } from './DashboardView'
 
 export default function DashboardCharts({ data, loading }: { data: OpportunitiesData | null; loading: boolean }) {
@@ -46,11 +47,6 @@ export default function DashboardCharts({ data, loading }: { data: Opportunities
     )
   }
 
-  const tooltipStyle = {
-    background: '#1a1a2e', border: '1px solid #2a2a4a',
-    borderRadius: 8, fontSize: 11,
-  }
-
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
       {/* Area chart: tendência mensal */}
@@ -68,11 +64,7 @@ export default function DashboardCharts({ data, loading }: { data: Opportunities
             </defs>
             <XAxis dataKey="mes" tick={{ fontSize: 9, fill: '#666' }} tickLine={false} axisLine={false} />
             <YAxis tick={{ fontSize: 9, fill: '#666' }} tickLine={false} axisLine={false} allowDecimals={false} />
-            <Tooltip
-              contentStyle={tooltipStyle}
-              labelStyle={{ color: '#aaa' }}
-              formatter={(v) => [v, 'Licitações']}
-            />
+            <Tooltip {...TOOLTIP_TEMA} formatter={(v) => [v, 'Licitações']} />
             <Area
               type="monotone" dataKey="count"
               stroke="var(--accent)" fill="url(#areaGrad)"
@@ -95,10 +87,7 @@ export default function DashboardCharts({ data, loading }: { data: Opportunities
               tick={{ fontSize: 9, fill: '#aaa' }}
               tickLine={false} axisLine={false} width={76}
             />
-            <Tooltip
-              contentStyle={tooltipStyle}
-              formatter={(v) => [v, 'Licitações']}
-            />
+            <Tooltip {...TOOLTIP_TEMA} formatter={(v) => [v, 'Licitações']} />
             <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={14}>
               {catData.map((d, i) => (
                 <Cell key={i} fill={CAT_COLORS[d.key] ?? '#94a3b8'} />

@@ -29,7 +29,7 @@
 // Almas/BA). Sem o lote, o dedup por hash colapsaria as duas em uma e o fornecedor
 // perderia que o fato aconteceu nos dois itens.
 
-import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff, abrirPagina, PortalRecusou } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 
 const META = portalMeta('licitanet')
@@ -95,7 +95,9 @@ export async function extrairMensagensLicitanet(page) {
  * @returns {Promise<{linhas: Array<object>} | {erro: string}>}
  */
 async function lerSessao(page, url) {
-  await withBackoff(() => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }), 2)
+  // `abrirPagina` lança PortalRecusou em 403/429/5xx. Deixar subir é de propósito:
+  // recusa é sobre o PORTAL, não sobre este processo, e quem chama precisa parar.
+  await abrirPagina(page, url, { timeout: 45000, tentativas: 2 })
   await page.waitForTimeout(6000) // o Vue monta a sessão
 
   // SEM ESTE SCROLL O CONECTOR LÊ ZERO E ACHA QUE LEU. O painel de mensagens só é
@@ -115,12 +117,41 @@ async function lerSessao(page, url) {
   return { linhas }
 }
 
+/**
+ * RECUSA É FATO SOBRE O PORTAL, NÃO SOBRE O TENANT.
+ *
+ * O `break` no laço abaixo protege a passada de UM titular — mas o `run.mjs` chama este
+ * `sync` uma vez POR TITULAR. Com 5 tenants monitorando o Licitanet, um 403 produzia 5
+ * `chromium.launch()` (~12 s cada) e 5 batidas novas na mesma porta fechada, mais 5
+ * linhas de `portal_indisponivel` gravadas como se fossem verificações independentes.
+ * Se a regra do WAF for por taxa, é isso que renova o bloqueio.
+ *
+ * O flag vive no escopo do módulo. O processo do worker morre ao fim da passada, então
+ * ele se limpa sozinho entre rodadas; `esquecerRecusa()` existe para os testes.
+ */
+let recusadoNestaRodada = null
+export function esquecerRecusa() { recusadoNestaRodada = null }
+
 export async function sync({ credencial, processos = [], simulado }) {
   if (simulado) {
     const mensagens = []
     const alvos = processos.length ? processos : [{ licitacaoId: 'SIMULADO-licitanet' }]
     for (const p of alvos) for (const f of SIMULADO_FIXTURES) mensagens.push(normalizarMensagem(f, p.licitacaoId))
     return { status: 'ok', detalhe: `simulado (${META.nome})`, mensagens }
+  }
+
+  // Já recusou nesta rodada, para outro tenant? Então nem abrimos o navegador.
+  // `0` quer dizer "a porta não abriu" (falha de transporte, sem status HTTP), e a frase
+  // muda de acordo — "recusou a conexão (HTTP 0)" não diria nada a quem lê.
+  if (recusadoNestaRodada !== null) {
+    const porque = recusadoNestaRodada
+      ? `já recusou a conexão (HTTP ${recusadoNestaRodada})`
+      : 'já estava inalcançável'
+    return {
+      status: 'portal_indisponivel',
+      mensagens: [],
+      detalhe: `o ${META.nome} ${porque} nesta rodada — não insisti`,
+    }
   }
 
   const todos = processos.filter((p) => urlDeSessao(p?.urlPublica))
@@ -147,6 +178,9 @@ export async function sync({ credencial, processos = [], simulado }) {
   const mensagens = []
   const falhas = []
   let comMensagem = 0
+  let lidos = 0
+  /** @type {PortalRecusou | null} */
+  let recusa = null
   try {
     browser = await withBackoff(() => chromium.launch({ headless: true }))
     const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
@@ -156,6 +190,7 @@ export async function sync({ credencial, processos = [], simulado }) {
       try {
         const r = await lerSessao(page, p.urlPublica)
         if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); continue }
+        lidos++
         if (r.linhas.length) comMensagem++
         for (const l of r.linhas) {
           mensagens.push(
@@ -166,6 +201,11 @@ export async function sync({ credencial, processos = [], simulado }) {
           )
         }
       } catch (e) {
+        // PARAR NA PRIMEIRA RECUSA. Quando o portal responde 403 ele está fechado
+        // para nós inteiro, não para este processo: as outras 59 tentativas seriam
+        // 59 páginas de erro — e, se a regra do WAF for por taxa, renovariam o
+        // bloqueio em vez de esperá-lo passar.
+        if (e instanceof PortalRecusou) { recusa = e; recusadoNestaRodada = e.status; break }
         falhas.push(`${p.licitacaoId}: ${String(e?.message ?? e).slice(0, 80)}`)
       }
     }
@@ -173,11 +213,29 @@ export async function sync({ credencial, processos = [], simulado }) {
     const msg = String(e?.message ?? e)
     try { if (browser) await browser.close() } catch { /* ignore */ }
     if (/timeout|net::|ECONN|ENOTFOUND|navigation/i.test(msg)) {
+      // ESTE é o caminho mais comum de portal fora do ar — `chromium.launch()` falhando,
+      // DNS fora, `net::ERR_CONNECTION_REFUSED` — e é mais comum que o 403 que motivou a
+      // correção. Sem marcar o flag aqui, os outros tenants da rodada continuavam
+      // pagando `chromium.launch()` (~12 s cada) para chegar à mesma conclusão.
+      recusadoNestaRodada = 0 // 0 = a porta não abriu; não há status HTTP
       return { status: 'portal_indisponivel', detalhe: msg.slice(0, 180), mensagens: [] }
     }
     return { status: 'falha', detalhe: msg.slice(0, 180), mensagens: [] }
   } finally {
     try { if (browser) await browser.close() } catch { /* ignore */ }
+  }
+
+  // O portal fechou a porta. Isso é `portal_indisponivel`, não `falha`: `falha` quer
+  // dizer "o nosso conector quebrou" e manda consertar código que está certo.
+  // As mensagens lidas ANTES da recusa vão junto — foram lidas de verdade —, mas o
+  // status continua sendo de incerteza, porque o resto da passada não aconteceu.
+  if (recusa) {
+    const parcial = lidos ? `${lidos} de ${alvos.length} processo(s) lidos antes` : 'nenhuma página foi lida'
+    return {
+      status: 'portal_indisponivel',
+      mensagens,
+      detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — ${parcial}; parei na 1ª recusa para não insistir contra o bloqueio`,
+    }
   }
 
   if (falhas.length === alvos.length) {

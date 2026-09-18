@@ -12,6 +12,7 @@ import { clsx } from 'clsx'
 import { Trophy, Building2, Database, Filter, Search, Package, ChevronDown, ArrowLeft, ExternalLink } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { formatBRL } from '@/lib/format'
+import { TOOLTIP_TEMA } from '@/lib/chart-tooltip'
 import { CATEGORIAS } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
@@ -354,11 +355,9 @@ export default function ConcorrentesEstadoPage() {
                     <ResponsiveContainer width="100%" height={360}>
                       <PieChart>
                         <Pie data={donutData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={70} outerRadius={130} paddingAngle={1}>
-                          {donutData.map((d, i) => <Cell key={i} fill={d.fill} stroke="#0a0a12" strokeWidth={1} />)}
+                          {donutData.map((d, i) => <Cell key={i} fill={d.fill} stroke="var(--bg2)" strokeWidth={1} />)}
                         </Pie>
-                        <Tooltip
-                          contentStyle={{ background: '#15151f', border: '1px solid #2a2a3a', borderRadius: 8, fontSize: 12 }}
-                          formatter={(v) => formatBRL(Number(v))} />
+                        <Tooltip {...TOOLTIP_TEMA} formatter={(v) => formatBRL(Number(v))} />
                       </PieChart>
                     </ResponsiveContainer>
                   )}
