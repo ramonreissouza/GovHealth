@@ -24,6 +24,35 @@
 import {
   montarMensagens, idDoProcesso, rotuloDoAnexo, sync, usarBuscador, esquecerRecusa,
 } from './connector-licitacoes-e.mjs'
+import { usarEsperaDeBackoff } from './connector-base.mjs'
+
+// A suite exercita timeout e queda de transporte, e por isso dormia DE VERDADE o
+// backoff: 1 s viraram 38 s. Suite de 38 s e suite que as pessoas param de rodar — e
+// esta e a prova viva de que o conector nao mente sobre o que leu. O sono vai a zero;
+// o que se testa e a LOGICA do retry, nao a duracao do setTimeout.
+usarEsperaDeBackoff(() => 0)
+
+/**
+ * A SUÍTE NÃO TOCA A REDE — e isto é verificado, não prometido.
+ *
+ * Uma versão desta suíte fazia 1 chamada real a `licitacoes-e2.bb.com.br`: um
+ * `usarBuscador(null)` uma linha cedo demais, e o `sync` seguinte saía pela rede. A
+ * asserção passava por ACIDENTE — o portal responde 403, que também não é "já recusou"
+ * — em vez de por evidência. Só apareceu porque alguém instrumentou o `fetch` global
+ * por fora.
+ *
+ * Agora o `fetch` global é CONTADO, e a contagem é cobrada no fim da suíte.
+ *
+ * Contar, e não só lançar: o `sync` embrulha cada processo num `try/catch`, então um
+ * `throw` aqui seria engolido como "falha daquele processo" e o teste passaria do mesmo
+ * jeito — silenciosamente, que é exatamente o problema. A asserção final é o que
+ * transforma o acidente em falha visível.
+ */
+let tentouRede = []
+globalThis.fetch = (url) => {
+  tentouRede.push(String(url).slice(0, 80))
+  throw new Error('a suíte não pode tocar a rede — forje a resposta com usarBuscador()')
+}
 
 let ok = 0, falhou = 0
 function afirmar(nome, valor, esperado) {
@@ -239,10 +268,11 @@ afirmar('RESP_IMPUGNACAO continua resposta', rotuloDoAnexo('RESP_IMPUGNACAO.pdf'
       : resposta(200, JSON.stringify(BASICOS))
   })
   const r = await sync({ processos: doisProcessos, simulado: false })
-  usarBuscador(null)
   afirmar('envelope 5xx isolado não derruba a passada', r.status, 'ok')
   afirmar('o processo seguinte foi lido', r.detalhe.includes('em 1/2 processo'), true)
-  // e o flag de rodada NÃO pode ter subido
+  // O `usarBuscador(null)` ficava AQUI, uma linha cedo demais: o `sync` abaixo saía
+  // pela rede de verdade, batendo no portal do BB. A asserção passava por acidente —
+  // o portal responde 403, o que também não é "já recusou" — em vez de por evidência.
   const seguinte = await sync({ processos: PROC, simulado: false })
   afirmar('o próximo tenant não herda bloqueio', /já recusou|já estava/.test(seguinte.detalhe ?? ''), false)
   usarBuscador(null); esquecerRecusa()
@@ -285,6 +315,10 @@ afirmar('RESP_IMPUGNACAO continua resposta', rotuloDoAnexo('RESP_IMPUGNACAO.pdf'
   afirmar('para na 5ª falha de transporte seguida', tentativas <= 12, true)
   afirmar('e conclui que é o portal', r.status, 'portal_indisponivel')
 }
+
+// A cobrança: nenhuma tentativa de rede em toda a suíte.
+console.log('\nhigiene da suíte')
+afirmar('a suíte não tocou a rede', tentouRede, [])
 
 console.log(`\n${ok} ok, ${falhou} falharam`)
 process.exit(falhou ? 1 : 0)

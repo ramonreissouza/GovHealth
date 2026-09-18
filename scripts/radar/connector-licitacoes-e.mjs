@@ -312,11 +312,19 @@ export async function sync({ processos = [], simulado }) {
   }
 
   // O portal já fechou a porta nesta rodada, para outro tenant? Então nem abrimos.
-  if (recusadoNestaRodada) {
+  //
+  // `!== null`, não truthy: `0` é um valor VÁLIDO do flag — quer dizer "a porta não
+  // abriu", sem status HTTP. O Licitanet já usava essa convenção; aqui o teste truthy
+  // engoliria o `0` em silêncio, e os dois conectores ficariam com regras diferentes
+  // para o mesmo flag.
+  if (recusadoNestaRodada !== null) {
+    const porque = recusadoNestaRodada
+      ? `já recusou a conexão (HTTP ${recusadoNestaRodada})`
+      : 'já estava inalcançável'
     return {
       status: 'portal_indisponivel',
       mensagens: [],
-      detalhe: `o ${META.nome} já recusou a conexão (HTTP ${recusadoNestaRodada}) nesta rodada — não insisti`,
+      detalhe: `o ${META.nome} ${porque} nesta rodada — não insisti`,
     }
   }
 
@@ -378,6 +386,11 @@ export async function sync({ processos = [], simulado }) {
   // lê como "sem novidades". É o requisito 4.2 ao contrário, reintroduzido justamente
   // pela correção que veio poupar tempo. Quem desiste tem de dizer que desistiu.
   if (desistiu) {
+    // E MARCA O FLAG. Era a única saída de portal-fora-do-ar que não marcava — o mesmo
+    // buraco que este PR acabou de fechar no `catch` externo do Licitanet. Sem isto, os
+    // outros tenants da rodada pagariam os 5 processos × 2 tentativas de novo, cada um,
+    // para chegar à mesma conclusão.
+    recusadoNestaRodada = 0 // 0 = a porta não abriu; não há status HTTP
     return {
       status: 'portal_indisponivel',
       mensagens,

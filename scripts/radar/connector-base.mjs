@@ -6,14 +6,29 @@
 // ocorreu. Falta de mensagens com status 'ok' = "sem novidades"; qualquer outra
 // coisa NÃO pode ser lida como "sem novidades".
 
-/** Retry com backoff exponencial (2s, 4s, 6s… até ~20s), igual ao ETL PNCP. */
+/** A espera entre tentativas: 2s, 4s, 6s… até ~20s, igual ao ETL PNCP. */
+const ESPERA_PADRAO = (i) => Math.min(2000 * (i + 1), 20000)
+let esperaDe = ESPERA_PADRAO
+
+/**
+ * SÓ PARA TESTE: encurta o sono do backoff.
+ *
+ * A suíte do conector do BB exercita timeout e queda de transporte, e por isso dormia
+ * de verdade: passou de 1 s para 38 s. Suíte de 38 s é suíte que as pessoas param de
+ * rodar — e esta é a prova viva de que o conector não mente sobre o que leu.
+ */
+export function usarEsperaDeBackoff(fn) { esperaDe = fn ?? ESPERA_PADRAO }
+
+/** Retry com backoff exponencial. */
 export async function withBackoff(fn, tries = 4) {
   let ultimoErro
   for (let i = 0; i < tries; i++) {
     try { return await fn() } catch (e) {
       ultimoErro = e
-      const espera = Math.min(2000 * (i + 1), 20000)
-      await new Promise((r) => setTimeout(r, espera))
+      // NÃO dorme depois da ÚLTIMA tentativa: ali já não há o que esperar, só o `throw`.
+      // Eram 2 s + 4 s por processo antes de desistir; com o teto de 120 processos do
+      // conector do BB, os 4 s finais viravam 8 min de sono puro por passada.
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, esperaDe(i)))
     }
   }
   throw ultimoErro
