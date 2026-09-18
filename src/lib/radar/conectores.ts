@@ -70,11 +70,25 @@ export const CONECTORES: Conector[] = [
   // não é participante é o DOSSIÊ: a situação do certame e cada peça anexada com
   // carimbo de hora — impugnação e pedido de esclarecimento de concorrente inclusive.
   // A descrição abaixo promete isso e nada além.
+  //
+  // DESLIGADO À ESPERA DE UMA REQUISIÇÃO REAL QUE COMPLETE.
+  //
+  // O conector está inteiro e testado — 58 asserções, incluindo os caminhos de recusa,
+  // bloqueio com 200, envelope de erro e queda de transporte. O que NUNCA aconteceu foi
+  // uma chamada bem-sucedida: o BB responde 403 à máquina do coletor e também a outras
+  // redes testadas, então o método (POST, lido do tráfego do próprio portal) jamais foi
+  // confirmado contra o portal vivo.
+  //
+  // Ligar é trocar esta linha para `true`. A partir daí a seleção passa a criar
+  // processos (85 abertos hoje na Bahia, 41 no RS) e o coletor passa a bater no BB — e,
+  // se o método estiver errado, o Radar diz `portal_indisponivel` ou `falha` com o
+  // motivo, nunca "sem novidades". A espera não é por segurança do dado; é para não
+  // anunciar ao cliente um portal que ninguém viu funcionar.
   {
     id: 'licitacoes-e',
     nome: 'Licitações-e (Banco do Brasil)',
     descricao: 'Pregões do portal do BB. Lemos o dossiê público — situação do certame, impugnações e pedidos de esclarecimento, com hora. Não pede senha.',
-    disponivel: true,
+    disponivel: false,
     leitura: 'dossie', // não tem mensageria pública — só situação e anexos
     modoPublico: true,
     dominio: 'licitacoes-e2.bb.com.br',
