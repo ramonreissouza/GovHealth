@@ -73,12 +73,23 @@ export const PORTAIS = {
     logado: ({ url, conteudo }) =>
       !/\/login/i.test(url) && /(sair|logout|meu\s*painel|minhas\s*licita|área\s*do\s*fornecedor|painel\s*do\s*fornecedor)/i.test(conteudo || ''),
   },
+  // Licitações-e: lido pela API PÚBLICA do portal NOVO
+  // (licitacoes-e2.bb.com.br), sem login e sem navegador — ver
+  // connector-licitacoes-e.mjs.
+  //
+  // O `loginUrl` antigo apontava para `www.licitacoes-e.com.br/aop/index-login.aop`,
+  // que hoje responde 403 e, mesmo quando respondia, era servido atrás do Módulo de
+  // Segurança do BB (Warsaw/GAS) — atestação NATIVA de dispositivo, que navegador em
+  // container não passa e que não se contorna. Mandar o cliente para lá era mandá-lo
+  // para uma porta que não abre; agora aponta para o portal vivo.
   'licitacoes-e': {
     id: 'licitacoes-e',
     nome: 'Licitações-e (Banco do Brasil)',
-    loginUrl: 'https://www.licitacoes-e.com.br/aop/index-login.aop',
-    areaUrl: 'https://www.licitacoes-e.com.br/aop/',
-    emLogin: ({ url }) => /login/i.test(url),
+    publico: true,
+    dominio: 'licitacoes-e2.bb.com.br',
+    loginUrl: 'https://licitacoes-e2.bb.com.br/aop-inter-estatico/',
+    areaUrl: 'https://licitacoes-e2.bb.com.br/aop-inter-estatico/',
+    emLogin: ({ url }) => /login|acesso/i.test(url),
     logado: ({ url, conteudo }) => !/login/i.test(url) && /(sair|encerrar\s*sess|minhas\s*licita)/i.test(conteudo || ''),
   },
   // BLL e BNC: MESMA aplicação em dois domínios (medido em 13/09/2026 — mesma rota

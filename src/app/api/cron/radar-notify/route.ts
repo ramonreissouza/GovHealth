@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { enviarNovaLicitacaoRadar, enviarAlertaRadar } from '@/lib/email'
+import { leituraDoConector } from '@/lib/radar/conectores'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -17,6 +18,7 @@ interface Pendente {
   id: string; titular_id: string; evento: string; mensagem_id: number | null
   destinatario: string; assunto: string | null; corpo: string | null; link: string | null
   texto: string | null; autor: string | null; proc_titulo: string | null
+  conector_id: string | null
 }
 
 export async function GET(req: NextRequest) {
@@ -25,8 +27,12 @@ export async function GET(req: NextRequest) {
   }
   try {
     const pendentes = await query<Pendente>(
+      // `m.conector_id` entra para escolher o SUJEITO da frase do e-mail: nem todo
+      // portal tem chat. O Licitações-e não tem mensageria pública — o que lemos nele é
+      // o dossiê —, e dizer "nova mensagem no chat" ali prometeria o que o catálogo
+      // teve o cuidado de não prometer.
       `SELECT n.id, n.titular_id, n.evento, n.mensagem_id, n.destinatario, n.assunto, n.corpo, n.link,
-              m.texto, m.autor, p.titulo AS proc_titulo
+              m.texto, m.autor, m.conector_id, p.titulo AS proc_titulo
          FROM radar_notificacoes n
          LEFT JOIN radar_mensagens m ON m.id = n.mensagem_id
          LEFT JOIN radar_processos p ON p.id = n.processo_id
@@ -51,6 +57,9 @@ export async function GET(req: NextRequest) {
           const r = await enviarAlertaRadar({
             to: n.destinatario, processo: n.proc_titulo ?? 'Processo monitorado',
             autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
+            // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
+            // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
+            fonte: leituraDoConector(n.conector_id),
           })
           ok = r.enviado; motivo = r.motivo
         }

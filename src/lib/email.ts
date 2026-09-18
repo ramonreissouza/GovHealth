@@ -42,7 +42,10 @@ function moldura(titulo: string, corpo: string): string {
 }
 
 const btn = (href: string, label: string) =>
-  `<a href="${href}" style="display:inline-block;margin-top:14px;background:#2f80ed;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px;">${label}</a>`
+  // O `href` também é escapado: `link` vem de `radar_processos.link_portal`, que é o
+  // `link_externo` do PNCP — campo livre de terceiro. Hoje o risco é teórico (0 links
+  // com `"` ou `<` em 179.779 medidos), mas o custo de fechar é o mesmo `escaparHtml`.
+  `<a href="${escaparHtml(href)}" style="display:inline-block;margin-top:14px;background:#2f80ed;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px;">${label}</a>`
 
 /** Formata número em BRL (para os e-mails do Radar). */
 function brl(v?: number | null): string {
@@ -59,14 +62,19 @@ export async function enviarNovaLicitacaoRadar(params: {
   to: string; nome?: string | null; objeto: string; uf?: string | null; municipio?: string | null;
   valor?: number | null; motivo?: string | null; link: string
 }): Promise<{ enviado: boolean; motivo?: string }> {
+  // TUDO que vem de terceiro passa por `escaparHtml`. Este é o e-mail de MAIOR volume
+  // do Radar — sai a cada licitação nova que casa com o perfil, para todo tenant — e
+  // interpolava `objeto_compra` cru, texto livre publicado pelo órgão. Medido: 41
+  // contratações já têm `<` no objeto, e um `<a href="…">` ali chega como link clicável
+  // pelo mesmo caminho que o alerta de mensagem acabou de fechar.
   const local = [params.municipio, params.uf].filter(Boolean).join(' / ')
   const corpo = `
-    <p style="font-size:14px;color:#334155;margin:0 0 12px;">${params.nome ? params.nome + ', ' : ''}o Radar encontrou uma <strong>nova licitação</strong> que combina com o seu perfil:</p>
+    <p style="font-size:14px;color:#334155;margin:0 0 12px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}o Radar encontrou uma <strong>nova licitação</strong> que combina com o seu perfil:</p>
     <table style="width:100%;font-size:13px;color:#334155;border-collapse:collapse;margin:0 0 8px;">
-      <tr><td style="padding:4px 0;color:#64748b;width:90px;">Objeto</td><td style="padding:4px 0;font-weight:600;">${params.objeto || '—'}</td></tr>
-      ${local ? `<tr><td style="padding:4px 0;color:#64748b;">Local</td><td style="padding:4px 0;">${local}</td></tr>` : ''}
+      <tr><td style="padding:4px 0;color:#64748b;width:90px;">Objeto</td><td style="padding:4px 0;font-weight:600;">${escaparHtml(params.objeto) || '—'}</td></tr>
+      ${local ? `<tr><td style="padding:4px 0;color:#64748b;">Local</td><td style="padding:4px 0;">${escaparHtml(local)}</td></tr>` : ''}
       <tr><td style="padding:4px 0;color:#64748b;">Valor est.</td><td style="padding:4px 0;">${brl(params.valor)}</td></tr>
-      ${params.motivo ? `<tr><td style="padding:4px 0;color:#64748b;">Combinou por</td><td style="padding:4px 0;">${params.motivo}</td></tr>` : ''}
+      ${params.motivo ? `<tr><td style="padding:4px 0;color:#64748b;">Combinou por</td><td style="padding:4px 0;">${escaparHtml(params.motivo)}</td></tr>` : ''}
     </table>
     ${btn(params.link, 'Ver a licitação')}
     <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Você recebe este alerta porque a licitação corresponde às preferências do seu perfil no GovHealth. Ajuste-as em Perfil & Preferências.</p>`
@@ -74,23 +82,66 @@ export async function enviarNovaLicitacaoRadar(params: {
 }
 
 /**
- * RADAR — Alerta de NOVA MENSAGEM/convocação de chat em processo monitorado.
+ * Escapa texto para interpolação segura em HTML de e-mail.
+ *
+ * A REGRA, para não voltar a viver só na cabeça de quem escreveu: TODO conteúdo de
+ * terceiro interpolado no HTML de um e-mail passa por aqui — texto do órgão, nome de
+ * arquivo, objeto da licitação, autor, e também o `href` dos botões. O que NÃO passa é
+ * o ASSUNTO, que é texto puro e não HTML (ver o fim de `enviarAlertaRadar`).
+ *
+ * POR QUE (2026-09-17). O corpo do alerta do Radar é montado por concatenação, e o
+ * `trecho` vem de conteúdo de TERCEIRO: mensagem de chat de portal e, desde o conector
+ * do Licitações-e, NOME DE ARQUIVO que o órgão escolhe ao subir a peça no dossiê —
+ * campo livre, não frase digitada por pregoeiro. Um `nomeArquivo` como
+ * `<a href="https://phish">Clique</a>.pdf` chegava como link clicável dentro de um
+ * e-mail que o fornecedor confia porque veio do GovHealth, sobre uma licitação que ele
+ * realmente acompanha. Cliente de e-mail remove `<script>`, mas `<a>`, `<img>` (pixel
+ * de rastreio) e `<style>` passam.
+ *
+ * O in-app está a salvo — o React escapa e a página do Radar não usa
+ * `dangerouslySetInnerHTML`. Era só o caminho do e-mail.
+ */
+function escaparHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
+/**
+ * RADAR — Alerta de novidade em processo monitorado.
  * Disparado pela captura (worker) → cron radar-notify.
+ *
+ * `fonte` escolhe o SUJEITO da frase. Nem todo portal tem chat: o Licitações-e não tem
+ * mensageria pública, e o que monitoramos nele é o dossiê. Dizer "nova mensagem no
+ * chat" ali seria prometer, na frase que o fornecedor lê às 7h da manhã, exatamente o
+ * que o catálogo teve o cuidado de não prometer.
  */
 export async function enviarAlertaRadar(params: {
   to: string; nome?: string | null; processo: string; autor?: string | null; trecho: string;
-  categorias?: string[]; link: string
+  categorias?: string[]; link: string; fonte?: 'chat' | 'dossie'
 }): Promise<{ enviado: boolean; motivo?: string }> {
+  const dossie = params.fonte === 'dossie'
+  const oQue = dossie ? 'nova peça' : 'nova mensagem'
+  const onde = dossie ? 'no dossiê público do processo' : 'no chat do processo'
+  const titulo = dossie ? 'Nova peça no dossiê da licitação' : 'Mensagem no chat da licitação'
+  const rodape = dossie
+    ? 'Acompanhe no portal dentro do prazo. Este alerta é do monitoramento do GovHealth.'
+    : 'Responda no portal dentro do prazo. Este alerta é do monitoramento de chat do GovHealth.'
+
   const tags = (params.categorias ?? []).length
-    ? `<p style="margin:0 0 10px;">${params.categorias!.map((c) => `<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-right:6px;">${c}</span>`).join('')}</p>`
+    ? `<p style="margin:0 0 10px;">${params.categorias!.map((c) => `<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-right:6px;">${escaparHtml(c)}</span>`).join('')}</p>`
     : ''
   const corpo = `
-    <p style="font-size:14px;color:#334155;margin:0 0 10px;">${params.nome ? params.nome + ', ' : ''}há uma <strong>nova mensagem</strong> no chat do processo <strong>${params.processo}</strong>${params.autor ? ` (${params.autor})` : ''}:</p>
+    <p style="font-size:14px;color:#334155;margin:0 0 10px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}há uma <strong>${oQue}</strong> ${onde} <strong>${escaparHtml(params.processo)}</strong>${params.autor ? ` (${escaparHtml(params.autor)})` : ''}:</p>
     ${tags}
-    <blockquote style="margin:0 0 12px;padding:10px 14px;background:#f8fafc;border-left:3px solid #2f80ed;font-size:13px;color:#334155;">${params.trecho}</blockquote>
+    <blockquote style="margin:0 0 12px;padding:10px 14px;background:#f8fafc;border-left:3px solid #2f80ed;font-size:13px;color:#334155;">${escaparHtml(params.trecho)}</blockquote>
     ${btn(params.link, 'Abrir no Radar')}
-    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Responda no portal dentro do prazo. Este alerta é do monitoramento de chat do GovHealth.</p>`
-  return enviar(params.to, `🔔 Nova mensagem — ${params.processo}`, moldura('Mensagem no chat da licitação', corpo))
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">${rodape}</p>`
+  // O ASSUNTO NÃO É HTML. `enviar()` passa `subject` direto para o Resend, como texto
+  // puro — escapar aqui não protege nada e estraga o que o fornecedor lê na caixa.
+  // Medido na base: 3.196 objetos com `"`, 1.143 com `'`, 503 com `&` chegariam como
+  // `&quot;`, `&#39;`, `&amp;`. O corpo continua precisando do escape; o assunto, não.
+  return enviar(params.to, `🔔 ${dossie ? 'Nova peça' : 'Nova mensagem'} — ${params.processo}`, moldura(titulo, corpo))
 }
 
 /** Formata 'YYYY-MM-DD' → 'DD/MM/YYYY'. */
