@@ -61,17 +61,44 @@ export async function capturarSessaoPortal(conectorId, { waitS = 300, onAbrir } 
     const context = await browser.newContext()
     const page = await context.newPage()
     if (onAbrir) { try { await onAbrir() } catch { /* ignore */ } }
-    // Abre a área autenticada; se a sessão não existe, o portal cai no login.
-    await page.goto(meta.areaUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
+
+    // A TELA DE LOGIN DO PORTAL, não a área autenticada.
+    //
+    // Este arquivo abria `areaUrl` apostando que quem chega sem sessão é mandado para o
+    // login. No Compras.gov.br isso é falso, e o próprio `portais.mjs` já documentava o
+    // porquê desde 13/09/2026 — só que ninguém lia a `loginUrl` que ele definiu.
+    //
+    // O que o fornecedor via (medido em 18/09/2026, reproduzindo o caminho inteiro):
+    //   1. a janela abria em /comprasnet-web/seguro/fornecedor;
+    //   2. o portal respondia "Acesso não autorizado — tente realizar o acesso a partir
+    //      do Compras.gov.br", porque o cnetmobile não aceita link direto;
+    //   3. daí se chegava ao SSO do gov.br com `client_id=www.gov.br` — o login GENÉRICO
+    //      do portal gov.br, não o do Compras.gov.br, que é `client_id=comprasnet.gov.br`;
+    //   4. e esse fluxo recusava o CAPTCHA (ERL0000900) por mais correto que estivesse.
+    //
+    // Pelo caminho do portal (loginPortal.asp → perfil → "Entrar com Gov.br") o SSO
+    // abre com `client_id=comprasnet.gov.br` e devolve a sessão que o conector precisa.
+    const entrada = meta.loginUrl ?? meta.areaUrl
+    await page.goto(entrada, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
 
     // Logado = detector do portal responde verdadeiro, estável por 2 checagens.
     const deadline = Date.now() + waitS * 1000
     let estavel = 0
+    let levadoAArea = false
     while (Date.now() < deadline) {
       await page.waitForTimeout(3000)
       const url = page.url()
       const conteudo = (await page.content().catch(() => '')).toLowerCase()
-      if (meta.logado({ url, conteudo })) { estavel++; if (estavel >= 2) break } else estavel = 0
+      if (meta.logado({ url, conteudo })) { estavel++; if (estavel >= 2) break; continue }
+      estavel = 0
+      // Saiu do login mas ainda não está na área de trabalho: o SSO costuma devolver
+      // numa landing, e os marcadores que o detector procura só existem na área. UMA
+      // visita, e só depois que o login saiu de cena — navegar durante o 2FA
+      // interromperia o humano no meio da autenticação.
+      if (!levadoAArea && meta.emLogin && !meta.emLogin({ url }) && meta.areaUrl && url !== 'about:blank') {
+        levadoAArea = true
+        await page.goto(meta.areaUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {})
+      }
     }
 
     const url = page.url()
