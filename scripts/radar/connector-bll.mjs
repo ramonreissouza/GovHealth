@@ -28,7 +28,14 @@
 // HONESTIDADE (requisito 4.2): `#MsgProcess` VAZIO é resposta ("ainda não há mensagem");
 // `#MsgProcess` que não aparece é FALHA. Os dois casos são contados e ditos separadamente.
 
-import { SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import {
+  abrirPagina,
+  horarioBrParaISO,
+  normalizarMensagem,
+  PortalRecusou,
+  SIMULADO_FIXTURES,
+  withBackoff,
+} from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 
 const UA_NAVEGADOR =
@@ -41,6 +48,44 @@ const UA_NAVEGADOR =
 // ordenados por urgência (sessão mais próxima primeiro), então o teto corta a cauda,
 // não o que importa. Truncamento é DITO no detalhe, nunca silencioso.
 const TETO_PROCESSOS = 60
+
+/**
+ * O clique na aba "Mensagens" só funciona depois que o script do reCAPTCHA terminou de
+ * carregar. Medido em 18/09/2026, navegador frio, três páginas (duas do BLL, uma do BNC):
+ *
+ *   4,9 s  domcontentloaded — `doAction` e jQuery JÁ existem, `grecaptcha.execute` NÃO
+ *   7,1 s  `grecaptcha.execute` vira função
+ *   9,2 s  readyState = complete
+ *
+ * O conector clicava aos 4,94 s. `doAction` chama `grecaptcha.execute(...)`, que aos
+ * 4,9 s ainda é `undefined`: o clique morria ali, SEM UMA ÚNICA REQUISIÇÃO — e o
+ * conector, vendo o tbody ausente, dizia "o modal não abriu". 3 de 3 páginas frias
+ * falharam; as mesmas 3, quentes, leram 57, 68 e 14 linhas.
+ *
+ * É por isso que a falha parecia intermitente e caprichosa: só a PRIMEIRA página de cada
+ * passada é fria. No BNC ela se escondia no meio das outras (o conector tolera falha
+ * parcial); no BLL, que teve 1 processo na passada, a primeira era a única — e a passada
+ * inteira virava `falha`.
+ *
+ * ISTO NÃO CONTORNA CAPTCHA (requisito 4.2 + ToS). Não há desafio a resolver: é o
+ * reCAPTCHA v3, invisível, do próprio portal. Só esperamos o portal terminar de carregar
+ * antes de apertar o botão dele — o oposto de burlar.
+ */
+const BOOTSTRAP_TIMEOUT_MS = 20000
+
+/**
+ * Espera o portal ficar pronto para receber o clique. Melhor-esforço de propósito: se
+ * um dia o BLL sair do reCAPTCHA, `grecaptcha` nunca aparece e travar aqui transformaria
+ * uma página que LÊ numa falha. Quem decide é o resultado do clique, não esta espera.
+ */
+export async function esperarBootstrap(page, timeout = BOOTSTRAP_TIMEOUT_MS) {
+  try {
+    await page.waitForFunction(() => typeof window.grecaptcha?.execute === 'function', null, { timeout })
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * A URL é uma página de PROCESSO deste portal (e não um link solto do PNCP)?
@@ -88,8 +133,11 @@ export async function extrairMensagensBll(page) {
  * Abre a página pública de UM processo e devolve as mensagens.
  * @returns {Promise<{linhas: Array<{texto:string,horario:string}>} | {erro: string}>}
  */
-async function lerProcesso(page, url) {
-  await withBackoff(() => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }), 2)
+export async function lerProcesso(page, url) {
+  // `abrirPagina` (e não `page.goto` cru) porque goto NÃO lança em 403: sem olhar o
+  // status, uma recusa do portal chegaria aqui disfarçada de "a aba não apareceu".
+  await abrirPagina(page, url, { timeout: 45000, tentativas: 2 })
+
   // A aba só existe depois que o ASP.NET monta o cabeçalho do processo.
   const aba = page.locator('button', { hasText: /^Mensagens$/i }).first()
   try {
@@ -97,15 +145,41 @@ async function lerProcesso(page, url) {
   } catch {
     return { erro: 'a aba "Mensagens" não apareceu na página' }
   }
-  await aba.click({ timeout: 10000 })
+
+  // Visível ≠ pronta. Ver o comentário de BOOTSTRAP_TIMEOUT_MS.
+  await esperarBootstrap(page)
+
   // O modal carrega em dois saltos (view e depois a lista). Esperar o tbody EXISTIR é
   // mais fiel do que esperar um tempo fixo: quando não há mensagem, o tbody aparece
   // vazio — e é essa a resposta que queremos poder afirmar.
-  try {
-    await page.waitForSelector('#MsgProcess', { state: 'attached', timeout: 15000 })
-  } catch {
-    return { erro: 'o quadro de mensagens não carregou (modal não abriu)' }
+  const esperarQuadro = async (timeout) => {
+    try {
+      await page.waitForSelector('#MsgProcess', { state: 'attached', timeout })
+      return true
+    } catch {
+      return false
+    }
   }
+
+  await aba.click({ timeout: 10000 })
+  let abriu = await esperarQuadro(15000)
+
+  if (!abriu) {
+    // Duas coisas muito diferentes cabem aqui, e tratá-las igual estraga uma delas:
+    // o modal ABERTO e lento só precisa de mais tempo — reclicar nele fecharia o que
+    // estava quase pronto. Já o clique que MORREU não deixa modal nenhum, e só um
+    // segundo clique o traz de volta.
+    const modalAberto = await page.evaluate(() => !!document.querySelector('.genModal.show, .modal.show'))
+    if (modalAberto) {
+      abriu = await esperarQuadro(10000)
+    } else {
+      await aba.click({ timeout: 10000 })
+      abriu = await esperarQuadro(15000)
+    }
+  }
+
+  if (!abriu) return { erro: 'o quadro de mensagens não carregou (modal não abriu)' }
+
   // Pequena folga para o POST da lista devolver e preencher o tbody recém-criado.
   await page.waitForTimeout(3000)
   const linhas = await extrairMensagensBll(page)
@@ -156,6 +230,7 @@ export function criarConectorBllBnc({ id }) {
     const mensagens = []
     const falhas = []
     let comMensagem = 0
+    let recusa = null
     try {
       browser = await withBackoff(() => chromium.launch({ headless: true }))
       const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
@@ -185,6 +260,9 @@ export function criarConectorBllBnc({ id }) {
             )
           }
         } catch (e) {
+          // Recusa é sobre o PORTAL, não sobre este processo: continuar a fila só
+          // renovaria o bloqueio, e cada página seguinte daria a mesma falha genérica.
+          if (e instanceof PortalRecusou) { recusa = e; break }
           falhas.push(`${p.licitacaoId}: ${String(e?.message ?? e).slice(0, 80)}`)
         }
       }
@@ -199,6 +277,17 @@ export function criarConectorBllBnc({ id }) {
       try { if (browser) await browser.close() } catch { /* ignore */ }
     }
 
+    // O portal fechou a porta. Não é "falha do conector" nem "sem novidades": é uma
+    // terceira coisa, e dizer qual poupa quem lê de caçar um seletor que está correto.
+    if (recusa) {
+      const lidas = mensagens.length ? ` · ${mensagens.length} mensagem(ns) lida(s) antes disso` : ''
+      return {
+        status: 'portal_indisponivel',
+        mensagens,
+        detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — parei na 1ª recusa para não insistir contra o bloqueio${lidas}`,
+      }
+    }
+
     // TODAS as páginas falharam = o portal mudou (ou caiu). Isso NÃO pode virar "ok com
     // 0 mensagens": é exatamente o silêncio que o cliente leria como "sem novidades".
     if (falhas.length === alvos.length) {
@@ -210,7 +299,10 @@ export function criarConectorBllBnc({ id }) {
     }
 
     const partes = [`${mensagens.length} mensagem(ns) em ${comMensagem}/${alvos.length} processo(s)`]
-    if (falhas.length) partes.push(`${falhas.length} página(s) não lida(s)`)
+    // COM O MOTIVO. "1 página não lida" e mais nada é o mesmo pecado do diagnóstico
+    // errado, só que menor: quem lê a saúde não tem como saber se foi o portal, a
+    // página ou o conector — e sem isso ninguém investiga uma falha parcial.
+    if (falhas.length) partes.push(`${falhas.length} página(s) não lida(s) — ${falhas[0]}`)
     if (truncados) partes.push(`${truncados} além do teto de ${TETO_PROCESSOS} nesta passada`)
     if (diretas) partes.push(`${diretas} compra(s) direta(s) sem quadro de mensagens`)
     // Dito sempre, para ninguém confundir o log público com a sala de disputa.
