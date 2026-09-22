@@ -160,7 +160,23 @@ export async function GET(req: NextRequest) {
        FROM radar_processos p
        LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
       WHERE p.titular_id = $1 AND p.status = 'ativo'${condProc ? ` AND ${condProc}` : ''}
-      ORDER BY p.atualizado_em DESC
+      -- QUEM TEM CONVERSA ENTRA SEMPRE, e o teto de 500 corta o resto.
+      --
+      -- Ordenado so por atualizado_em, o teto cortava processos QUE TINHAM MENSAGEM:
+      -- medido em 22/09/2026 nesta conta, 7.691 processos ativos e 269 com conversa, dos
+      -- quais 264 caiam fora dos 500 — posicoes 3143, 4651, 4798, 4805 e por ai.
+      --
+      -- O que o cortado vira nao e ausencia (a conversa continua na tela): vira o CARD
+      -- ORFAO de montarProcessos, montado so com o que a MENSAGEM carrega. E card orfao
+      -- nao tem orgao, nem prazo, nem situacao, nem participando. O "Orgao: --" e o
+      -- "Prazo: —" que apareciam na maioria dos pregoes eram isto, e marcar
+      -- "estou participando" nele gravava no banco sem nada mudar na tela, porque o id
+      -- nao existia na lista que a tela atualiza.
+      --
+      -- O card orfao existe para o processo REMOVIDO da selecao, cuja conversa nao pode
+      -- sumir. Processo vivo com conversa nunca deveria cair nele.
+      ORDER BY EXISTS (SELECT 1 FROM radar_mensagens mm WHERE mm.processo_id = p.id) DESC,
+               p.atualizado_em DESC
       LIMIT 500`,
     paramsProc,
   )

@@ -73,6 +73,12 @@ interface Inbox {
 /** Pregão + sua conversa, já ordenada. */
 interface Processo extends ProcessoApi {
   mensagens: Mensagem[]
+  /**
+   * Card montado SO a partir das mensagens, porque o processo nao veio na lista da
+   * rota. Nao tem orgao, prazo, situacao nem `participando` — e quem depende desses
+   * campos precisa saber que eles nao existem, em vez de ler o valor inventado.
+   */
+  orfao: boolean
   naoLidas: number
   ultima: Mensagem | null
   prioridadeAlta: boolean
@@ -92,6 +98,7 @@ function montarProcessos(data: Inbox): Processo[] {
     porProcesso.delete(p.id)
     return {
       ...p,
+      orfao: false,
       mensagens: msgs,
       naoLidas: msgs.filter((m) => !m.lida).length,
       ultima: msgs[msgs.length - 1] ?? null,
@@ -107,7 +114,9 @@ function montarProcessos(data: Inbox): Processo[] {
     procs.push({
       id, conectorId: u.conector_id, cnpj: u.cnpj, licitacaoId: u.licitacao_id,
       titulo: u.titulo, uf: null, valor: null, prioridade: u.prioridade, mutado: false,
-      participando: false,
+      // `false` aqui NAO e medicao, e o valor que sobrou por nao termos o processo.
+      // `orfao: true` ao lado e o que impede a tela de trata-lo como resposta.
+      participando: false, orfao: true,
       origem: 'auto', linkPortal: u.link_portal, atualizadoEm: u.capturado_em,
       orgao: null, municipio: null, modalidade: null, prazo: null, abertura: null,
       situacao: 'aberta', meu: true, portal: u.conector_id, linkOrigem: null,
@@ -355,7 +364,6 @@ export default function RadarPage() {
     })
   }
 
-  /** Liga/desliga o monitoramento de um pregão (kebab do benchmark). */
   // UM TOQUE, SEM CONFIRMACAO. O estado troca na tela antes da resposta e volta
   // sozinho se o servidor recusar — marcar participacao e barato de desfazer, e um
   // modal de confirmacao aqui so faria o fornecedor deixar de marcar.
@@ -373,6 +381,7 @@ export default function RadarPage() {
     }
   }
 
+  /** Liga/desliga o monitoramento de um pregão (kebab do benchmark). */
   async function alternarMonitoramento(p: Processo) {
     const mutado = !p.mutado
     setData((d) => d ? { ...d, processos: d.processos.map((x) => x.id === p.id ? { ...x, mutado } : x) } : d)
@@ -741,10 +750,15 @@ export default function RadarPage() {
                             sessão). O rótulo é o que ele reconhece: ele "entra num pregão", não
                             "habilita monitoramento". */}
                         <button onClick={() => void alternarParticipacao(selecionado)}
-                          title={selecionado.participando ? 'Você marcou que está participando deste pregão' : 'Estou participando deste pregão'}
+                          disabled={selecionado.orfao}
+                          title={selecionado.orfao
+                            ? 'Este pregão saiu da sua seleção — a conversa continua aqui, mas não dá para marcar participação nele'
+                            : selecionado.participando ? 'Você marcou que está participando deste pregão' : 'Estou participando deste pregão'}
                           aria-pressed={selecionado.participando}
-                          className={clsx('p-1.5 rounded-md transition-colors hover:bg-bg3',
-                            selecionado.participando ? 'text-emerald-400 bg-emerald-500/10' : 'text-faint hover:text-emerald-400')}>
+                          className={clsx('p-1.5 rounded-md transition-colors',
+                            selecionado.orfao ? 'text-faint/30 cursor-not-allowed'
+                              : selecionado.participando ? 'text-emerald-400 bg-emerald-500/10 hover:bg-bg3'
+                                : 'text-faint hover:text-emerald-400 hover:bg-bg3')}>
                           <Gavel size={15} /></button>
                         <button onClick={() => setFlag(selecionado.id, { importante: !flags[selecionado.id]?.importante })} title="Importante"
                           className={clsx('p-1.5 rounded-md transition-colors hover:bg-bg3', flags[selecionado.id]?.importante ? 'text-amber' : 'text-faint hover:text-amber')}>
@@ -753,6 +767,7 @@ export default function RadarPage() {
                           processo={selecionado}
                           onDetalhes={() => setDetalhes(selecionado)}
                           onMonitoramento={() => void alternarMonitoramento(selecionado)}
+                          onParticipacao={() => void alternarParticipacao(selecionado)}
                           onArquivar={() => { const arq = !flags[selecionado.id]?.arquivado; setFlag(selecionado.id, { arquivado: arq }); if (arq) setSelId(null) }}
                           arquivado={!!flags[selecionado.id]?.arquivado}
                         />
@@ -891,8 +906,9 @@ function TextoDestacado({ texto, chaves }: { texto: string; chaves: string[] }) 
 }
 
 /** Menu ⋮ da conversa: Informações · Acessar local da disputa · Desativar monitoramento. */
-function Kebab({ processo, onDetalhes, onMonitoramento, onArquivar, arquivado }: {
-  processo: Processo; onDetalhes: () => void; onMonitoramento: () => void; onArquivar: () => void; arquivado: boolean
+function Kebab({ processo, onDetalhes, onMonitoramento, onParticipacao, onArquivar, arquivado }: {
+  processo: Processo; onDetalhes: () => void; onMonitoramento: () => void; onParticipacao: () => void
+  onArquivar: () => void; arquivado: boolean
 }) {
   const [aberto, setAberto] = useState(false)
   const cx = useRef<HTMLDivElement>(null)
@@ -937,6 +953,13 @@ function Kebab({ processo, onDetalhes, onMonitoramento, onArquivar, arquivado }:
           <Item onClick={onArquivar} icone={arquivado ? <ArchiveRestore size={13} /> : <Archive size={13} />}>
             {arquivado ? 'Desarquivar' : 'Arquivar'}
           </Item>
+          {/* O mesmo comando do martelo, agora com NOME. O icone sozinho nao diz o
+              que faz, e este e o comando que o fornecedor mais vai usar. */}
+          {!processo.orfao && (
+            <Item onClick={onParticipacao} icone={<Gavel size={13} />}>
+              {processo.participando ? 'Não estou mais participando' : 'Estou participando deste'}
+            </Item>
+          )}
           <div className="border-t border-subtle my-1" />
           <Item onClick={onMonitoramento} icone={processo.mutado ? <Bell size={13} /> : <BellOff size={13} />}>
             {processo.mutado ? 'Ativar monitoramento' : 'Desativar monitoramento'}
