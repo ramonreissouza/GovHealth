@@ -234,6 +234,11 @@ export async function sync({ credencial, processos = [], simulado }) {
     return {
       status: 'portal_indisponivel',
       mensagens,
+      // QUANTOS FORAM LIDOS DE VERDADE, para o rodizio da proxima passada comecar
+      // DEPOIS deles. Sem este numero o run.mjs nao tem como saber onde o portal
+      // cortou, e a passada seguinte recomeca do mesmo primeiro — foi assim que os
+      // processos 22 a 60 nunca eram lidos. Ver scripts/radar/rodizio.mjs.
+      lidos,
       detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — ${parcial}; parei na 1ª recusa para não insistir contra o bloqueio`,
     }
   }
@@ -254,5 +259,7 @@ export async function sync({ credencial, processos = [], simulado }) {
   partes.push('painel público (as mais recentes da sessão)')
   if (credencial?.storageState) partes.push('sessão salva ainda não usada por este portal')
 
-  return { status: 'ok', mensagens, detalhe: partes.join(' · ') }
+  // `lidos` tambem no caminho feliz: a passada que le tudo faz o rodizio dar a volta
+  // inteira e voltar ao inicio, em vez de ficar parado achando que nada aconteceu.
+  return { status: 'ok', mensagens, lidos, detalhe: partes.join(' · ') }
 }

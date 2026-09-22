@@ -230,6 +230,11 @@ export function criarConectorBllBnc({ id }) {
     const mensagens = []
     const falhas = []
     let comMensagem = 0
+    // QUANTOS FORAM LIDOS DE VERDADE. Nao e `alvos.length` (o que foi entregue) nem
+    // `comMensagem` (os que TINHAM mensagem): e quantas paginas o portal deixou ler
+    // antes de fechar a porta. E esse numero que diz ao rodizio onde a proxima passada
+    // deve comecar. Ver scripts/radar/rodizio.mjs.
+    let lidos = 0
     let recusa = null
     try {
       browser = await withBackoff(() => chromium.launch({ headless: true }))
@@ -240,6 +245,7 @@ export function criarConectorBllBnc({ id }) {
         try {
           const r = await lerProcesso(page, p.urlPublica)
           if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); continue }
+          lidos++
           if (r.linhas.length) comMensagem++
           for (const l of r.linhas) {
             mensagens.push(
@@ -284,7 +290,8 @@ export function criarConectorBllBnc({ id }) {
       return {
         status: 'portal_indisponivel',
         mensagens,
-        detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — parei na 1ª recusa para não insistir contra o bloqueio${lidas}`,
+        lidos,
+        detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — ${lidos} de ${alvos.length} processo(s) lidos antes; parei na 1ª recusa para não insistir contra o bloqueio${lidas}`,
       }
     }
 
@@ -309,7 +316,7 @@ export function criarConectorBllBnc({ id }) {
     partes.push('log público (a sala ao vivo exige a sessão do fornecedor)')
     if (credencial?.storageState) partes.push('sessão salva ainda não usada por este portal')
 
-    return { status: 'ok', mensagens, detalhe: partes.join(' · ') }
+    return { status: 'ok', mensagens, lidos, detalhe: partes.join(' · ') }
   }
 }
 

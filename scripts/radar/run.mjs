@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { conectorSync } from './registry.mjs'
 import { PORTAIS_PUBLICOS } from './portais.mjs'
+import { rotacionar, proximoOffset, chaveRodizio, explicarRodizio } from './rodizio.mjs'
 import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 import { sessaoTemCredencial } from './capture.mjs'
 import { novoPool } from '../lib/pg-ssl.mjs'
@@ -438,8 +439,35 @@ try {
       if (porTitular.size) console.log(`→ ${portalId} público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
 
       const syncPortal = conectorSync(portalId)
-      for (const [titularId, procs] of porTitular) {
+      for (const [titularId, procsNaOrdem] of porTitular) {
         conectores++
+
+        // ── RODIZIO ──────────────────────────────────────────────────────────────
+        //
+        // Medido no Licitanet em 22/09/2026: "recusou a conexao (HTTP 429) — 21 de 60
+        // processo(s) lidos antes". O conector agiu certo. O problema era a passada
+        // SEGUINTE: a ordem acima e estavel, entao ela recomecava do mesmo primeiro, lia
+        // os mesmos ~21 e levava 429 no mesmo ponto. Os processos 22 a 60 NUNCA eram
+        // lidos — o teto configurado era 60 e o teto real virou 21, sem nada na tela
+        // dizendo isso. O cliente le "21 lidos" e supoe cobertura.
+        //
+        // Girar a lista nao exige saber a regra do WAF deles (que nao sabemos): seja
+        // qual for o ponto do corte, a volta seguinte comeca depois dele.
+        //
+        // SO NA PASSADA COMPLETA. Na de urgencia a lista ja e filtrada para quem tem
+        // sessao a porta, e ali "mais quente primeiro" e a resposta certa: pregao com
+        // sessao hoje nao cede a vez para um de mes que vem.
+        const chaveRod = chaveRodizio(portalId, titularId)
+        let offsetRod = 0
+        // LE ate no dry-run (o dry so nao ESCREVE): sem isso um `--dry` mostraria a
+        // volta sempre comecando do 1o, e quem usa o dry para conferir o rodizio veria
+        // exatamente o bug que ele conserta.
+        if (!URGENTES) {
+          const { rows: [cp] } = await banco.query(
+            'SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chaveRod])
+          offsetRod = cp?.ultima_pagina ?? 0
+        }
+        const procs = URGENTES ? procsNaOrdem : rotacionar(procsNaOrdem, offsetRod)
         const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
         // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
         // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
@@ -457,7 +485,11 @@ try {
             ? await syncPortal({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
             : { status: 'falha', detalhe: `conector ${portalId} ausente`, mensagens: [] }
         } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
-        console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
+        // O rodizio entra no log: rodizio silencioso e indistinguivel de rodizio que
+        // nao aconteceu, e a pergunta que alguem vai fazer e "por que o processo X nao
+        // foi lido hoje?".
+        const frase = URGENTES ? '' : explicarRodizio(offsetRod, procs.length)
+        console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})${frase ? ` · ${frase}` : ''}`)
 
         const g = await gravarMensagens(banco, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
         totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas; contidasMsgs += g.contidas
@@ -466,6 +498,22 @@ try {
         // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
         // configurado" — se contradizendo na cara do usuário.
         if (DRY) continue
+
+        // ONDE A PROXIMA VOLTA COMECA. `resultado.lidos` e quantos o conector leu DE
+        // VERDADE — nao quantos recebeu. Avancar pelo recebido pularia justamente os
+        // que o portal recusou, e o buraco so mudaria de lugar.
+        //
+        // Conector que nao informa `lidos` nao roda: melhor manter o comportamento
+        // antigo do que girar a lista por um numero inventado.
+        if (!URGENTES && Number.isFinite(Number(resultado.lidos))) {
+          const novo = proximoOffset(offsetRod, Number(resultado.lidos), procs.length)
+          await banco.query(
+            `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
+             ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina,
+                                               atualizado_em = now()`,
+            [chaveRod, novo])
+        }
+
         const okPub = resultado.status === 'ok'
         await banco.query(
           `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)

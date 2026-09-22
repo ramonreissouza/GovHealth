@@ -30,6 +30,7 @@
     "cobertura:regua:teste": "node scripts/cobertura-regua.teste.mjs",
     "radar:pista:teste": "node scripts/radar/pista-navegador.teste.mjs",
     "radar:sessao:teste": "node scripts/radar/sessao-escopo.teste.mjs",
+    "radar:rodizio:teste": "node scripts/radar/rodizio.teste.mjs",
     "radar:egovrs:teste": "node scripts/radar/connector-egovrs.teste.mjs",
     "radar:comprasbr:teste": "node scripts/radar/connector-comprasbr.teste.mjs",
     "radar:bll:teste": "node scripts/radar/connector-bll.teste.mjs",
