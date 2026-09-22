@@ -30,8 +30,28 @@ Estas são medições, não hipóteses. Foram executadas e conferidas.
 | M6 | Colisão de modalidade PNCP×SIASG | **Não nos atinge**, porque nunca guardamos o código numérico do PNCP — só `modalidade_nome` (texto). Mapear por nome é inequívoco. | 22/09 |
 | M7 | API pública do Compras.gov.br tem chat? | **NÃO.** `/compras/{chave}` e `/itens` existem; `/mensagens`, `/chat` e `/diligencias` devolvem **404** (rota inexistente). | 22/09 |
 | M8 | A API pública funciona sem captcha? | **Não.** Sem o parâmetro `captcha=P1_<JWT>`, todo endpoint devolve **204 sem conteúdo** — vazio silencioso, não erro. | 22/09 |
+| M9 | **Qual fatia da base é federal?** | **~4-6%.** Dos processos medidos: federal 198, estadual 212, municipal 2.790. Entre os que o PNCP respondeu, federal é **6,2%**; a amostra da cauda deu 4,5%. O medidor **recusou veredito formal** (47,5% de lacuna por 429 do PNCP), mas para virar ≥20% quase todo o não-respondido teria de ser federal. | 22/09 |
+| M10 | `sequencial_compra` é o `numero` do SIASG? | **NÃO — e essa confusão produz chave errada.** Medido em 38 processos federais: a UASG 160050 tem `numeroCompra` **267** e `sequencialCompra` **19876**. O SIASG usa o `numeroCompra`. É a pergunta 1 da Fase 5.1, respondida antes de contratar nada. | 22/09 |
+| M11 | A chave é montável no federal? | **Sim.** Em 38 de 38 federais: `codigoUnidade` com **6 dígitos** (38/38) e `numeroCompra` cabendo em **5 dígitos** (38/38). Nenhum ausente, nenhum não-numérico. | 22/09 |
+| M12 | O `codigoUnidade` fora do federal engana? | **Sim.** Bela Vista do Caroba (M) devolve `1`; **Estado do Ceará (E) devolve `240424`** — seis dígitos, que passariam por UASG sem levantar suspeita. Por isso a coluna se chama `codigo_unidade` e não `uasg`, e a `esfera` anda junto. O `numeroCompra` engana do mesmo jeito: um órgão estadual do AC devolveu `0000019/2026-ISE` — nem numérico é. **Fora do federal a chave não é difícil de montar: ela não existe.** | 22/09 |
 
 **M7 e M8 juntos encerram a hipótese "existe uma porta grátis".** Ela não serve para chat.
+
+**M9 muda a ordem do plano.** A Fase 1 mandava parar e avisar abaixo de 20% de fatia
+federal. A medição deu ~4-6%: **a API paga do SERPRO cobriria cerca de um vigésimo do que
+o Radar acompanha.** Não vale contrato com esse número.
+
+Com uma ressalva que é a razão de a Fase 4 virar o portão: o denominador é a **seleção
+automática inteira**, que é dominada por município. A pergunta que decide não é "quantos
+processos da base são federais", é **"quantos dos pregões em que o cliente REALMENTE
+entra são federais"** — e ninguém sabe, porque não existe "minhas compras por CNPJ" e a
+participação é sigilosa até a sessão. A tela "estou participando deste" é o único
+instrumento que responde isso. Ela deixa de ser "útil sozinha" e passa a ser **o que
+habilita ou enterra a Fase 5**.
+
+**M10 e M11 são a boa notícia do lado técnico:** quando a fatia federal importar, a chave
+É montável a partir do que o PNCP já manda — desde que se use o `numeroCompra`, e não o
+`sequencial_compra` que já guardávamos.
 
 ### Formato da `chaveCompra` (confirmado observando a SPA)
 
@@ -137,7 +157,18 @@ Use `novoPool` de `scripts/lib/pg-ssl.mjs` com handler de `'error'`, como em
 `scripts/radar/run.mjs`. Não use `pg.Client` direto: ele derruba o processo quando o
 PgBouncer fecha conexão ociosa.
 
-## 1.2 — Critério de decisão
+## 1.2 — JÁ EXECUTADA em 22/09/2026 — resultado abaixo
+
+O script existe (`npm run radar:chave:medir`) e rodou. Resultado em M9: **~4-6% federal**,
+sem veredito formal por 47,5% de lacuna (o PNCP devolveu 429 em metade dos órgãos, e o
+script **se recusa a concluir** acima de 10% de lacuna em vez de arredondar para baixo).
+
+**Reexecutar de madrugada** para fechar a lacuna — o cache em `os.tmpdir()` guarda o que já
+veio, então a próxima execução só busca o que falta. Mas a direção não deve mudar: para o
+número virar ≥20%, quase todo o não-respondido teria de ser federal, e a amostra da cauda
+mediu 4,5%.
+
+## 1.3 — Critério de decisão
 
 - **≥ 60% federais com modalidade mapeável** → siga para a Fase 2.
 - **20-60%** → siga, mas avise o humano que isso é complemento, não substituto.
@@ -145,7 +176,7 @@ PgBouncer fecha conexão ociosa.
 
 ---
 
-# FASE 2 — Guardar a UASG (independente de tudo)
+# FASE 2 — Guardar a unidade, a esfera e o número — FEITA em 22/09/2026
 
 **Objetivo:** parar de jogar fora o `codigoUnidade` que o PNCP já nos manda.
 Esta fase é útil sozinha, mesmo que o resto seja cancelado.
@@ -154,7 +185,17 @@ Esta fase é útil sozinha, mesmo que o resto seja cancelado.
 
 | Arquivo | Mudança |
 |---|---|
-| `db/` (nova migração) | `ALTER TABLE contratacoes ADD COLUMN uasg text` |
+> **O que foi feito diverge do que esta tabela pedia, e a medição é o motivo.** A coluna
+> NÃO se chama `uasg`: `codigoUnidade` só é uma UASG quando a esfera é `F` (ver M12), e o
+> nome `uasg` escreveria essa confusão no esquema. Foram três colunas, não uma:
+> `codigo_unidade`, `esfera` e `numero_compra` — esta última porque `sequencial_compra`,
+> que já guardávamos, **não** é o número do SIASG (M10).
+>
+> Foram **cinco** escritores de `contratacoes`, não três. Os outros dois lêem outro
+> formato (`etl-historico.mjs` usa a API de busca, com payload achatado; `licite/db.mjs`
+> lê o Licitações-e) e não têm o campo — conferidos, nada a fazer neles.
+
+| `scripts/migrate-unidade-esfera.mjs` | `codigo_unidade`, `esfera`, `numero_compra` (idempotente) |
 | `src/lib/pncp-ingest.ts:122` | ler também `c.unidadeOrgao?.codigoUnidade` |
 | `scripts/etl-pncp.mjs:198` | idem |
 | `scripts/etl-fornecedor.mjs:90` | idem |

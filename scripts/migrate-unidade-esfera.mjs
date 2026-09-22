@@ -26,7 +26,14 @@
 // .esferaId` já está no MESMO payload da listagem que os ingestores leem, conferido em
 // 22/09/2026. Nenhuma requisição a mais.
 //
-// Ambas ficam NULL no que já está gravado; o backfill é assunto separado (uma re-leitura
+// A TERCEIRA COLUNA: `numero_compra`. Guardávamos `sequencial_compra` e ele NÃO serve para
+// a chave. Medido em 38 processos federais em 22/09/2026: a UASG 160050 tem
+// `numeroCompra` 267 e `sequencialCompra` 19876. O SIASG usa o primeiro — e ele cabe em
+// 5 dígitos em 38 de 38 federais, enquanto o segundo passa de 5 com folga. Montar a chave
+// com o sequencial dá uma chave bem formada e errada, que é o modo de falha que este
+// arquivo inteiro existe para evitar.
+//
+// Todas ficam NULL no que já está gravado; o backfill é assunto separado (uma re-leitura
 // do PNCP), e nada depende delas estarem preenchidas para funcionar.
 
 import { novoPool } from './lib/pg-ssl.mjs'
@@ -34,10 +41,13 @@ import { novoPool } from './lib/pg-ssl.mjs'
 const SQL = `
   ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS codigo_unidade TEXT;
   ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS esfera         TEXT;
+  ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS numero_compra  TEXT;
   COMMENT ON COLUMN contratacoes.codigo_unidade IS
     'unidadeOrgao.codigoUnidade do PNCP. So e uma UASG do SIASG quando esfera = F.';
   COMMENT ON COLUMN contratacoes.esfera IS
     'orgaoEntidade.esferaId do PNCP: F federal, E estadual, M municipal.';
+  COMMENT ON COLUMN contratacoes.numero_compra IS
+    'numeroCompra do PNCP. E o numero do SIASG, NAO e sequencial_compra (que e o contador interno do PNCP).';
   CREATE INDEX IF NOT EXISTS idx_contratacoes_esfera ON contratacoes (esfera) WHERE esfera = 'F';
 `
 
@@ -51,10 +61,11 @@ try {
   const { rows } = await banco.query(
     `SELECT count(*)::int AS total,
             count(codigo_unidade)::int AS com_unidade,
-            count(esfera)::int AS com_esfera
+            count(esfera)::int AS com_esfera,
+            count(numero_compra)::int AS com_numero
        FROM contratacoes`)
   const r = rows[0]
-  console.log(`ok. contratacoes: ${r.total} linhas · com codigo_unidade: ${r.com_unidade} · com esfera: ${r.com_esfera}`)
+  console.log(`ok. contratacoes: ${r.total} linhas · com codigo_unidade: ${r.com_unidade} · com esfera: ${r.com_esfera} · com numero_compra: ${r.com_numero}`)
   console.log('(zeros sao esperados agora: quem preenche e o ETL, da proxima passada em diante)')
 } catch (e) {
   console.error('Falha na migracao:', e.message)

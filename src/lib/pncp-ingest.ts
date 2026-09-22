@@ -99,8 +99,8 @@ async function upsertUma(c: PNCPContratacao): Promise<boolean> {
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
        data_publicacao, data_abertura_proposta, data_encerramento_proposta, situacao_id, categoria_saude,
-       link_externo, usuario_nome, codigo_unidade, esfera, portal_backfill_em)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+       link_externo, usuario_nome, codigo_unidade, esfera, numero_compra, portal_backfill_em)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
        -- Portal já resolvido na própria resposta de lista? Então a linha nasce fora da
        -- fila do harvest-portais.mjs (que é "portal_backfill_em IS NULL"). Sem isto, o
        -- cron alimentaria diariamente a fila que o coletor leva dias para drenar.
@@ -117,6 +117,7 @@ async function upsertUma(c: PNCPContratacao): Promise<boolean> {
        -- apagar o que ja foi coletado.
        codigo_unidade             = COALESCE(EXCLUDED.codigo_unidade, contratacoes.codigo_unidade),
        esfera                     = COALESCE(EXCLUDED.esfera, contratacoes.esfera),
+       numero_compra              = COALESCE(EXCLUDED.numero_compra, contratacoes.numero_compra),
        portal_backfill_em         = COALESCE(contratacoes.portal_backfill_em, EXCLUDED.portal_backfill_em)
      RETURNING (xmax = 0) AS inserida`,
     [
@@ -145,6 +146,11 @@ async function upsertUma(c: PNCPContratacao): Promise<boolean> {
       // Por isso os dois andam juntos: sozinho, `codigo_unidade` convida ao erro.
       String(c.unidadeOrgao?.codigoUnidade ?? '').trim() || null,
       String(c.orgaoEntidade?.esferaId ?? '').trim() || null,
+      // `numeroCompra` NAO e `sequencialCompra`, e essa confusao produz chave errada.
+      // Medido em 38 processos federais em 22/09/2026: UASG 160050 tem numeroCompra 267
+      // e sequencialCompra 19876. O SIASG usa o PRIMEIRO (cabe em 5 digitos em 38 de 38);
+      // o segundo e o contador interno do PNCP e nao cabe na chave.
+      String(c.numeroCompra ?? '').trim() || null,
     ],
   )
   return rows[0]?.inserida === true

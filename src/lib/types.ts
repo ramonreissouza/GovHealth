@@ -378,6 +378,12 @@ export interface PNCPContratacao {
     ufSigla?: string
     codigoIbge?: string
   }
+  /**
+   * Numero da compra NO SISTEMA DE ORIGEM — no federal, o numero do SIASG, que entra
+   * na chaveCompra do Compras.gov.br. NAO e sequencialCompra: medido em 22/09/2026,
+   * a UASG 160050 tem numeroCompra 267 e sequencialCompra 19876.
+   */
+  numeroCompra?: string
   modalidadeId: number
   modalidadeNome: string
   modoDisputaId: number

@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS contratacoes (
   -- fora do federal e o codigo interno do ente (o Ceara devolve '240424', 6 digitos).
   codigo_unidade       TEXT,
   esfera               TEXT,            -- orgaoEntidade.esferaId: F federal, E estadual, M municipal
+  -- numeroCompra do PNCP: e o numero do SIASG. NAO confundir com sequencial_compra,
+  -- que e o contador interno do PNCP (UASG 160050: numeroCompra 267, sequencial 19876).
+  numero_compra        TEXT,
   categoria_saude      TEXT,           -- imagem, uti, laboratorio, etc.
   coletado_em          TIMESTAMPTZ DEFAULT now()
 );

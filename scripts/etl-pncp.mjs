@@ -177,8 +177,8 @@ async function upsertContratacao(c) {
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
        data_publicacao, data_abertura_proposta, data_encerramento_proposta, situacao_id, categoria_saude,
-       link_externo, usuario_nome, codigo_unidade, esfera)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       link_externo, usuario_nome, codigo_unidade, esfera, numero_compra)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      ON CONFLICT (numero_controle_pncp) DO UPDATE SET
        -- COALESCE pelo mesmo motivo do link_externo abaixo, e a lição custou caro:
        -- a listagem às vezes devolve valorTotalEstimado nulo para um registro que
@@ -196,7 +196,8 @@ async function upsertContratacao(c) {
        usuario_nome = COALESCE(EXCLUDED.usuario_nome, contratacoes.usuario_nome),
        -- Mesmo COALESCE: releitura sem o campo nao apaga o que ja foi coletado.
        codigo_unidade = COALESCE(EXCLUDED.codigo_unidade, contratacoes.codigo_unidade),
-       esfera = COALESCE(EXCLUDED.esfera, contratacoes.esfera)`,
+       esfera = COALESCE(EXCLUDED.esfera, contratacoes.esfera),
+       numero_compra = COALESCE(EXCLUDED.numero_compra, contratacoes.numero_compra)`,
     [c.numeroControlePNCP, c.orgaoEntidade?.cnpj ?? '', c.orgaoEntidade?.razaoSocial ?? null,
      c.unidadeOrgao?.municipioNome ?? null, c.unidadeOrgao?.ufSigla ?? UF, c.modalidadeNome ?? null,
      c.objetoCompra ?? null, c.anoCompra ?? null, c.sequencialCompra ?? null, c.valorTotalEstimado ?? null,
@@ -211,7 +212,12 @@ async function upsertContratacao(c) {
      // ente (o ESTADO DO CEARÁ devolve '240424', seis dígitos, que passaria por UASG).
      // Por isso os dois andam juntos: sozinho, `codigo_unidade` convida ao erro.
      String(c.unidadeOrgao?.codigoUnidade ?? '').trim() || null,
-     String(c.orgaoEntidade?.esferaId ?? '').trim() || null],
+     String(c.orgaoEntidade?.esferaId ?? '').trim() || null,
+     // `numeroCompra` NAO e `sequencialCompra`, e essa confusao produz chave errada.
+     // Medido em 38 processos federais em 22/09/2026: UASG 160050 tem numeroCompra 267
+     // e sequencialCompra 19876. O SIASG usa o PRIMEIRO (cabe em 5 digitos em 38 de 38);
+     // o segundo e o contador interno do PNCP e nao cabe na chave.
+     String(c.numeroCompra ?? '').trim() || null],
   )
 }
 
