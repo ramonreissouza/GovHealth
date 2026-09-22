@@ -165,6 +165,30 @@ export function recortarSessao(estado, conectorId) {
   }
 }
 
+/**
+ * O recorte esvaziou uma sessão que tinha conteúdo?
+ *
+ * A comparação é "cookie é igual ao permitido, ou é subdomínio dele" — e NÃO o
+ * contrário. Um portal que emita o cookie no domínio-PAI (`.bb.com.br` para
+ * `licitacoes-e2.bb.com.br`) veria a sessão inteira ser descartada. Aceitar o pai
+ * resolveria esse caso e reabriria o que este arquivo existe para fechar: `serpro.gov.br`
+ * é pai de `cnetmobile.estaleiro.serpro.gov.br`, e voltaria com o analytics junto.
+ *
+ * Então a regra continua estrita e o caso vira BARULHO, não silêncio: hoje só o
+ * `comprasgov` e o `pcp` guardam sessão, e nos dois o domínio bate exato. Se um portal
+ * novo cair aqui, a linha abaixo diz exatamente qual domínio ficou de fora — em vez de
+ * um cofre vazio sem explicação.
+ */
+function avisarSeEsvaziou(conectorId, entrada, r) {
+  const tinha = (entrada.cookies?.length ?? 0) > 0
+  if (!tinha || r.mantidos > 0) return
+  console.warn(
+    `[sessao-escopo] ATENCAO: o recorte de '${conectorId}' nao deixou nenhum cookie. ` +
+    `Ficaram de fora: ${resumoDescarte(r.descartados)}. ` +
+    'Se algum desses e a sessao do portal (cookie emitido no dominio-pai), acrescente o ' +
+    'host em DOMINIOS_POR_PORTAL — nao relaxe a comparacao.')
+}
+
 /** Uma linha legível do que foi descartado, para log e auditoria. */
 export function resumoDescarte(descartados) {
   if (!descartados?.length) return 'nada fora do escopo'
@@ -179,8 +203,9 @@ export function serializarSessaoRecortada(estado, conectorId, { aoDescartar } = 
   const r = recortarSessao(estado, conectorId)
   if (r.semLista) {
     console.warn(`[sessao-escopo] portal '${r.semLista}' sem dominios conhecidos — nada recortado`)
-  } else if (r.descartados.length && aoDescartar) {
-    aoDescartar(r.descartados)
+  } else {
+    avisarSeEsvaziou(conectorId, estado ?? {}, r)
+    if (r.descartados.length && aoDescartar) aoDescartar(r.descartados)
   }
   return { json: JSON.stringify(r.estado), ...r }
 }

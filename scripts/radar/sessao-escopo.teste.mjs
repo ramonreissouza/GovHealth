@@ -151,7 +151,35 @@ const ck = (domain, name) => ({ domain, name, value: 'x', path: '/' })
   afirmar('avisa o descarte', visto, [{ dominio: 'sso.acesso.gov.br', n: 1 }])
 }
 
-// 10) O ESCAPE HATCH É EXPLÍCITO E REVERSÍVEL ────────────────────────────────────────
+// 10) ESVAZIAR A SESSÃO É BARULHO, NÃO SILÊNCIO ─────────────────────────────────────
+//     O cookie no domínio-PAI (`.bb.com.br` para `licitacoes-e2.bb.com.br`) não passa,
+//     de propósito: aceitar o pai reabriria o `serpro.gov.br` com o analytics junto.
+//     O caso tem de GRITAR, porque um cofre vazio sem explicação é o modo de falha que
+//     este repositório já pagou caro. Aqui só se exige que o aviso saia nomeando o
+//     domínio — quem for consertar precisa saber qual host acrescentar à lista.
+{
+  const originalWarn = console.warn
+  let avisos = []
+  console.warn = (...a) => avisos.push(a.join(' '))
+  try {
+    serializarSessaoRecortada({ cookies: [ck('.bb.com.br', 'JSESSIONID')], origins: [] }, 'licitacoes-e')
+  } finally { console.warn = originalWarn }
+  afirmar('esvaziou: avisa', avisos.length, 1)
+  afirmar('esvaziou: o aviso nomeia o dominio', /bb\.com\.br:1/.test(avisos[0] ?? ''), true)
+
+  // E o caso normal NÃO avisa — um aviso que sai sempre não é lido.
+  const originalWarn2 = console.warn
+  avisos = []
+  console.warn = (...a) => avisos.push(a.join(' '))
+  try {
+    serializarSessaoRecortada(
+      { cookies: [ck('sso.acesso.gov.br', 'Govbrid'), ck('www.comprasnet.gov.br', 'ASPSESSIONIDX')], origins: [] },
+      'comprasgov')
+  } finally { console.warn = originalWarn2 }
+  afirmar('sobrou algo: nao avisa', avisos.length, 0)
+}
+
+// 11) O ESCAPE HATCH É EXPLÍCITO E REVERSÍVEL ────────────────────────────────────────
 {
   process.env.RADAR_SESSAO_MANTER_SSO = '1'
   const r = recortarSessao({ cookies: [ck('sso.acesso.gov.br', 'Govbrid')], origins: [] }, 'comprasgov')
