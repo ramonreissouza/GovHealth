@@ -80,6 +80,20 @@ CREATE INDEX IF NOT EXISTS idx_radar_proc_titular ON radar_processos (titular_id
 CREATE INDEX IF NOT EXISTS idx_radar_proc_cnpj    ON radar_processos (cnpj);
 CREATE INDEX IF NOT EXISTS idx_radar_proc_ativo   ON radar_processos (status) WHERE status = 'ativo';
 
+-- "ESTOU PARTICIPANDO DESTE" — o fornecedor marca os pregoes em que realmente entrou.
+--
+-- A selecao automatica acerta o que INTERESSA ao perfil (centenas de pregoes), e isso
+-- e outra coisa de em quais a empresa de fato entrou (5 a 20 por mes). Nenhuma API
+-- publica responde a segunda pergunta: nao existe "minhas compras por CNPJ", e a
+-- participacao e sigilosa ate a sessao de disputa. So o proprio fornecedor sabe.
+--
+-- Por isso a marca vale por si (prioriza a caixa e o alerta) e e o que, adiante,
+-- decide para quais processos vale gastar uma chamada de API paga por chat.
+ALTER TABLE radar_processos ADD COLUMN IF NOT EXISTS participando    BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE radar_processos ADD COLUMN IF NOT EXISTS participando_em TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_radar_proc_participando
+  ON radar_processos (titular_id) WHERE participando = true;
+
 -- Mensagens normalizadas (modelo único) + dedup por hash + conteúdo bruto (raw).
 CREATE TABLE IF NOT EXISTS radar_mensagens (
   id             BIGSERIAL PRIMARY KEY,

@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   if (!t) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
   const rows = await query(
     `SELECT id, conector_id, cnpj, licitacao_id, titulo, uf, valor, responsavel, prioridade,
-            status, origem, mutado, motivo_match, link_portal, atualizado_em
+            status, origem, mutado, participando, participando_em, motivo_match, link_portal, atualizado_em
        FROM radar_processos
       WHERE titular_id = $1
       ORDER BY (prioridade = 'alta') DESC, atualizado_em DESC
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const t = await tenantDe(req)
   if (!t) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
-  let body: { id?: string; mutado?: boolean; prioridade?: string; responsavel?: string; status?: string; linkPortal?: string }
+  let body: { id?: string; mutado?: boolean; prioridade?: string; responsavel?: string; status?: string; linkPortal?: string; participando?: boolean }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'body inválido' }, { status: 400 }) }
   if (!body.id) return NextResponse.json({ error: 'id obrigatório' }, { status: 400 })
 
@@ -39,6 +39,16 @@ export async function PATCH(req: NextRequest) {
   if (body.responsavel !== undefined) { params.push(body.responsavel || null); sets.push(`responsavel = $${params.length}`) }
   if (body.status) { params.push(body.status); sets.push(`status = $${params.length}`) }
   if (body.linkPortal !== undefined) { params.push(body.linkPortal || null); sets.push(`link_portal = $${params.length}`) }
+  // `participando_em` anda junto com a marca, na MESMA instrucao: uma coluna de data
+  // escrita num segundo passo fica dessincronizada no primeiro erro de rede, e depois
+  // ninguem sabe se a ausencia de data significa "nao marcou" ou "marcou e falhou".
+  // Desmarcar zera a data — guardar quando alguem participou de algo que diz nao ter
+  // participado nao serve a ninguem.
+  if (body.participando != null) {
+    params.push(body.participando)
+    sets.push(`participando = $${params.length}`)
+    sets.push(`participando_em = CASE WHEN $${params.length} THEN now() ELSE NULL END`)
+  }
   if (!sets.length) return NextResponse.json({ error: 'nada a atualizar' }, { status: 400 })
 
   const row = await queryOne<{ id: string }>(

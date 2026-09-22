@@ -15,6 +15,7 @@
 
 import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { PORTAIS } from './portais.mjs'
+import { serializarSessaoRecortada } from './sessao-escopo.mjs'
 
 const LOGIN_URL = PORTAIS.comprasgov.loginUrl
 // UMA fonte de verdade para o endereço da área. Antes havia uma cópia da URL aqui e
@@ -133,7 +134,9 @@ export async function sync({ credencial, processos, simulado }) {
       // LER O ESTADO ANTES DE FECHAR. Invertido, o Playwright devolve "Target page,
       // context or browser has been closed" — e o conector inteiro vira 'falha' por um
       // detalhe de ordem, com a sessão perfeitamente boa.
-      const renovado = JSON.stringify(await context.storageState())
+      // Renovar a sessao NAO pode re-alargar o cofre: sem o recorte aqui, a primeira
+      // passada bem-sucedida devolveria os cookies do SSO que a captura acabou de tirar.
+      const { json: renovado } = serializarSessaoRecortada(await context.storageState(), 'comprasgov')
       await browser.close()
       return { status: 'ok', mensagens, storageState: renovado,
         detalhe: 'nenhuma licitação em acompanhamento para este CNPJ (o portal não tem chat sem participação)' }
@@ -152,7 +155,7 @@ export async function sync({ credencial, processos, simulado }) {
       detalhe: `há licitação(ões) em acompanhamento e a leitura do chat ainda não foi calibrada: ${linhas.join(' | ').slice(0, 300)}` }
 
     // Persiste a sessão renovada para o próximo sync.
-    const storageState = JSON.stringify(await context.storageState())
+    const { json: storageState } = serializarSessaoRecortada(await context.storageState(), 'comprasgov')
     await browser.close()
     return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState }
   } catch (e) {

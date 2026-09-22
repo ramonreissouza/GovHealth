@@ -145,14 +145,14 @@ export async function GET(req: NextRequest) {
   // segue a regra do produto: presença de resultado homologado = encerrada.
   const processos = await query<{
     id: string; conector_id: string; cnpj: string; licitacao_id: string; titulo: string | null
-    uf: string | null; valor: string | null; prioridade: string; mutado: boolean
+    uf: string | null; valor: string | null; prioridade: string; mutado: boolean; participando: boolean
     user_id: string; origem: string; link_portal: string | null; atualizado_em: string
     orgao: string | null; municipio: string | null; modalidade: string | null
     objeto: string | null; prazo: string | null; abertura: string | null; encerrada: boolean
     link_externo: string | null; fonte: string | null
   }>(
     `SELECT p.id, p.conector_id, p.cnpj, p.licitacao_id, p.titulo, p.uf, p.valor,
-            p.prioridade, p.mutado, p.user_id, p.origem, p.link_portal, p.atualizado_em,
+            p.prioridade, p.mutado, p.participando, p.user_id, p.origem, p.link_portal, p.atualizado_em,
             c.razao_social_orgao AS orgao, c.municipio, c.modalidade_nome AS modalidade,
             c.objeto_compra AS objeto, c.link_externo, c.fonte,
             c.data_encerramento_proposta AS prazo, c.data_abertura_proposta AS abertura,
@@ -202,7 +202,7 @@ export async function GET(req: NextRequest) {
     processos: processos.map((p) => ({
       id: p.id, conectorId: p.conector_id, cnpj: p.cnpj, licitacaoId: p.licitacao_id,
       titulo: p.titulo || p.objeto, uf: p.uf, valor: p.valor == null ? null : Number(p.valor),
-      prioridade: p.prioridade, mutado: p.mutado, origem: p.origem,
+      prioridade: p.prioridade, mutado: p.mutado, participando: p.participando, origem: p.origem,
       linkPortal: p.link_portal, atualizadoEm: p.atualizado_em,
       orgao: p.orgao, municipio: p.municipio, modalidade: p.modalidade,
       prazo: p.prazo, abertura: p.abertura,

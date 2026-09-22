@@ -6,6 +6,7 @@
 
 import crypto from 'node:crypto'
 import { portalMeta } from './portais.mjs'
+import { serializarSessaoRecortada, resumoDescarte } from './sessao-escopo.mjs'
 
 export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor'
 
@@ -107,7 +108,13 @@ export async function capturarSessaoPortal(conectorId, { waitS = 300, onAbrir } 
       await browser.close()
       return { status: 'sessao_expirada', detalhe: `Login no ${meta.nome} não concluído dentro do tempo — tente novamente` }
     }
-    const storageState = JSON.stringify(await context.storageState())
+    // RECORTE ANTES DE SAIR DAQUI. O que a função devolve é o que vai ser cifrado no
+    // cofre — então é aqui, e não no chamador, que o cookie do Login Único tem de
+    // morrer. Ver scripts/radar/sessao-escopo.mjs.
+    const { json: storageState } = serializarSessaoRecortada(
+      await context.storageState(), conectorId,
+      { aoDescartar: (d) => console.log(`  [sessao] fora do escopo do ${conectorId}, descartado: ${resumoDescarte(d)}`) },
+    )
     await browser.close()
     // Rede de segurança contra falso "ok" (ver sessaoTemCredencial): o detector do
     // portal pode acertar a URL e ainda assim não haver sessão nenhuma.

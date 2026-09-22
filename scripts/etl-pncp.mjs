@@ -177,8 +177,8 @@ async function upsertContratacao(c) {
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
        data_publicacao, data_abertura_proposta, data_encerramento_proposta, situacao_id, categoria_saude,
-       link_externo, usuario_nome)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       link_externo, usuario_nome, codigo_unidade, esfera)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
      ON CONFLICT (numero_controle_pncp) DO UPDATE SET
        -- COALESCE pelo mesmo motivo do link_externo abaixo, e a lição custou caro:
        -- a listagem às vezes devolve valorTotalEstimado nulo para um registro que
@@ -193,14 +193,25 @@ async function upsertContratacao(c) {
        categoria_saude = EXCLUDED.categoria_saude,
        -- COALESCE: nunca apaga um link que já temos se a releitura vier sem ele.
        link_externo = COALESCE(EXCLUDED.link_externo, contratacoes.link_externo),
-       usuario_nome = COALESCE(EXCLUDED.usuario_nome, contratacoes.usuario_nome)`,
+       usuario_nome = COALESCE(EXCLUDED.usuario_nome, contratacoes.usuario_nome),
+       -- Mesmo COALESCE: releitura sem o campo nao apaga o que ja foi coletado.
+       codigo_unidade = COALESCE(EXCLUDED.codigo_unidade, contratacoes.codigo_unidade),
+       esfera = COALESCE(EXCLUDED.esfera, contratacoes.esfera)`,
     [c.numeroControlePNCP, c.orgaoEntidade?.cnpj ?? '', c.orgaoEntidade?.razaoSocial ?? null,
      c.unidadeOrgao?.municipioNome ?? null, c.unidadeOrgao?.ufSigla ?? UF, c.modalidadeNome ?? null,
      c.objetoCompra ?? null, c.anoCompra ?? null, c.sequencialCompra ?? null, c.valorTotalEstimado ?? null,
      (c.dataPublicacaoPncp ?? '').slice(0, 10) || null,
      (c.dataAberturaProposta ?? '').slice(0, 10) || null,
      (c.dataEncerramentoProposta ?? '').slice(0, 10) || null,
-     c.situacaoCompraId ?? null, categoria(c.objetoCompra), linkOrigem, sistemaOrigem],
+     c.situacaoCompraId ?? null, categoria(c.objetoCompra), linkOrigem, sistemaOrigem,
+     // A UNIDADE E A ESFERA VINHAM NA MESMA RESPOSTA E IAM PARA O LIXO.
+     // `unidadeOrgao` ja era lido aqui (municipioNome, ufSigla) e `codigoUnidade` era
+     // descartado — é ele que vira a UASG da chaveCompra do Compras.gov.br, mas SÓ
+     // quando `esferaId` é 'F'. Fora do federal o mesmo campo é o código interno do
+     // ente (o ESTADO DO CEARÁ devolve '240424', seis dígitos, que passaria por UASG).
+     // Por isso os dois andam juntos: sozinho, `codigo_unidade` convida ao erro.
+     String(c.unidadeOrgao?.codigoUnidade ?? '').trim() || null,
+     String(c.orgaoEntidade?.esferaId ?? '').trim() || null],
   )
 }
 

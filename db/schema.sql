@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS contratacoes (
   data_abertura_proposta     DATE,   -- início do recebimento de propostas
   data_encerramento_proposta DATE,   -- prazo final para envio de propostas
   situacao_id          INT,
+  -- unidadeOrgao.codigoUnidade do PNCP. SO e uma UASG do SIASG quando esfera = 'F';
+  -- fora do federal e o codigo interno do ente (o Ceara devolve '240424', 6 digitos).
+  codigo_unidade       TEXT,
+  esfera               TEXT,            -- orgaoEntidade.esferaId: F federal, E estadual, M municipal
   categoria_saude      TEXT,           -- imagem, uti, laboratorio, etc.
   coletado_em          TIMESTAMPTZ DEFAULT now()
 );

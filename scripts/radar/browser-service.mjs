@@ -13,7 +13,8 @@ import pg from 'pg'
 import net from 'node:net'
 import crypto from 'node:crypto'
 import { criarSessao, idDe, cdpUrlDe, cdpUrlDaSessaoViva, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
-import { encrypt } from './capture.mjs'
+import { encrypt, sessaoTemCredencial } from './capture.mjs'
+import { serializarSessaoRecortada, resumoDescarte } from './sessao-escopo.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
 import { PORTAIS } from './portais.mjs'
 import { sslParaHost } from '../lib/pg-ssl.mjs'
@@ -221,8 +222,13 @@ async function capturar(credencialId) {
     }
 
     const url = ctx.pages()[0]?.url() ?? ''
-    const estado = await ctx.storageState()
-    const storageState = JSON.stringify(estado)
+    // RECORTE ANTES DE CIFRAR. O login acontece no `sso.acesso.gov.br`, mas o que o
+    // monitor lê vive no comprasnet/cnetmobile — e o cookie do SSO é a sessão do Login
+    // Único da pessoa física (e-CAC, Meu INSS, Conecte SUS). Ver sessao-escopo.mjs.
+    const bruto = await ctx.storageState()
+    const { json: storageState, estado } = serializarSessaoRecortada(bruto, cred.conector_id, {
+      aoDescartar: (d) => console.log(`[cofre] ${cred.conector_id}: fora do escopo, descartado ${resumoDescarte(d)}`),
+    })
     // Lido o cofre, o navegador não guarda mais nada de ninguém. Se falhar daqui para
     // baixo, o pior caso é o fornecedor refazer o login — nunca outro herdar a sessão.
     const pagina = ctx.pages()[0]
@@ -239,8 +245,16 @@ async function capturar(credencialId) {
     // O sinal que não mente é o cofre ter conteúdo: sessão autenticada TEM cookie.
     // Zero cookie é, com certeza, login não concluído — e é a checagem barata que
     // pega o caso comum de "cliquei em já concluí antes de terminar".
+    //
+    // E O TESTE AQUI ERA MAIS FRACO QUE O DO capture.mjs — foi assim que duas linhas do
+    // cofre de produção acabaram guardando, cifrados, APENAS `_ga` e `_ga_623FPXHZ7K` do
+    // `.serpro.gov.br`: analytics do Google marcado como "conectado". `estado.cookies
+    // .length` conta qualquer cookie; `sessaoTemCredencial` (capture.mjs) exige um que
+    // não seja de analytics/consentimento. É o mesmo defeito nos dois arquivos-irmãos, e
+    // agora os dois usam o mesmo teste. Ele roda DEPOIS do recorte, de propósito: o que
+    // interessa é se sobrou credencial no que vai para o cofre.
     const emLogin = /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url)
-    const semCookie = !estado.cookies?.length
+    const semCookie = !estado.cookies?.length || !sessaoTemCredencial(storageState)
 
     if (emLogin || semCookie) {
       const porque = semCookie ? 'nenhum cookie de sessão — o login não foi concluído' : 'ainda na tela de login do gov.br'
