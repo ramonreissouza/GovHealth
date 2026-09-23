@@ -1,0 +1,38 @@
+{{/* O isolamento que o compose dava de graça. Lá, o banco só era alcançável
+     pela rede do projeto (e pelo 127.0.0.1:5432 do host, para túnel SSH). No
+     k8s, um Service é alcançável de QUALQUER namespace por padrão, incluindo
+     o `ci`, onde rodam builds de pull request. Este banco guarda dado pessoal
+     de todos os clientes e o cofre cifrado do Radar. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny-ingress }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: app-from-ingress }
+spec:
+  podSelector:
+    matchLabels: { app: app }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { 'kubernetes.io/metadata.name': kube-system }
+      ports: [{ port: 3000 }]
+---
+{{/* Banco: só pods deste namespace (app, worker e quem mais o chart
+     criar aqui). */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: db-from-namespace }
+spec:
+  podSelector:
+    matchLabels: { app: db }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports: [{ port: 5432 }]

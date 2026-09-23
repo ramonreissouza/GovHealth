@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app
+  annotations:
+    {{/* O `client_max_body_size 20m` do nginx do host repetido no Traefik, que
+         tem teto próprio: um upload que passa pelo primeiro morreria no
+         segundo com 413, sem pista de qual recusou. */}}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-body-limit@kubernetescrd
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port: { number: 3000 }
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: body-limit }
+spec:
+  buffering:
+    maxRequestBodyBytes: 20971520
+    memRequestBodyBytes: 2097152

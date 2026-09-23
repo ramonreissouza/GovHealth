@@ -1,0 +1,64 @@
+# Chart do GovHealth no k3s da VPS que ele divide com o TecSupply. A plataforma
+# (k3s, Traefik, quotas, PriorityClasses, nginx do host) vive no repositório
+# `infra`; aqui fica só o que é da aplicação, pelo mesmo motivo que o chart do
+# TecSupply fica no repositório dele: muda junto com o código.
+#
+# ESTE REPOSITÓRIO É PÚBLICO. Nenhum valor secreto entra neste arquivo nem em
+# `--set`. Tudo o que é segredo mora no Secret `existingSecret`, criado fora do
+# chart (ver deploy/helm/README.md).
+
+# Nome do nó (`kubectl get nodes`). Os PersistentVolumes são `local` e exigem
+# nodeAffinity; num nó só é formalidade, mas obrigatória.
+nodeName: srv1880188
+
+# Onde o banco vive no disco do host. Caminho fixo e legível em vez do
+# local-path dinâmico, para achar o dado sem arqueologia.
+hostDataRoot: /srv/govhealth
+
+# Secret criado fora do chart. Cada chave vira variável de ambiente de app e
+# worker (`envFrom`), com os mesmos nomes do `deploy/app/.env.exemplo`, mais
+# `DATABASE_URL` já apontando para o Service `db`.
+existingSecret: govhealth-secrets
+
+image:
+  # Buildadas na VPS e importadas no containerd do k3s, sem registry, com
+  # `IfNotPresent` para o k3s usar a imagem importada.
+  #
+  # O prefixo `govhealth.local` é de propósito um registry que não existe. Um
+  # nome curto como `govhealth/app` vira `docker.io/govhealth/app`, e se a
+  # imagem importada sumisse o k3s baixaria do Docker Hub o que qualquer
+  # pessoa tivesse publicado com esse nome. Assim, a falta da imagem vira
+  # ErrImagePull, e não código de terceiro rodando com o Secret do banco.
+  app: govhealth.local/app
+  worker: govhealth.local/worker
+  # O SHA do commit buildado. Sem default útil de propósito: `latest` num
+  # containerd local não diz qual código está no ar.
+  tag: definir-no-install
+  pullPolicy: IfNotPresent
+
+ingress:
+  className: traefik
+  host: govhealth.techealth.com.br
+
+db:
+  # Mesma major do compose (18). O dump atravessa minor, nunca major.
+  image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+  # O banco tem 1,3 GB; 10Gi dá folga para crescer e para o VACUUM.
+  storage: 10Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: '1', memory: 1Gi}
+
+app:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {cpu: '1', memory: 768Mi}
+
+worker:
+  # Booleano, nunca `replicas`. O pg-boss agenda os jobs no boot e dois workers
+  # rodariam cada job duas vezes (e-mail de alerta em dobro para o cliente).
+  enabled: true
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {cpu: '1', memory: 1Gi}

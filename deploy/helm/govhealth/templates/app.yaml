@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Service
+metadata: { name: app }
+spec:
+  selector: { app: app }
+  ports: [{ port: 3000, targetPort: 3000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: app }
+spec:
+  replicas: {{ .Values.app.replicas }}
+  {{/* O `app` não tem volume nem agenda nada, então pode rolar sem downtime:
+       sobe o novo, espera ficar pronto, só então derruba o velho. */}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: app }
+  template:
+    metadata:
+      labels: { app: app }
+    spec:
+      priorityClassName: govhealth-prod
+      automountServiceAccountToken: false
+      initContainers:
+{{ include "govhealth.waitForDb" . | indent 8 }}
+      containers:
+        - name: app
+          image: '{{ .Values.image.app }}:{{ .Values.image.tag }}'
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef: { name: {{ .Values.existingSecret }} }
+          env:
+            - { name: TZ, value: UTC }
+          ports: [{ containerPort: 3000 }]
+          {{/* `/inicio` é pública, a mesma rota do HEALTHCHECK do Dockerfile.
+               O middleware responde 200 ou 3xx, e a probe HTTP conta os dois
+               como vivo. */}}
+          startupProbe:
+            httpGet: { path: /inicio, port: 3000 }
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet: { path: /inicio, port: 3000 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources: {{ toYaml .Values.app.resources | nindent 12 }}
