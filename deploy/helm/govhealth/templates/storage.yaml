@@ -11,7 +11,12 @@ spec:
   accessModes: [ReadWriteOnce]
   {{/* Retain, nunca Delete: `helm uninstall` não pode levar o banco junto. */}}
   persistentVolumeReclaimPolicy: Retain
-  storageClassName: ''
+  {{/* Sem `storageClassName` no PV, de propósito. O API server descarta o
+       valor vazio ao gravar, e com `''` aqui o Helm via diferença em todo
+       upgrade e mandava um patch no PV. O deploy pelo Jenkins usa uma
+       ServiceAccount que só LÊ PV, e com ela o upgrade falhava. Para PV,
+       sem classe e classe vazia são a mesma coisa; o `''` continua no PVC
+       abaixo, onde impede o provisionador dinâmico. */}}
   local:
     path: {{ .Values.hostDataRoot }}/postgres
   nodeAffinity:
