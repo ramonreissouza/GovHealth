@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { capturarSessaoPortal, encrypt } from './capture.mjs'
+import { auditarBypassSso } from './sessao-escopo.mjs'
 import { sslParaHost } from '../lib/pg-ssl.mjs'
 
 function loadEnv() {
@@ -52,6 +53,9 @@ try {
     `UPDATE radar_credenciais SET storage_state = COALESCE($2, storage_state), metodo='sessao',
         conexao_status=$3, conexao_detalhe=$4, ativo=true, atualizado_em=now() WHERE id=$1`,
     [cred.id, r.storageState ? encrypt(KEY, r.storageState) : null, conexao, r.detalhe ?? null])
+  if (r.storageState && r.bypassSso) {
+    await auditarBypassSso((sql, p) => client.query(sql, p), { titularId: cred.titular_id, credencialId: cred.id, conectorId: cred.conector_id, via: 'connect' })
+  }
   await client.query(
     `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
      VALUES ($1,$2,$3,$4, ${r.status === 'ok' ? 'now()' : 'NULL'}, now(), $5, now())

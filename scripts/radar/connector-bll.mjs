@@ -37,6 +37,7 @@ import {
   withBackoff,
 } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
+import { contadorDeConsumo } from './rodizio.mjs'
 
 const UA_NAVEGADOR =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -245,7 +246,7 @@ export async function lerProcesso(page, url, estado = novoEstadoLeitura()) {
  * Decide o status da passada a partir do que foi lido. Separado do `sync` para ser
  * testado sem navegador: é aqui que mora a regra "parcial não é ok".
  */
-export function resultadoDaPassada({ nome, alvos, mensagens, falhas, comMensagem, lidos = 0, recusa, truncados, diretas, credencial }) {
+export function resultadoDaPassada({ nome, alvos, mensagens, falhas, comMensagem, lidos = 0, consumidos, recusa, truncados, diretas, credencial }) {
   // O portal fechou a porta. Não é "falha do conector" nem "sem novidades": é uma
   // terceira coisa, e dizer qual poupa quem lê de caçar um seletor que está correto.
   if (recusa) {
@@ -254,6 +255,7 @@ export function resultadoDaPassada({ nome, alvos, mensagens, falhas, comMensagem
       status: 'portal_indisponivel',
       mensagens,
       lidos,
+      consumidos,
       detalhe: `o ${nome} recusou a conexão (HTTP ${recusa.status}) — ${lidos} de ${alvos.length} processo(s) lidos antes; parei na 1ª recusa para não insistir contra o bloqueio${lidas}`,
     }
   }
@@ -265,6 +267,7 @@ export function resultadoDaPassada({ nome, alvos, mensagens, falhas, comMensagem
       status: 'falha',
       mensagens: [],
       lidos,
+      consumidos,
       detalhe: `nenhuma das ${alvos.length} página(s) do ${nome} pôde ser lida — ${falhas[0]}`,
     }
   }
@@ -294,11 +297,12 @@ export function resultadoDaPassada({ nome, alvos, mensagens, falhas, comMensagem
       status: 'falha',
       mensagens,
       lidos,
+      consumidos,
       detalhe: `leitura parcial: ${alvos.length - falhas.length} de ${alvos.length} página(s) lida(s) · ${partes.join(' · ')}`,
     }
   }
 
-  return { status: 'ok', mensagens, lidos, detalhe: partes.join(' · ') }
+  return { status: 'ok', mensagens, lidos, consumidos, detalhe: partes.join(' · ') }
 }
 
 /**
@@ -325,11 +329,16 @@ export function criarConectorBllBnc({ id }) {
     const semUrl = processos.length - todos.length - diretas
     const alvos = todos.slice(0, TETO_PROCESSOS)
     const truncados = todos.length - alvos.length
+    // Posições da lista RECEBIDA que esta passada consumiu — é o que o rodízio avança.
+    // Ver contadorDeConsumo em rodizio.mjs: falha local consome, recusa não.
+    const consumo = contadorDeConsumo(processos)
 
     if (!alvos.length) {
       return {
         status: 'ok',
         mensagens: [],
+        // Nada aqui é legível pelo portal: a lista inteira foi "consumida" (a volta fecha).
+        consumidos: processos.length,
         detalhe: `nenhum processo com página do ${META.nome} nesta passada${semUrl ? ` · ${semUrl} sem link do portal` : ''}${diretas ? ` · ${diretas} compra(s) direta(s), que não têm quadro de mensagens` : ''}`,
       }
     }
@@ -360,8 +369,9 @@ export function criarConectorBllBnc({ id }) {
       for (const p of alvos) {
         try {
           const r = await lerProcesso(page, p.urlPublica, estadoLeitura)
-          if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); continue }
+          if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); consumo.consumiu(p); continue }
           lidos++
+          consumo.consumiu(p)
           if (r.linhas.length) comMensagem++
           for (const l of r.linhas) {
             mensagens.push(
@@ -384,8 +394,9 @@ export function criarConectorBllBnc({ id }) {
         } catch (e) {
           // Recusa é sobre o PORTAL, não sobre este processo: continuar a fila só
           // renovaria o bloqueio, e cada página seguinte daria a mesma falha genérica.
-          if (e instanceof PortalRecusou) { recusa = e; break }
+          if (e instanceof PortalRecusou) { consumo.parouEm(p); recusa = e; break }
           falhas.push(`${p.licitacaoId}: ${String(e?.message ?? e).slice(0, 80)}`)
+          consumo.consumiu(p)
         }
       }
     } catch (e) {
@@ -399,7 +410,8 @@ export function criarConectorBllBnc({ id }) {
       try { if (browser) await browser.close() } catch { /* ignore */ }
     }
 
-    return resultadoDaPassada({ nome: META.nome, alvos, mensagens, falhas, comMensagem, lidos, recusa, truncados, diretas, credencial })
+    if (!recusa && !truncados) consumo.tudo()
+    return resultadoDaPassada({ nome: META.nome, alvos, mensagens, falhas, comMensagem, lidos, consumidos: consumo.valor, recusa, truncados, diretas, credencial })
   }
 }
 

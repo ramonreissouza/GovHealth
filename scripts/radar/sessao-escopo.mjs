@@ -31,7 +31,10 @@
 //
 // Se a medição mostrar que a renovação era real e frequente, `RADAR_SESSAO_MANTER_SSO=1`
 // devolve o comportamento antigo sem deploy — mas isso é um remendo para comparar, não
-// uma configuração para ficar ligada.
+// uma configuração para ficar ligada. Por isso ele só vale com `RADAR_DIAGNOSTICO=1`
+// junto e fora de NODE_ENV=production, grita a cada uso e deixa `bypassSso: true` no
+// resultado para quem grava no cofre registrar em `radar_auditoria` (auditarBypassSso).
+// Sozinha, a variável é ignorada — e isso também é dito, alto.
 
 import { PORTAIS } from './portais.mjs'
 
@@ -113,6 +116,50 @@ function permitido(dominio, lista) {
 }
 
 /**
+ * O escape hatch só vale com DUAS chaves e fora de produção. Uma variável de ambiente
+ * esquecida ligada no worker guardaria, em silêncio e para sempre, a identidade civil de
+ * todo fornecedor que conectasse. Ligada sozinha, é ignorada — e isso é dito.
+ */
+export function bypassSsoPermitido(env = process.env) {
+  if (env.RADAR_SESSAO_MANTER_SSO !== '1') return false
+  if (env.NODE_ENV === 'production' || env.RADAR_DIAGNOSTICO !== '1') {
+    console.error(
+      '[sessao-escopo] RADAR_SESSAO_MANTER_SSO=1 IGNORADO: so vale junto com RADAR_DIAGNOSTICO=1 ' +
+      'e fora de NODE_ENV=production. O recorte segue ligado.')
+    return false
+  }
+  return true
+}
+
+/** Ação gravada em `radar_auditoria` a cada sessão guardada com o bypass ligado. */
+export const ACAO_BYPASS_SSO = 'sessao_sso_mantido'
+
+/**
+ * Registra o uso do bypass. Chamado por QUEM GRAVA no cofre (é lá que há banco), logo
+ * depois de gravar. `executar(sql, params)` é o `query` de quem chama.
+ */
+export async function auditarBypassSso(executar, { titularId, credencialId, conectorId, via }) {
+  await executar(
+    `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+     VALUES ($1, $2, 'radar_credenciais', $3, $4::jsonb)`,
+    [titularId, ACAO_BYPASS_SSO, credencialId,
+     JSON.stringify({ conector: conectorId, via, aviso: 'sessao guardada sem recorte (RADAR_SESSAO_MANTER_SSO=1)' })],
+  )
+}
+
+function resumirTudo(cookies, origins) {
+  const fora = new Map()
+  for (const c of cookies) { const d = normalizar(c?.domain) || '(sem dominio)'; fora.set(d, (fora.get(d) ?? 0) + 1) }
+  for (const o of origins) {
+    let h = ''
+    try { h = new URL(o?.origin ?? '').hostname } catch { h = '' }
+    const d = h || '(origin invalida)'
+    fora.set(d, (fora.get(d) ?? 0) + 1)
+  }
+  return [...fora.entries()].map(([dominio, n]) => ({ dominio, n })).sort((a, b) => b.n - a.n)
+}
+
+/**
  * Recorta o storage_state, mantendo só o que o conector do portal precisa.
  *
  * NÃO muta a entrada. Devolve o estado novo e o inventário do que saiu, para que o
@@ -129,16 +176,28 @@ export function recortarSessao(estado, conectorId) {
   const origins = Array.isArray(entrada.origins) ? entrada.origins : []
 
   // Escape hatch para COMPARAR, não para ficar ligado. Ver o cabeçalho.
-  if (process.env.RADAR_SESSAO_MANTER_SSO === '1') {
-    return { estado: entrada, mantidos: cookies.length, descartados: [] }
+  if (bypassSsoPermitido()) {
+    console.error(
+      `[sessao-escopo] ATENCAO: RADAR_SESSAO_MANTER_SSO=1 — a sessao de '${conectorId}' vai ` +
+      'INTEIRA para o cofre, com o Login Unico (identidade civil) da pessoa. Diagnostico apenas; ' +
+      'desligue assim que terminar. Este uso fica em radar_auditoria.')
+    return { estado: entrada, mantidos: cookies.length, descartados: [], bypassSso: true }
   }
 
   const lista = dominiosDoPortal(conectorId)
-  // Sem lista não há recorte possível — e recortar contra lista vazia apagaria a sessão
-  // inteira, transformando um ganho de privacidade em perda de serviço. Devolve intacto
-  // e deixa o rastro, para que a ausência apareça em vez de virar um cofre vazio.
+  // SEM LISTA, FALHA FECHADO. Devolvia a sessão intacta — e com ela o SSO inteiro — para
+  // não virar perda de serviço. Só que "portal sem lista" é exatamente o id digitado
+  // errado ou o conector novo que ninguém classificou, e o caminho "na dúvida, guarda
+  // tudo" é o que este arquivo existe para fechar. Agora não sai NADA: todo chamador que
+  // grava no cofre passa por `sessaoTemCredencial`, então uma sessão vazia nunca
+  // substitui uma boa — no pior caso o portal novo não conecta, e diz por quê.
   if (!lista.length) {
-    return { estado: entrada, mantidos: cookies.length, descartados: [], semLista: conectorId }
+    return {
+      estado: { ...entrada, cookies: [], origins: [] },
+      mantidos: 0,
+      descartados: resumirTudo(cookies, origins),
+      semLista: conectorId,
+    }
   }
 
   const fora = new Map()
@@ -202,8 +261,11 @@ export function resumoDescarte(descartados) {
 export function serializarSessaoRecortada(estado, conectorId, { aoDescartar } = {}) {
   const r = recortarSessao(estado, conectorId)
   if (r.semLista) {
-    console.warn(`[sessao-escopo] portal '${r.semLista}' sem dominios conhecidos — nada recortado`)
-  } else {
+    console.error(
+      `[sessao-escopo] portal '${r.semLista}' sem dominios de sessao conhecidos — NADA foi ` +
+      `guardado (falha fechada). Descartado: ${resumoDescarte(r.descartados)}. Se o portal e ` +
+      'legitimo, registre-o em portais.mjs (loginUrl/areaUrl) ou em DOMINIOS_POR_PORTAL.')
+  } else if (!r.bypassSso) {
     avisarSeEsvaziou(conectorId, estado ?? {}, r)
     if (r.descartados.length && aoDescartar) aoDescartar(r.descartados)
   }

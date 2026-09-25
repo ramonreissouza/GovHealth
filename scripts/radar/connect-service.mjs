@@ -12,6 +12,7 @@
 import fs from 'node:fs'
 import pg from 'pg'
 import { capturarSessaoPortal, encrypt } from './capture.mjs'
+import { auditarBypassSso } from './sessao-escopo.mjs'
 import { portalMeta } from './portais.mjs'
 import { sslParaHost } from '../lib/pg-ssl.mjs'
 
@@ -102,6 +103,9 @@ async function processarUm() {
   console.log(`  Abrindo o ${meta.nome}… o fornecedor deve concluir o login na janela.`)
   const r = await capturarSessaoPortal(cred.conector_id, { waitS: WAIT_S })
   await concluir(cred, r.status, r.detalhe, r.storageState)
+  if (r.storageState && r.bypassSso) {
+    await auditarBypassSso((sql, p) => pool.query(sql, p), { titularId: cred.titular_id, credencialId: cred.id, conectorId: cred.conector_id, via: 'connect-service' })
+  }
   console.log(`  ${r.status === 'ok' ? '✓ conectado' : '✗ ' + r.status}: ${r.detalhe ?? ''}`)
   return true
 }

@@ -189,13 +189,13 @@ export async function sync({ credencial, processos = [], simulado }) {
 
     // 2) navega até a sala AO VIVO de cada processo — DEPENDE da calibração da URL.
     if (typeof chatUrlDoProcesso !== 'function') {
-      const { json: storageState } = serializarSessaoRecortada(await context.storageState(), 'pcp')
+      const { json: storageState, bypassSso } = serializarSessaoRecortada(await context.storageState(), 'pcp')
       await browser.close()
       // O andamento público já entrega valor; a sala ao vivo fica pendente de calibração.
       return {
         status: 'ok',
         detalhe: `público: ${publicas.length} mensagem(ns); sala ao vivo pendente de calibração (radar:calibrate-pcp)`,
-        mensagens: publicas, storageState,
+        mensagens: publicas, storageState, bypassSso: bypassSso === true,
       }
     }
 
@@ -210,9 +210,9 @@ export async function sync({ credencial, processos = [], simulado }) {
       } catch { /* processo específico falhou: segue os demais */ }
     }
 
-    const { json: storageState } = serializarSessaoRecortada(await context.storageState(), 'pcp')
+    const { json: storageState, bypassSso } = serializarSessaoRecortada(await context.storageState(), 'pcp')
     await browser.close()
-    return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState }
+    return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState, bypassSso: bypassSso === true }
   } catch (e) {
     try { if (browser) await browser.close() } catch { /* ignore */ }
     const msg = String(e?.message ?? e)

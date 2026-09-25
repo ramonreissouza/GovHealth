@@ -76,6 +76,43 @@ export function proximoOffset(offset, lidos, total) {
   return (((base + Math.trunc(l)) % n) + n) % n
 }
 
+/**
+ * Quantas posições da lista RECEBIDA o conector consumiu — que é o que o rodízio deve
+ * avançar. Não é `lidos`.
+ *
+ * O rodízio avançava por `lidos` (páginas lidas com sucesso). Com isso, um primeiro lote
+ * que falha SEMPRE (página que mudou, link morto) deixava `lidos = 0`, o ponto não
+ * andava, e a passada seguinte tentava de novo os mesmos 60 — a cauda da lista nunca era
+ * tentada. Era o defeito que o rodízio existe para matar, voltando por outra porta.
+ *
+ * E `lidos` também contava na lista errada: o conector filtra a entrada (tira quem não
+ * tem link do portal, compra direta) e aplica o teto, mas o rodízio gira a lista INTEIRA.
+ * Contar só as páginas abertas deixava de fora as posições puladas no meio.
+ *
+ * A regra:
+ *   - lido OU falha local (daquela página)     → a posição foi consumida;
+ *   - recusa do portal (403/429) no item k      → consumido até k-1: k e o resto não foram
+ *                                                 tentados, e a próxima volta começa em k;
+ *   - lista inteira percorrida, sem teto         → consumida inteira (a volta fecha);
+ *   - o conector caiu antes de tentar            → não informa, e o ponto não anda.
+ *
+ * @param {Array<object>} processos  a lista exatamente como o conector a recebeu
+ */
+export function contadorDeConsumo(processos) {
+  const lista = Array.isArray(processos) ? processos : []
+  const posicao = new Map(lista.map((p, i) => [p, i]))
+  let n = 0
+  return {
+    /** O item foi tentado — lido ou falhou por conta dele. */
+    consumiu(p) { const i = posicao.get(p); if (i !== undefined) n = Math.max(n, i + 1) },
+    /** O portal recusou ANTES deste item: ele não foi tentado. */
+    parouEm(p) { const i = posicao.get(p); if (i !== undefined) n = Math.max(n, i) },
+    /** Percorreu a lista toda (sem teto, sem recusa). */
+    tudo() { n = lista.length },
+    get valor() { return n },
+  }
+}
+
 /** Chave do ponto de rodízio em `etl_checkpoint`. Uma por portal e por titular. */
 export function chaveRodizio(portalId, titularId) {
   return `radar:rodizio:${portalId}:${titularId}`

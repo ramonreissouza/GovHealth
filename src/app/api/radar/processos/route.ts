@@ -52,11 +52,42 @@ export async function PATCH(req: NextRequest) {
   }
   if (!sets.length) return NextResponse.json({ error: 'nada a atualizar' }, { status: 400 })
 
-  const row = await queryOne<{ id: string }>(
-    `UPDATE radar_processos SET ${sets.join(', ')}, atualizado_em = now()
-      WHERE id = $1 AND titular_id = $2 RETURNING id`,
-    params,
-  )
+  // "Estou participando" é informação comercialmente sensível — diz em que pregão a
+  // empresa entrou, e a participação é sigilosa até a sessão. Mudá-la sem rastro deixava
+  // sem resposta "quem desmarcou isto, e quando?". Por isso, quando ela vem no pedido,
+  // a leitura do valor anterior, a atualização e a linha de auditoria são UMA instrução:
+  // no Postgres, CTEs de escrita rodam na mesma transação implícita, então ou as três
+  // acontecem ou nenhuma. Audita só quando o valor MUDA (duplo clique não vira ruído).
+  let row: { id: string } | null
+  if (body.participando != null) {
+    params.push(t.userId)
+    const pUser = params.length
+    row = await queryOne<{ id: string }>(
+      `WITH anterior AS (
+         SELECT id, participando FROM radar_processos
+          WHERE id = $1 AND titular_id = $2
+          FOR UPDATE
+       ), alterado AS (
+         UPDATE radar_processos p SET ${sets.join(', ')}, atualizado_em = now()
+           FROM anterior WHERE p.id = anterior.id
+         RETURNING p.id, anterior.participando AS valor_antes, p.participando AS valor_depois
+       ), auditoria AS (
+         INSERT INTO radar_auditoria (titular_id, user_id, acao, entidade, entidade_id, detalhe)
+         SELECT $2, $${pUser}, 'participacao', 'radar_processos', id,
+                jsonb_build_object('antes', valor_antes, 'depois', valor_depois)
+           FROM alterado
+          WHERE valor_antes IS DISTINCT FROM valor_depois
+       )
+       SELECT id FROM alterado`,
+      params,
+    )
+  } else {
+    row = await queryOne<{ id: string }>(
+      `UPDATE radar_processos SET ${sets.join(', ')}, atualizado_em = now()
+        WHERE id = $1 AND titular_id = $2 RETURNING id`,
+      params,
+    )
+  }
   if (!row) return NextResponse.json({ error: 'não encontrado' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

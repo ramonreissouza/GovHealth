@@ -8,7 +8,7 @@
 
 import {
   recortarSessao, dominiosDoPortal, dominioEspecificoBastante,
-  resumoDescarte, serializarSessaoRecortada,
+  resumoDescarte, serializarSessaoRecortada, auditarBypassSso, ACAO_BYPASS_SSO,
 } from './sessao-escopo.mjs'
 
 let ok = 0, falhou = 0
@@ -128,14 +128,30 @@ const ck = (domain, name) => ({ domain, name, value: 'x', path: '/' })
   afirmar('bll: mantem o proprio, descarta o resto', r.mantidos, 1)
 }
 
-// 8) PORTAL DESCONHECIDO NÃO APAGA A SESSÃO ──────────────────────────────────────────
-//    Recortar contra lista vazia transformaria ganho de privacidade em perda de
-//    serviço. Devolve intacto e DIZ que não recortou.
+// 8) PORTAL SEM LISTA FALHA FECHADO ─────────────────────────────────────────────────
+//    Devolvia a sessão intacta — SSO junto. "Sem lista" é o id digitado errado ou o
+//    conector novo, e "na dúvida, guarda tudo" é o que este arquivo existe para fechar
+//    (revisão da #38). Agora nada sai, e o motivo é dito.
 {
-  const s = { cookies: [ck('qualquer.coisa.com', 'a')], origins: [] }
-  const r = recortarSessao(s, 'portal-que-nao-existe')
-  afirmar('sem lista: nao recorta', r.mantidos, 1)
+  const s = {
+    cookies: [ck('qualquer.coisa.com', 'a'), ck('sso.acesso.gov.br', 'Govbrid')],
+    origins: [{ origin: 'https://sso.acesso.gov.br', localStorage: [{ name: 'x', value: 'y' }] }],
+  }
+  const erroOriginal = console.error
+  const gritos = []
+  console.error = (...a) => gritos.push(a.join(' '))
+  let r, json
+  try {
+    r = recortarSessao(s, 'portal-que-nao-existe')
+    ;({ json } = serializarSessaoRecortada(s, 'comprasgv')) // o id digitado errado
+  } finally { console.error = erroOriginal }
+  afirmar('sem lista: NENHUM cookie sai', r.estado.cookies.length, 0)
+  afirmar('sem lista: nenhuma origin sai', r.estado.origins.length, 0)
+  afirmar('sem lista: o SSO NAO vai para o cofre', /Govbrid|sso\.acesso/.test(json), false)
   afirmar('sem lista: deixa rastro', r.semLista, 'portal-que-nao-existe')
+  afirmar('sem lista: inventaria o descarte', r.descartados.map((d) => d.dominio).sort(), ['qualquer.coisa.com', 'sso.acesso.gov.br'])
+  afirmar('sem lista: grita, nomeando o portal', gritos.some((g) => /comprasgv/.test(g) && /falha fechada/.test(g)), true)
+  afirmar('sem lista: nao muta a entrada', s.cookies.length, 2)
 }
 
 // 9) O SERIALIZADOR AVISA QUEM CHAMOU ────────────────────────────────────────────────
@@ -179,14 +195,52 @@ const ck = (domain, name) => ({ domain, name, value: 'x', path: '/' })
   afirmar('sobrou algo: nao avisa', avisos.length, 0)
 }
 
-// 11) O ESCAPE HATCH É EXPLÍCITO E REVERSÍVEL ────────────────────────────────────────
+// 11) O ESCAPE HATCH SÓ VALE COM DUAS CHAVES, FORA DE PRODUÇÃO, E NUNCA CALADO ───────
+//     Restaurava em silêncio a identidade civil inteira (revisão da #38). Agora: sozinha
+//     a variável é ignorada; com as duas chaves funciona, grita e marca `bypassSso` para
+//     quem grava no cofre auditar.
 {
-  process.env.RADAR_SESSAO_MANTER_SSO = '1'
-  const r = recortarSessao({ cookies: [ck('sso.acesso.gov.br', 'Govbrid')], origins: [] }, 'comprasgov')
-  afirmar('com a variavel ligada, nada e recortado', r.mantidos, 1)
-  delete process.env.RADAR_SESSAO_MANTER_SSO
-  const r2 = recortarSessao({ cookies: [ck('sso.acesso.gov.br', 'Govbrid')], origins: [] }, 'comprasgov')
-  afirmar('desligada, o recorte volta', r2.mantidos, 0)
+  const sso = { cookies: [ck('sso.acesso.gov.br', 'Govbrid')], origins: [] }
+  const erroOriginal = console.error
+  const gritos = []
+  console.error = (...a) => gritos.push(a.join(' '))
+  const salvo = { ...process.env }
+  try {
+    process.env.RADAR_SESSAO_MANTER_SSO = '1'
+    delete process.env.RADAR_DIAGNOSTICO
+    const so1 = recortarSessao(sso, 'comprasgov')
+    afirmar('so a variavel: IGNORADA, o recorte segue', so1.mantidos, 0)
+    afirmar('so a variavel: diz que ignorou', gritos.some((g) => /IGNORADO/.test(g)), true)
+
+    process.env.RADAR_DIAGNOSTICO = '1'
+    process.env.NODE_ENV = 'production'
+    afirmar('em producao: IGNORADA mesmo com as duas', recortarSessao(sso, 'comprasgov').mantidos, 0)
+
+    delete process.env.NODE_ENV
+    gritos.length = 0
+    const r = recortarSessao(sso, 'comprasgov')
+    afirmar('duas chaves, fora de producao: nada recortado', r.mantidos, 1)
+    afirmar('duas chaves: marca bypassSso para a auditoria', r.bypassSso, true)
+    afirmar('duas chaves: grita a cada uso', gritos.some((g) => /INTEIRA para o cofre/.test(g)), true)
+    afirmar('duas chaves: o serializador repassa a marca', serializarSessaoRecortada(sso, 'comprasgov').bypassSso, true)
+  } finally {
+    console.error = erroOriginal
+    for (const k of ['RADAR_SESSAO_MANTER_SSO', 'RADAR_DIAGNOSTICO', 'NODE_ENV']) {
+      if (salvo[k] === undefined) delete process.env[k]; else process.env[k] = salvo[k]
+    }
+  }
+  afirmar('desligada, o recorte volta', recortarSessao(sso, 'comprasgov').mantidos, 0)
+  afirmar('desligada, sem marca de bypass', recortarSessao(sso, 'comprasgov').bypassSso, undefined)
+}
+
+// 12) A AUDITORIA DO BYPASS ────────────────────────────────────────────────────────────
+{
+  const chamadas = []
+  await auditarBypassSso(async (sql, params) => { chamadas.push({ sql, params }) },
+    { titularId: 't1', credencialId: 'c1', conectorId: 'comprasgov', via: 'hosted' })
+  afirmar('audita em radar_auditoria', /INSERT INTO radar_auditoria/.test(chamadas[0]?.sql ?? ''), true)
+  afirmar('audita com a acao certa, o titular e a credencial', chamadas[0]?.params.slice(0, 3), ['t1', ACAO_BYPASS_SSO, 'c1'])
+  afirmar('audita por onde entrou', JSON.parse(chamadas[0]?.params[3] ?? '{}').via, 'hosted')
 }
 
 console.log(`\n${ok} ok, ${falhou} falharam\n`)

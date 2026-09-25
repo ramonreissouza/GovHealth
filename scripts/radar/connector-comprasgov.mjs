@@ -136,9 +136,9 @@ export async function sync({ credencial, processos, simulado }) {
       // detalhe de ordem, com a sessão perfeitamente boa.
       // Renovar a sessao NAO pode re-alargar o cofre: sem o recorte aqui, a primeira
       // passada bem-sucedida devolveria os cookies do SSO que a captura acabou de tirar.
-      const { json: renovado } = serializarSessaoRecortada(await context.storageState(), 'comprasgov')
+      const { json: renovado, bypassSso } = serializarSessaoRecortada(await context.storageState(), 'comprasgov')
       await browser.close()
-      return { status: 'ok', mensagens, storageState: renovado,
+      return { status: 'ok', mensagens, storageState: renovado, bypassSso: bypassSso === true,
         detalhe: 'nenhuma licitação em acompanhamento para este CNPJ (o portal não tem chat sem participação)' }
     }
 
@@ -155,9 +155,9 @@ export async function sync({ credencial, processos, simulado }) {
       detalhe: `há licitação(ões) em acompanhamento e a leitura do chat ainda não foi calibrada: ${linhas.join(' | ').slice(0, 300)}` }
 
     // Persiste a sessão renovada para o próximo sync.
-    const { json: storageState } = serializarSessaoRecortada(await context.storageState(), 'comprasgov')
+    const { json: storageState, bypassSso } = serializarSessaoRecortada(await context.storageState(), 'comprasgov')
     await browser.close()
-    return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState }
+    return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState, bypassSso: bypassSso === true }
   } catch (e) {
     try { if (browser) await browser.close() } catch { /* ignore */ }
     const msg = String(e?.message ?? e)
