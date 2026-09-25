@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
-import { comprasgovDoTenant, configuracaoComprasgov, schemaComprasgovPronto } from '@/lib/radar/comprasgov'
+import { comprasgovDoTenant, configuracaoComprasgov, modoComprasgov, schemaComprasgovPronto } from '@/lib/radar/comprasgov'
 import { validarChaveCompra, linkComprasgovValido } from '@/lib/radar/comprasgov-identidade.mjs'
 
 export const runtime = 'nodejs'
@@ -16,6 +16,14 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const t = await tenantDe(req)
   if (!t) return NextResponse.json({ error: 'não autenticado' }, { status: 401 })
+  // Esta porta é SÓ do modo API. No modo público o coletor nunca leria o que entrasse
+  // aqui (ver modoComprasgov) — recusar é melhor que aceitar e não monitorar.
+  if (modoComprasgov() !== 'api') {
+    return NextResponse.json({
+      error: 'O Radar está lendo o Compras.gov.br pelo painel público. Cadastre a compra colando o link público de acompanhamento em "Adicionar processo".',
+      modo: 'publico',
+    }, { status: 409 })
+  }
   const b = await req.json().catch(() => null)
   let chave: string
   try { chave = validarChaveCompra(b?.chaveCompra) } catch (e) {

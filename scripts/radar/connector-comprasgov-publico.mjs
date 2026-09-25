@@ -1,6 +1,7 @@
 import { compraPublica, mensagemPublica } from '../../src/lib/radar/comprasgov-publico.mjs'
 import { abrirPagina, PortalRecusou } from './connector-base.mjs'
 import { fileURLToPath } from 'node:url'
+import { contadorDeConsumo } from './rodizio.mjs'
 
 export class DesafioPublico extends Error {
   constructor() { super('A consulta pública exige CAPTCHA. Use o modo assistido e resolva o desafio no navegador oficial.'); this.name = 'DesafioPublico' }
@@ -144,12 +145,76 @@ export function diagnosticoPublico(e, etapa) {
   if (/Timeout|timeout/.test(e?.message || '')) return `Tempo esgotado na etapa ${etapa}; a leitura não foi confirmada.`
   return `Leitura interrompida na etapa ${etapa}; verifique indisponibilidade ou alteração da página.`
 }
+/** Teto de compras LIDAS por rodada. A lista inteira é coberta pelo rodízio, em voltas. */
+export const MAX_COMPRAS_POR_RODADA = 5
+
+/**
+ * Falha que é do PORTAL (ou do desafio), não da compra: ninguém mais será lido nesta
+ * rodada, e insistir renovaria o bloqueio. Todo o resto é falha LOCAL, daquela compra.
+ */
+export function erroGlobal(e) {
+  return e instanceof DesafioPublico || e instanceof PortalRecusou
+}
+
+/**
+ * Percorre o lote. Separado do navegador para ser testado (comprasgov-publico.teste.mjs).
+ *
+ * O DEFEITO QUE ISTO CORRIGE (revisão da #39): qualquer erro de UMA compra — link
+ * inválido, "compra não encontrada", timeout daquela página — encerrava o lote inteiro,
+ * e como o rodízio avançava por `lidos`, a compra quebrada no 1º lugar devolvia zero e
+ * travava a fila do tenant para sempre. Agora a falha local é registrada, CONSOME a
+ * posição e a fila segue. Só CAPTCHA e recusa do portal (401/403/429) interrompem.
+ *
+ * @param {Array<{licitacaoId: string, urlPublica?: string}>} processos  já na ordem do rodízio
+ * @param {(processo: object, compra: object) => Promise<{mensagens: Array, completa: boolean}>} lerUma
+ */
+export async function lerLote(processos, lerUma, { max = MAX_COMPRAS_POR_RODADA, pausa = () => new Promise((r) => setTimeout(r, 2000)) } = {}) {
+  const consumo = contadorDeConsumo(processos)
+  const mensagens = [], falhas = []
+  let lidos = 0, parciais = 0, tentadas = 0, truncado = false, global = null
+  for (const processo of processos) {
+    if (tentadas >= max) { truncado = true; break }
+    const compra = compraPublica(processo.urlPublica)
+    // Link inválido é defeito DO CADASTRO desta compra: não custa navegador, não conta no
+    // teto, e não pode impedir as outras de serem lidas.
+    if (!compra) { falhas.push(`${processo.licitacaoId}: link público da compra ausente ou inválido`); consumo.consumiu(processo); continue }
+    tentadas++
+    try {
+      const leitura = await lerUma(processo, compra)
+      mensagens.push(...leitura.mensagens)
+      if (!leitura.completa) parciais++
+      lidos++
+      consumo.consumiu(processo)
+    } catch (e) {
+      if (erroGlobal(e)) { consumo.parouEm(processo); global = e; break }
+      falhas.push(`${processo.licitacaoId}: ${diagnosticoPublico(e, e?.etapa ?? 'leitura')}`)
+      consumo.consumiu(processo)
+    }
+    await pausa()
+  }
+  if (!global && !truncado) consumo.tudo()
+  return { mensagens, falhas, lidos, parciais, tentadas, truncado, global, consumidos: consumo.valor }
+}
+
+/**
+ * O status DESTA RODADA. `ok` quer dizer "o lote foi lido limpo" — e só isso. Não quer
+ * dizer que a lista inteira foi vista: com mais de 5 compras, isso só se afirma quando a
+ * VOLTA fecha, e é o run.mjs quem sabe disso (ver ciclo-cobertura.mjs). Antes, `ok`
+ * exigia `lidos === processos.length`, e com 6 compras ou mais nenhuma rodada podia
+ * passar: `verificado_em` nunca avançava (revisão da #39).
+ */
+export function statusDoLote(r, { desafio = false, recusado = false } = {}) {
+  if (desafio || r.global instanceof DesafioPublico) return 'captcha_2fa'
+  if (recusado || r.global instanceof PortalRecusou) return 'portal_indisponivel'
+  if (r.falhas.length || r.parciais) return 'falha'
+  return 'ok'
+}
+
 export async function sync({ processos = [], simulado = false, diagnosticar, viaPesquisa = false, assistido = process.env.RADAR_PUBLICO_ASSISTIDO === '1' }) {
   if (simulado) return { status: 'falha', detalhe: 'O conector público não apresenta dados simulados como leitura real.', mensagens: [], lidos: 0 }
   if (recusadoNestaRodada) return { status: desafioNestaRodada ? 'captcha_2fa' : 'portal_indisponivel', detalhe: 'Portal exige intervenção ou recusou consulta nesta rodada; tentativas suspensas.', mensagens: [], lidos: 0 }
-  const maxProcessos = 5
-  const mensagens = []
-  let lidos = 0, parciais = 0, erro = null, browser, context, etapa = 'navegador', retryAfterSeconds = 0
+  let browser, context, etapaNavegador = 'navegador', retryAfterSeconds = 0, erroNavegador = null
+  let r = { mensagens: [], falhas: [], lidos: 0, parciais: 0, tentadas: 0, truncado: false, global: null, consumidos: undefined }
   try {
     const { chromium } = await import('playwright')
     const opcoes = { locale: 'pt-BR', timezoneId: 'America/Sao_Paulo' }
@@ -159,12 +224,12 @@ export async function sync({ processos = [], simulado = false, diagnosticar, via
       browser = await chromium.launch({ headless: true })
       context = await browser.newContext(opcoes)
     }
-    for (const processo of processos.slice(0, maxProcessos)) {
-      const compra = compraPublica(processo.urlPublica)
-      if (!compra) { erro = 'Link público da compra ausente ou inválido.'; break }
+    etapaNavegador = null
+    r = await lerLote(processos, async (processo, compra) => {
       const page = await context.newPage()
       const rede = [], errosPagina = []
       let recusou = null
+      let etapa = 'abrir compra'
       const observar = (response) => {
         const status = response.status()
         const url = new URL(response.url())
@@ -178,7 +243,7 @@ export async function sync({ processos = [], simulado = false, diagnosticar, via
       }
       page.on('response', observar)
       if (diagnosticar) {
-        page.on('requestfailed', (r) => { if (rede.length < 100) rede.push({ falha: r.failure()?.errorText, recurso: new URL(r.url()).hostname }) })
+        page.on('requestfailed', (q) => { if (rede.length < 100) rede.push({ falha: q.failure()?.errorText, recurso: new URL(q.url()).hostname }) })
         page.on('pageerror', (e) => errosPagina.push(e.message.slice(0, 300)))
       }
       const verificar = async () => {
@@ -189,7 +254,6 @@ export async function sync({ processos = [], simulado = false, diagnosticar, via
         }
       }
       try {
-        etapa = 'abrir compra'
         if (viaPesquisa) { etapa = 'pesquisar compra no portal'; await abrirPelaPesquisa(page, compra, verificar) }
         else await abrirPagina(page, compra.url, { tentativas: 1 })
         // Botão do envelope observado no componente específico da compra.
@@ -202,31 +266,37 @@ export async function sync({ processos = [], simulado = false, diagnosticar, via
         }
         await verificar()
         etapa = 'ler páginas de mensagens'
-        const leitura = await lerPaginasPublicas(page, { licitacaoId: processo.licitacaoId, chave: compra.chave, verificar })
-        mensagens.push(...leitura.mensagens)
-        if (!leitura.completa) parciais++
-        lidos++
+        return await lerPaginasPublicas(page, { licitacaoId: processo.licitacaoId, chave: compra.chave, verificar })
       } catch (e) {
         if (diagnosticar) await diagnosticar({ page, etapa, rede, errosPagina, erroLeitura: String(e?.message || e).slice(0, 1500) }).catch(() => {})
-        if (rotaCompraNaoEncontrada(page.url())) throw new CompraNaoEncontrada()
-        if (e instanceof DesafioPublico) throw e
-        await verificar()
-        throw e
+        // Classificar ANTES de devolver: um erro qualquer pode ser, na verdade, o portal
+        // recusando ou o desafio aparecendo — e esses param o lote inteiro.
+        let causa = rotaCompraNaoEncontrada(page.url()) ? new CompraNaoEncontrada() : e
+        if (!erroGlobal(causa)) { try { await verificar() } catch (g) { causa = g } }
+        if (causa && typeof causa === 'object') causa.etapa = etapa
+        throw causa
       } finally {
         if (recusou) recusadoNestaRodada = true
         page.off('response', observar)
         await page.close()
       }
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-    }
+    })
   } catch (e) {
-    if (e instanceof PortalRecusou) recusadoNestaRodada = true
-    if (e instanceof DesafioPublico) { recusadoNestaRodada = true; desafioNestaRodada = true }
-    erro = diagnosticoPublico(e, etapa)
+    // Só chega aqui o que não é de UMA compra: o navegador não subiu (lerLote não lança).
+    erroNavegador = diagnosticoPublico(e, etapaNavegador ?? 'leitura')
   } finally { await context?.close().catch(() => {}); await browser?.close().catch(() => {}) }
-  const completo = !erro && lidos === processos.length && lidos > 0 && parciais === 0
+
+  if (r.global instanceof PortalRecusou) recusadoNestaRodada = true
+  if (r.global instanceof DesafioPublico) { recusadoNestaRodada = true; desafioNestaRodada = true }
+  const status = erroNavegador ? 'falha' : statusDoLote(r, { desafio: desafioNestaRodada, recusado: recusadoNestaRodada })
+  const pendentes = processos.length - r.consumidos
+  const motivo = erroNavegador
+    || (r.global && diagnosticoPublico(r.global, 'leitura'))
+    || (r.falhas.length ? `${r.falhas.length} compra(s) não lida(s) — ${r.falhas[0]}` : '')
+    || (r.parciais ? 'Histórico parcial: limite de 20 páginas por compra; sem garantia de cobertura completa.' : '')
+    || 'Leitura pública do lote concluída; mensagens restritas e diligências privadas não estão cobertas.'
   return {
-    status: completo ? 'ok' : desafioNestaRodada ? 'captcha_2fa' : recusadoNestaRodada ? 'portal_indisponivel' : 'falha', mensagens, lidos, retryAfterSeconds,
-    detalhe: `${lidos}/${processos.length} compras consultadas; ${mensagens.length} mensagens públicas. ${erro || (parciais ? 'Histórico parcial: limite de 20 páginas por compra; sem garantia de cobertura completa.' : !completo ? 'Há compras pendentes.' : 'Leitura pública concluída; mensagens restritas e diligências privadas não estão cobertas.')}`,
+    status, mensagens: r.mensagens, lidos: r.lidos, consumidos: r.consumidos, retryAfterSeconds,
+    detalhe: `${r.lidos}/${r.tentadas} compra(s) lida(s) nesta rodada (lote de até ${MAX_COMPRAS_POR_RODADA} de ${processos.length}${pendentes > 0 ? `; ${pendentes} para as próximas rodadas` : ''}); ${r.mensagens.length} mensagens públicas. ${motivo}`,
   }
 }

@@ -31,6 +31,7 @@
     "radar:comprasgov:publico:probe": "node scripts/radar/probe-comprasgov-publico.mjs",
     "radar:publico:migrate": "node --env-file=.env.local scripts/migrate-radar-publico.mjs",
     "radar:comprasgov:publico:teste": "node --test scripts/radar/comprasgov-publico.teste.mjs",
+    "radar:ciclo:teste": "node --test scripts/radar/ciclo-cobertura.teste.mjs",
     "trgm:migrate": "node scripts/migrate-trgm.mjs",
     "checkpoint:migrate": "node scripts/migrate-checkpoint-pendentes.mjs",
     "checkpoint:teste": "node scripts/etl-checkpoint-pendentes.teste.mjs",

@@ -20,6 +20,28 @@ export function dataUTC(valor) {
   return new Date(utc).toISOString()
 }
 
+/**
+ * O que do payload do Integra Compras vai para `radar_mensagens.raw`. Era `raw: m` —
+ * o objeto inteiro, com todo campo que o provedor mandar hoje e amanhã (revisão da #39).
+ * Minimização (LGPD, art. 6º III): só o que serve para DIAGNOSTICAR uma mensagem, que é
+ * exatamente o que este normalizador já lê. O `texto` tem coluna própria e não se repete
+ * aqui. Campo novo do provedor não entra sem alguém decidir que ele é necessário.
+ */
+export const CAMPOS_RAW = ['chaveMensagem', 'categoria', 'tipoRemetente', 'identificadorItem', 'dataHora']
+const TETO_CAMPO_RAW = 120
+
+export function rawMinimo(m, chave) {
+  const raw = { chaveCompra: chave }
+  for (const campo of CAMPOS_RAW) {
+    const v = m?.[campo]
+    if (v == null) continue
+    // Só escalar: um objeto ou lista aninhados seriam, de novo, "o que vier".
+    if (!['string', 'number', 'boolean'].includes(typeof v)) continue
+    raw[campo] = typeof v === 'string' ? v.slice(0, TETO_CAMPO_RAW) : v
+  }
+  return raw
+}
+
 export function normalizarMensagem(m, chave, canal) {
   let chaveRecebida
   try { chaveRecebida = chaveDaRepresentacao(m?.chaveCompra) } catch { throw new ErroCompras('Resposta sem identidade válida da compra.') }
@@ -35,7 +57,7 @@ export function normalizarMensagem(m, chave, canal) {
     id: m.chaveMensagem.toLowerCase(), texto: m.texto,
     autor: ({ '0': 'Sistema', '1': 'Fornecedor', '3': 'Pregoeiro' })[String(m.tipoRemetente)] ?? 'Portal',
     horario: dataUTC(m.dataHora), lote: m.identificadorItem == null ? null : String(m.identificadorItem),
-    categorias, prioridade: categorias.length ? 'alta' : 'normal', raw: m,
+    categorias, prioridade: categorias.length ? 'alta' : 'normal', raw: rawMinimo(m, chave),
   }
 }
 

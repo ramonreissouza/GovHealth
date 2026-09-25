@@ -8,6 +8,7 @@ import { query, queryOne } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
 import { conectorPublico } from '@/lib/radar/conectores'
 import { compraPublica } from '@/lib/radar/comprasgov-publico.mjs'
+import { modoComprasgov } from '@/lib/radar/comprasgov'
 
 export const runtime = 'nodejs'
 
@@ -103,6 +104,14 @@ export async function POST(req: NextRequest) {
   // Em portal PÚBLICO, a licitação é o próprio objeto/título — não exige nº de controle
   // (quem adiciona à mão nem sempre tem o número em mãos). Era 'pcp' escrito na regra, e
   // por isso adicionar um processo do BLL/BNC à mão respondia 400 sem explicar por quê.
+  // Com a integração oficial ligada, o coletor público não roda para o Compras.gov.br:
+  // uma compra cadastrada aqui ficaria invisível. A porta do modo API é outra.
+  if (conectorId === 'comprasgov' && modoComprasgov() === 'api') {
+    return NextResponse.json({
+      error: 'O Radar está lendo o Compras.gov.br pela integração oficial. Cadastre a compra em "Conectar portal" (chave da compra no SIASG).',
+      modo: 'api',
+    }, { status: 409 })
+  }
   const compra = conectorId === 'comprasgov' ? compraPublica(body.linkPortal) : null
   if (conectorId === 'comprasgov' && !compra) return NextResponse.json({ error: 'Cole o link público de acompanhamento da compra no Compras.gov.br, contendo ?compra= e os 17 dígitos da identificação.' }, { status: 400 })
   const licitacaoId = compra ? `comprasgov:publico:${compra.chave}` : (body.licitacaoId ?? '').trim() || (conectorPublico(conectorId) ? (body.titulo ?? '').trim().slice(0, 120) : '')

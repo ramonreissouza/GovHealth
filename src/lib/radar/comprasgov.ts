@@ -1,5 +1,23 @@
 import { query, queryOne } from '@/lib/db'
 
+/**
+ * QUAL coletor lê o Compras.gov.br agora — e, portanto, por qual porta uma compra tem
+ * de entrar. São dois modos com cadastros incompatíveis:
+ *
+ *   publico → `/api/radar/processos`, licitacao_id `comprasgov:publico:<chave>`, lido
+ *             pelo coletor público (run.mjs). Padrão, sem tarifa.
+ *   api     → `/api/radar/comprasgov`, licitacao_id `comprasgov:<ambiente>:<chave>` e
+ *             linhas em radar_comprasgov_canais, lido por run-comprasgov-api.mjs.
+ *
+ * As duas portas ficavam abertas ao mesmo tempo, e a compra que entrasse pela errada
+ * ficava invisível ao coletor ativo — cadastrada, e nunca lida (revisão da #39). Agora
+ * esta função é a única que decide, com o MESMO critério que `saudeComprasgov` e os
+ * coletores já usavam (`RADAR_COMPRASGOV_ENABLED`), e cada rota recusa o outro modo.
+ */
+export function modoComprasgov(env: Record<string, string | undefined> = process.env): 'publico' | 'api' {
+  return env.RADAR_COMPRASGOV_ENABLED === '1' ? 'api' : 'publico'
+}
+
 export function configuracaoComprasgov() {
   const ambiente = process.env.RADAR_COMPRASGOV_AMBIENTE || 'producao'
   const intervalo = Number(process.env.RADAR_COMPRASGOV_INTERVAL_SECONDS || 300)
@@ -35,7 +53,7 @@ export async function comprasgovDoTenant(titularId: string) {
 
 export async function saudeComprasgov(titularId: string) {
   // Padrão gratuito: a saúde vem da coleta pública, não de cookies antigos.
-  if (process.env.RADAR_COMPRASGOV_ENABLED !== '1') {
+  if (modoComprasgov() === 'publico') {
     const publico = await queryOne<{
       credencial_id: null; conector_id: string; cnpj: null; status: string
       verificado_em: string | null; tentado_em: string | null; detalhe: string | null

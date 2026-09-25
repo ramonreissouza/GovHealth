@@ -18,6 +18,7 @@ import crypto from 'node:crypto'
 import { conectorSync } from './registry.mjs'
 import { PORTAIS_PUBLICOS } from './portais.mjs'
 import { rotacionar, proximoOffset, chaveRodizio, explicarRodizio } from './rodizio.mjs'
+import { avancarVolta, chavesVolta, explicarVolta, VOLTA_NOVA } from './ciclo-cobertura.mjs'
 import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 import { sessaoTemCredencial } from './capture.mjs'
 import { novoPool } from '../lib/pg-ssl.mjs'
@@ -375,7 +376,26 @@ if (resultado.bypassSso) {
               // O rodizio entra no log: rodizio silencioso e indistinguivel de rodizio que
               // nao aconteceu, e a pergunta que alguem vai fazer e "por que o processo X nao
               // foi lido hoje?".
-              const frase = rodizio ? explicarRodizio(offsetRod, procs.length) : (LIMIT && !URGENTES ? 'rodízio desligado com --limit' : '')
+              // A VOLTA (só Compras.gov.br). Ele lê no máximo 5 compras por rodada, então `ok`
+// quer dizer "este lote saiu limpo" — não "a lista inteira foi vista". Quem pode
+// afirmar a lista inteira é a volta: `verificado_em` só avança quando as posições
+// consumidas cobrem a lista e todos os lotes dela foram limpos, e avança para o
+// INÍCIO da volta. Ver ciclo-cobertura.mjs. Só na passada completa: na de urgência
+// (ou com --limit) a lista é outra, e somar sobre ela contaria a volta errada.
+let volta = null
+if (portalId === 'comprasgov' && rodizio) {
+  const k = chavesVolta(portalId, titularId)
+  const { rows: cps } = await consultar(banco,
+    'SELECT chave, ultima_pagina, atualizado_em FROM etl_checkpoint WHERE chave = ANY($1)', [[k.acumulado, k.inicio]])
+  const acum = cps.find((c) => c.chave === k.acumulado)
+  const ini = cps.find((c) => c.chave === k.inicio)
+  const estadoVolta = acum?.ultima_pagina > 0
+    ? { acumulado: acum.ultima_pagina, inicio: ini?.atualizado_em ? new Date(ini.atualizado_em).toISOString() : null, limpa: (ini?.ultima_pagina ?? 1) === 1 }
+    : VOLTA_NOVA
+  volta = avancarVolta(estadoVolta, { consumidos: resultado.consumidos, total: procs.length, loteLimpo: resultado.status === 'ok', inicioLote: inicioPublico })
+}
+const frase = [rodizio ? explicarRodizio(offsetRod, procs.length) : (LIMIT && !URGENTES ? 'rodízio desligado com --limit' : ''),
+  volta ? explicarVolta(volta, procs.length) : ''].filter(Boolean).join(' · ')
               console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})${frase ? ` · ${frase}` : ''}`)
 
               if (portalId === 'comprasgov' && resultado.status !== 'ok') process.exitCode = 1
@@ -410,8 +430,25 @@ if (resultado.bypassSso) {
                 }
 
                 // Compras cadastradas durante a rodada ainda precisam de uma leitura.
-                const verificadoPublico = resultado.status === 'ok'
-                  ? (portalId === 'comprasgov' ? inicioPublico : new Date().toISOString()) : null
+                if (volta) {
+                  const k = chavesVolta(portalId, titularId)
+                  await client.query(
+                    `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
+                     ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = now()`,
+                    [k.acumulado, volta.estado.acumulado])
+                  // `atualizado_em` desta chave É o início da volta — por isso é escrito explicitamente,
+                  // e não pelo now() do upsert, que o moveria a cada rodada.
+                  await client.query(
+                    `INSERT INTO etl_checkpoint (chave, ultima_pagina, atualizado_em) VALUES ($1, $2, coalesce($3::timestamptz, now()))
+                     ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina, atualizado_em = EXCLUDED.atualizado_em`,
+                    [k.inicio, volta.estado.limpa ? 1 : 0, volta.estado.inicio])
+                }
+
+                // Compras.gov.br: só a volta fechada e limpa autoriza `verificado_em` (e sem volta —
+                // urgência, --limit — nada o autoriza). Os demais portais leem a lista numa rodada.
+                const verificadoPublico = portalId === 'comprasgov'
+                  ? (volta?.verificadoEm ?? null)
+                  : (resultado.status === 'ok' ? new Date().toISOString() : null)
                 await client.query(
                   `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
                    VALUES (NULL,$1,$2,$3,$5::timestamptz,now(),$4,now())

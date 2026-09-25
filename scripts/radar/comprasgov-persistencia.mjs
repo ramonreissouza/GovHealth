@@ -11,14 +11,29 @@ export async function tomarProximo(banco, ambiente, lease) {
      ), tomado AS (
        UPDATE radar_comprasgov_canais s SET lease_id=$2,lease_ate=now()+interval '3 minutes',tentado_em=now()
        FROM candidato c WHERE s.processo_id=c.processo_id AND s.canal=c.canal RETURNING s.*
-     ) SELECT t.*,p.titular_id,p.user_id,p.cnpj,p.licitacao_id,p.titulo,p.link_portal
-       FROM tomado t JOIN radar_processos p ON p.id=t.processo_id`, [ambiente, lease])
+     ) SELECT t.*,p.titular_id,p.user_id,p.cnpj,p.licitacao_id,p.titulo,p.link_portal,
+              u.email AS email_titular
+       FROM tomado t JOIN radar_processos p ON p.id=t.processo_id
+       LEFT JOIN usuarios u ON u.id=p.titular_id`, [ambiente, lease])
   return job ?? null
 }
 
 // Uma página e seu checkpoint são uma transação. O lease é no banco e funciona
 // também em PgBouncer transaction pooling (não usa advisory lock de sessão).
+/**
+ * Para quem vai o alerta. Era `job.user_id` — um ID, que o worker de e-mail usava como
+ * endereço `to` (revisão da #39). Segue a regra do run.mjs: o e-mail do TITULAR da conta.
+ * Sem e-mail válido, NÃO há alerta por e-mail (mandar para um id é não mandar, e ainda
+ * conta como enviado); o aviso dentro do app continua, endereçado ao titular.
+ */
+export function destinatariosDoAlerta(job) {
+  const email = String(job?.email_titular ?? '').trim().toLowerCase()
+  const valido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  return { email: valido ? email : null, app: valido ? email : job?.titular_id }
+}
+
 export async function gravarPagina(banco, job, resultado, { intervalo = 300, emailsRestantes = 5 } = {}) {
+  const para = destinatariosDoAlerta(job)
   await banco.query('BEGIN')
   try {
     const { rows: [atual] } = await banco.query(
@@ -48,15 +63,15 @@ export async function gravarPagina(banco, job, resultado, { intervalo = 300, ema
         `INSERT INTO radar_notificacoes
          (id,titular_id,evento,mensagem_id,processo_id,destinatario,canal,assunto,link,status)
          VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT DO NOTHING`,
-        [`nm:${ins.id}:app`, job.titular_id, ins.id, job.processo_id, job.user_id, job.titulo, job.link_portal])
+        [`nm:${ins.id}:app`, job.titular_id, ins.id, job.processo_id, para.app, job.titulo, job.link_portal])
       // Bootstrap inteiro fica no Radar. Não dispara e-mails retroativos.
       const idade = Date.now() - Date.parse(m.horario)
-      if (atual.inicializado && idade >= -60_000 && idade <= 48 * 3600_000 && emails < emailsRestantes) {
+      if (para.email && atual.inicializado && idade >= -60_000 && idade <= 48 * 3600_000 && emails < emailsRestantes) {
         await banco.query(
           `INSERT INTO radar_notificacoes
            (id,titular_id,evento,mensagem_id,processo_id,destinatario,canal,assunto,link)
            VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT DO NOTHING`,
-          [`nm:${ins.id}:email`, job.titular_id, ins.id, job.processo_id, job.user_id, job.titulo, job.link_portal])
+          [`nm:${ins.id}:email`, job.titular_id, ins.id, job.processo_id, para.email, job.titulo, job.link_portal])
         emails++
       }
     }

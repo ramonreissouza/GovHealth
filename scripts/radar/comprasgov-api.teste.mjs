@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import { ClienteComprasgov, normalizarMensagem, hashMensagem, dataUTC, retryAfterSegundos } from './connector-comprasgov-api.mjs'
 import { validarChaveCompra, linkComprasgovValido } from '../../src/lib/radar/comprasgov-identidade.mjs'
-import { gravarPagina, tomarProximo } from './comprasgov-persistencia.mjs'
+import { gravarPagina, tomarProximo, destinatariosDoAlerta } from './comprasgov-persistencia.mjs'
 
 const chave = '07000505000032026'
 const id = '312871a5-e26b-49da-a1ee-b9fbc855a265'
@@ -81,6 +81,28 @@ test('404 fica explícito e conta no orçamento; 403/429/502 não viram vazio sa
 test('HTML, envelope inesperado, página parcial vazia e mensagem de outra compra falham', async () => {
   for (const r of [new Response('<html>login</html>'), json({ error: 'bloqueio' }), json([],206), json([{ ...origem, chaveMensagem: null }]), json([{ ...origem, chaveCompra: null }])]) {
     await assert.rejects(clienteCom([token(), r]).cliente.pagina({ chave, canal: 'chat' }))
+  }
+})
+
+test('raw guarda só a allowlist, com teto de tamanho (revisão da #39)', async () => {
+  const { rawMinimo, CAMPOS_RAW } = await import('./connector-comprasgov-api.mjs')
+  const payload = { ...origem, cpfPregoeiro: '12345678900', emailFornecedor: 'x@y.com', anexos: [{ nome: 'a.pdf' }],
+    dataHora: '2026-09-23 14:30:11.271', identificadorItem: 'G'.repeat(500), futuro: { qualquer: 'coisa' } }
+  const m = normalizarMensagem(payload, chave, 'chat')
+  assert.deepEqual(Object.keys(m.raw).sort(), ['chaveCompra', ...CAMPOS_RAW].sort())
+  for (const fora of ['cpfPregoeiro', 'emailFornecedor', 'anexos', 'futuro', 'texto']) assert.equal(fora in m.raw, false, `${fora} não pode ir para o raw`)
+  assert.equal(m.raw.identificadorItem.length, 120)
+  assert.equal(m.raw.chaveCompra, chave)
+  assert.deepEqual(rawMinimo({ categoria: { aninhado: 1 } }, chave), { chaveCompra: chave }, 'objeto aninhado não entra')
+})
+
+test('alerta vai para o e-mail do titular, nunca para um id (revisão da #39)', () => {
+  // Era `job.user_id`: o worker usava o id como endereço `to`.
+  assert.deepEqual(destinatariosDoAlerta({ titular_id: 'u-123', user_id: 'u-456', email_titular: 'Compras@Empresa.com.br' }),
+    { email: 'compras@empresa.com.br', app: 'compras@empresa.com.br' })
+  // Sem e-mail válido não há alerta por e-mail — o aviso no app continua, ao titular.
+  for (const email_titular of [null, '', 'u-123', 'sem-arroba.com', 'a@b']) {
+    assert.deepEqual(destinatariosDoAlerta({ titular_id: 'u-123', user_id: 'u-456', email_titular }), { email: null, app: 'u-123' })
   }
 })
 
