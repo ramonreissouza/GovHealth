@@ -15,6 +15,7 @@
 
 import { SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
+import { serializarSessaoRecortada } from './sessao-escopo.mjs'
 
 const META = portalMeta('pcp')
 const UA_NAVEGADOR = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -188,13 +189,13 @@ export async function sync({ credencial, processos = [], simulado }) {
 
     // 2) navega até a sala AO VIVO de cada processo — DEPENDE da calibração da URL.
     if (typeof chatUrlDoProcesso !== 'function') {
-      const storageState = JSON.stringify(await context.storageState())
+      const { json: storageState, bypassSso } = serializarSessaoRecortada(await context.storageState(), 'pcp')
       await browser.close()
       // O andamento público já entrega valor; a sala ao vivo fica pendente de calibração.
       return {
         status: 'ok',
         detalhe: `público: ${publicas.length} mensagem(ns); sala ao vivo pendente de calibração (radar:calibrate-pcp)`,
-        mensagens: publicas, storageState,
+        mensagens: publicas, storageState, bypassSso: bypassSso === true,
       }
     }
 
@@ -209,9 +210,9 @@ export async function sync({ credencial, processos = [], simulado }) {
       } catch { /* processo específico falhou: segue os demais */ }
     }
 
-    const storageState = JSON.stringify(await context.storageState())
+    const { json: storageState, bypassSso } = serializarSessaoRecortada(await context.storageState(), 'pcp')
     await browser.close()
-    return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState }
+    return { status: 'ok', detalhe: `${mensagens.length} mensagem(ns)`, mensagens, storageState, bypassSso: bypassSso === true }
   } catch (e) {
     try { if (browser) await browser.close() } catch { /* ignore */ }
     const msg = String(e?.message ?? e)

@@ -9,6 +9,7 @@ import { tenantDe } from '@/lib/radar/db'
 import { sincronizarSelecao, filtrosDoSetup } from '@/lib/radar/selecao'
 import { resolverPortal } from '@/lib/portais'
 import { cofreDisponivel } from '@/lib/radar/crypto'
+import { saudeComprasgov } from '@/lib/radar/comprasgov'
 
 export const runtime = 'nodejs'
 // O trabalho do `after()` corre DENTRO desta invocação e gasta deste mesmo orçamento.
@@ -145,14 +146,14 @@ export async function GET(req: NextRequest) {
   // segue a regra do produto: presença de resultado homologado = encerrada.
   const processos = await query<{
     id: string; conector_id: string; cnpj: string; licitacao_id: string; titulo: string | null
-    uf: string | null; valor: string | null; prioridade: string; mutado: boolean
+    uf: string | null; valor: string | null; prioridade: string; mutado: boolean; participando: boolean
     user_id: string; origem: string; link_portal: string | null; atualizado_em: string
     orgao: string | null; municipio: string | null; modalidade: string | null
     objeto: string | null; prazo: string | null; abertura: string | null; encerrada: boolean
     link_externo: string | null; fonte: string | null
   }>(
     `SELECT p.id, p.conector_id, p.cnpj, p.licitacao_id, p.titulo, p.uf, p.valor,
-            p.prioridade, p.mutado, p.user_id, p.origem, p.link_portal, p.atualizado_em,
+            p.prioridade, p.mutado, p.participando, p.user_id, p.origem, p.link_portal, p.atualizado_em,
             c.razao_social_orgao AS orgao, c.municipio, c.modalidade_nome AS modalidade,
             c.objeto_compra AS objeto, c.link_externo, c.fonte,
             c.data_encerramento_proposta AS prazo, c.data_abertura_proposta AS abertura,
@@ -160,7 +161,23 @@ export async function GET(req: NextRequest) {
        FROM radar_processos p
        LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
       WHERE p.titular_id = $1 AND p.status = 'ativo'${condProc ? ` AND ${condProc}` : ''}
-      ORDER BY p.atualizado_em DESC
+      -- QUEM TEM CONVERSA ENTRA SEMPRE, e o teto de 500 corta o resto.
+      --
+      -- Ordenado so por atualizado_em, o teto cortava processos QUE TINHAM MENSAGEM:
+      -- medido em 22/09/2026 nesta conta, 7.691 processos ativos e 269 com conversa, dos
+      -- quais 264 caiam fora dos 500 — posicoes 3143, 4651, 4798, 4805 e por ai.
+      --
+      -- O que o cortado vira nao e ausencia (a conversa continua na tela): vira o CARD
+      -- ORFAO de montarProcessos, montado so com o que a MENSAGEM carrega. E card orfao
+      -- nao tem orgao, nem prazo, nem situacao, nem participando. O "Orgao: --" e o
+      -- "Prazo: —" que apareciam na maioria dos pregoes eram isto, e marcar
+      -- "estou participando" nele gravava no banco sem nada mudar na tela, porque o id
+      -- nao existia na lista que a tela atualiza.
+      --
+      -- O card orfao existe para o processo REMOVIDO da selecao, cuja conversa nao pode
+      -- sumir. Processo vivo com conversa nunca deveria cair nele.
+      ORDER BY EXISTS (SELECT 1 FROM radar_mensagens mm WHERE mm.processo_id = p.id) DESC,
+               p.atualizado_em DESC
       LIMIT 500`,
     paramsProc,
   )
@@ -193,16 +210,18 @@ export async function GET(req: NextRequest) {
   }>(
     `SELECT s.credencial_id, s.conector_id, c.cnpj, s.status, s.verificado_em, s.tentado_em, s.detalhe
        FROM radar_saude s LEFT JOIN radar_credenciais c ON c.id = s.credencial_id
-      WHERE s.titular_id = $1`,
+      WHERE s.titular_id = $1 AND s.conector_id <> 'comprasgov'`,
     [t.titularId],
   )
+
+  saude.push(await saudeComprasgov(t.titularId))
 
   return NextResponse.json({
     mensagens,
     processos: processos.map((p) => ({
       id: p.id, conectorId: p.conector_id, cnpj: p.cnpj, licitacaoId: p.licitacao_id,
       titulo: p.titulo || p.objeto, uf: p.uf, valor: p.valor == null ? null : Number(p.valor),
-      prioridade: p.prioridade, mutado: p.mutado, origem: p.origem,
+      prioridade: p.prioridade, mutado: p.mutado, participando: p.participando, origem: p.origem,
       linkPortal: p.link_portal, atualizadoEm: p.atualizado_em,
       orgao: p.orgao, municipio: p.municipio, modalidade: p.modalidade,
       prazo: p.prazo, abertura: p.abertura,
@@ -210,8 +229,8 @@ export async function GET(req: NextRequest) {
       // PORTAL REAL onde a sessão roda, derivado do que o PNCP entregou. Distinto de
       // `conectorId`, que é quem CAPTURA o chat: o selo deixa de dizer Compras.gov
       // para um pregão que na verdade acontece na Licitanet/BNC/BLL.
-      portal: resolverPortal({ linkExterno: p.link_externo, objeto: p.objeto, fonte: p.fonte }),
-      linkOrigem: p.link_externo,
+      portal: resolverPortal({ linkExterno: p.link_externo ?? (p.origem === 'manual' ? p.link_portal : null), objeto: p.objeto, fonte: p.fonte }),
+      linkOrigem: p.link_externo ?? (p.origem === 'manual' ? p.link_portal : null),
       // "Monitorado por mim" × "por todos": quem cadastrou/recebeu a seleção.
       meu: p.user_id === t.userId,
     })),

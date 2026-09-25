@@ -99,8 +99,8 @@ async function upsertUma(c: PNCPContratacao): Promise<boolean> {
     `INSERT INTO contratacoes (numero_controle_pncp, cnpj_orgao, razao_social_orgao, municipio, uf,
        modalidade_nome, objeto_compra, ano_compra, sequencial_compra, valor_total_estimado,
        data_publicacao, data_abertura_proposta, data_encerramento_proposta, situacao_id, categoria_saude,
-       link_externo, usuario_nome, portal_backfill_em)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+       link_externo, usuario_nome, codigo_unidade, esfera, numero_compra, portal_backfill_em)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
        -- Portal já resolvido na própria resposta de lista? Então a linha nasce fora da
        -- fila do harvest-portais.mjs (que é "portal_backfill_em IS NULL"). Sem isto, o
        -- cron alimentaria diariamente a fila que o coletor leva dias para drenar.
@@ -113,6 +113,11 @@ async function upsertUma(c: PNCPContratacao): Promise<boolean> {
        categoria_saude            = EXCLUDED.categoria_saude,
        link_externo               = COALESCE(EXCLUDED.link_externo, contratacoes.link_externo),
        usuario_nome               = COALESCE(EXCLUDED.usuario_nome, contratacoes.usuario_nome),
+       -- COALESCE pelo mesmo motivo dos demais: uma releitura sem o campo nao pode
+       -- apagar o que ja foi coletado.
+       codigo_unidade             = COALESCE(EXCLUDED.codigo_unidade, contratacoes.codigo_unidade),
+       esfera                     = COALESCE(EXCLUDED.esfera, contratacoes.esfera),
+       numero_compra              = COALESCE(EXCLUDED.numero_compra, contratacoes.numero_compra),
        portal_backfill_em         = COALESCE(contratacoes.portal_backfill_em, EXCLUDED.portal_backfill_em)
      RETURNING (xmax = 0) AS inserida`,
     [
@@ -133,6 +138,19 @@ async function upsertUma(c: PNCPContratacao): Promise<boolean> {
       categoria(c.objetoCompra),
       (c.linkSistemaOrigem ?? '').trim() || null,
       (c.usuarioNome ?? '').trim() || null,
+      // A UNIDADE E A ESFERA VINHAM NA MESMA RESPOSTA E IAM PARA O LIXO.
+      // `unidadeOrgao` ja era lido aqui (municipioNome, ufSigla) e `codigoUnidade` era
+      // descartado — é ele que vira a UASG da chaveCompra do Compras.gov.br, mas SÓ
+      // quando `esferaId` é 'F'. Fora do federal o mesmo campo é o código interno do
+      // ente (o ESTADO DO CEARÁ devolve '240424', seis dígitos, que passaria por UASG).
+      // Por isso os dois andam juntos: sozinho, `codigo_unidade` convida ao erro.
+      String(c.unidadeOrgao?.codigoUnidade ?? '').trim() || null,
+      String(c.orgaoEntidade?.esferaId ?? '').trim() || null,
+      // `numeroCompra` NAO e `sequencialCompra`, e essa confusao produz chave errada.
+      // Medido em 38 processos federais em 22/09/2026: UASG 160050 tem numeroCompra 267
+      // e sequencialCompra 19876. O SIASG usa o PRIMEIRO (cabe em 5 digitos em 38 de 38);
+      // o segundo e o contador interno do PNCP e nao cabe na chave.
+      String(c.numeroCompra ?? '').trim() || null,
     ],
   )
   return rows[0]?.inserida === true

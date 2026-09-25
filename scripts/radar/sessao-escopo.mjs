@@ -1,0 +1,273 @@
+// scripts/radar/sessao-escopo.mjs — RECORTE do storage_state antes de cifrar.
+//
+// O QUE ESTE ARQUIVO IMPEDE
+//
+// O cofre do Radar guardava o `storageState()` inteiro do navegador, sem filtro nenhum.
+// Medido no cofre de produção em 22/09/2026, a sessão mais recente do `comprasgov`
+// tinha 11 cookies:
+//
+//   sso.acesso.gov.br   9 cookies  (Session_Gov_Br_Prod, Govbrid, GovbrUid_*, TSPD_*, ...)
+//   www.comprasnet.gov.br  2 cookies  (ASPSESSIONID*)
+//
+// Os 9 primeiros NÃO são a sessão do Compras.gov.br. São a sessão do **Login Único da
+// pessoa física** — a mesma que abre e-CAC, Meu INSS, FGTS e Conecte SUS (dado de saúde,
+// art. 11 da LGPD). O fornecedor consentiu em ser monitorado num portal de licitação;
+// guardar a chave da vida civil dele inteira não é o que ele consentiu, e o vazamento
+// desse cofre teria consequência muito maior do que o serviço justifica.
+//
+// Duas sessões mais antigas do mesmo cofre guardavam APENAS `_ga` e `_ga_623FPXHZ7K` do
+// `.serpro.gov.br`: analytics do Google, cifrado e guardado como se fosse credencial.
+//
+// A REGRA: só sobrevive cookie de domínio que o conector daquele portal precisa para
+// ler. Tudo o mais é descartado ANTES de cifrar — não depois, não "na leitura".
+//
+// ── SOBRE DESCARTAR O sso.acesso.gov.br ──────────────────────────────────────────────
+//
+// É deliberado, e tem um custo possível: se o portal renova sozinho a sessão dele
+// seguindo um repasse pelo SSO, sem os cookies do SSO essa renovação silenciosa deixa de
+// acontecer e a sessão passa a expirar de verdade — o conector então devolve
+// `sessao_expirada` e o fornecedor reconecta. É uma troca consciente: perder uma
+// renovação automática vale menos do que guardar a identidade civil do cliente.
+//
+// Se a medição mostrar que a renovação era real e frequente, `RADAR_SESSAO_MANTER_SSO=1`
+// devolve o comportamento antigo sem deploy — mas isso é um remendo para comparar, não
+// uma configuração para ficar ligada. Por isso ele só vale com `RADAR_DIAGNOSTICO=1`
+// junto e fora de NODE_ENV=production, grita a cada uso e deixa `bypassSso: true` no
+// resultado para quem grava no cofre registrar em `radar_auditoria` (auditarBypassSso).
+// Sozinha, a variável é ignorada — e isso também é dito, alto.
+
+import { PORTAIS } from './portais.mjs'
+
+/**
+ * Domínios de sessão por portal.
+ *
+ * Quando um portal não aparece aqui, a lista é derivada dos hosts de `loginUrl` e
+ * `areaUrl` do próprio registro — que é exatamente onde o conector navega. Só entra
+ * nesta tabela o portal cujo conector precisa de um host que não está nas duas URLs.
+ */
+const DOMINIOS_POR_PORTAL = {
+  // O Compras.gov.br é o único que atravessa TRÊS hosts: o portal ASP clássico
+  // (`www.comprasnet.gov.br`), a SPA do fornecedor (`cnetmobile.estaleiro.serpro.gov.br`)
+  // e o SSO do gov.br. Os dois primeiros ficam; o SSO sai, pelo motivo no topo.
+  //
+  // `cnetmobile.estaleiro.serpro.gov.br` está por extenso de propósito: escrever
+  // `serpro.gov.br` traria junto os cookies de analytics do `.serpro.gov.br`, que é
+  // exatamente o lixo que este arquivo existe para não guardar.
+  comprasgov: [
+    'comprasnet.gov.br',
+    'cnetmobile.estaleiro.serpro.gov.br',
+    'compras.gov.br',
+    'comprasgovernamentais.gov.br',
+  ],
+}
+
+/** `.Sso.Acesso.GOV.BR` → `sso.acesso.gov.br`. */
+function normalizar(dominio) {
+  return String(dominio ?? '').trim().toLowerCase().replace(/^\./, '')
+}
+
+/**
+ * Um domínio genérico demais na lista permitiria TUDO — `gov.br` casaria com
+ * `sso.acesso.gov.br`, e o recorte viraria enfeite. Sufixos públicos de dois rótulos
+ * (`gov.br`, `com.br`, `org.br`...) exigem pelo menos três rótulos para valer.
+ */
+export function dominioEspecificoBastante(dominio) {
+  const d = normalizar(dominio)
+  if (!d || d.includes('/') || d.includes(':')) return false
+  const partes = d.split('.')
+  if (partes.length < 2) return false
+  const doisUltimos = partes.slice(-2).join('.')
+  const sufixosCompostos = /^(gov|com|org|net|edu|mil|leg|jus)\.(br|ar|uk|au|za)$/
+  return sufixosCompostos.test(doisUltimos) ? partes.length >= 3 : partes.length >= 2
+}
+
+/** Lista de domínios permitidos para um portal. Lança se a lista for genérica demais. */
+export function dominiosDoPortal(conectorId) {
+  const explicita = DOMINIOS_POR_PORTAL[conectorId]
+  const lista = explicita ?? derivarDoRegistro(conectorId)
+  const ruins = lista.filter((d) => !dominioEspecificoBastante(d))
+  if (ruins.length) {
+    throw new Error(
+      `dominio generico demais na lista de sessao de '${conectorId}': ${ruins.join(', ')} ` +
+      '— um sufixo publico (gov.br, com.br) casa com o SSO inteiro e anula o recorte')
+  }
+  return lista
+}
+
+function derivarDoRegistro(conectorId) {
+  const meta = PORTAIS[conectorId]
+  if (!meta) return []
+  const hosts = new Set()
+  for (const u of [meta.loginUrl, meta.areaUrl]) {
+    if (!u) continue
+    try { hosts.add(new URL(u).hostname.toLowerCase().replace(/^www\./, '')) } catch { /* ignora */ }
+  }
+  return [...hosts]
+}
+
+/** O domínio do cookie está coberto por algum permitido? */
+function permitido(dominio, lista) {
+  const d = normalizar(dominio)
+  if (!d) return false
+  return lista.some((alvo) => {
+    const a = normalizar(alvo)
+    return d === a || d.endsWith('.' + a)
+  })
+}
+
+/**
+ * O escape hatch só vale com DUAS chaves e fora de produção. Uma variável de ambiente
+ * esquecida ligada no worker guardaria, em silêncio e para sempre, a identidade civil de
+ * todo fornecedor que conectasse. Ligada sozinha, é ignorada — e isso é dito.
+ */
+export function bypassSsoPermitido(env = process.env) {
+  if (env.RADAR_SESSAO_MANTER_SSO !== '1') return false
+  if (env.NODE_ENV === 'production' || env.RADAR_DIAGNOSTICO !== '1') {
+    console.error(
+      '[sessao-escopo] RADAR_SESSAO_MANTER_SSO=1 IGNORADO: so vale junto com RADAR_DIAGNOSTICO=1 ' +
+      'e fora de NODE_ENV=production. O recorte segue ligado.')
+    return false
+  }
+  return true
+}
+
+/** Ação gravada em `radar_auditoria` a cada sessão guardada com o bypass ligado. */
+export const ACAO_BYPASS_SSO = 'sessao_sso_mantido'
+
+/**
+ * Registra o uso do bypass. Chamado por QUEM GRAVA no cofre (é lá que há banco), logo
+ * depois de gravar. `executar(sql, params)` é o `query` de quem chama.
+ */
+export async function auditarBypassSso(executar, { titularId, credencialId, conectorId, via }) {
+  await executar(
+    `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+     VALUES ($1, $2, 'radar_credenciais', $3, $4::jsonb)`,
+    [titularId, ACAO_BYPASS_SSO, credencialId,
+     JSON.stringify({ conector: conectorId, via, aviso: 'sessao guardada sem recorte (RADAR_SESSAO_MANTER_SSO=1)' })],
+  )
+}
+
+function resumirTudo(cookies, origins) {
+  const fora = new Map()
+  for (const c of cookies) { const d = normalizar(c?.domain) || '(sem dominio)'; fora.set(d, (fora.get(d) ?? 0) + 1) }
+  for (const o of origins) {
+    let h = ''
+    try { h = new URL(o?.origin ?? '').hostname } catch { h = '' }
+    const d = h || '(origin invalida)'
+    fora.set(d, (fora.get(d) ?? 0) + 1)
+  }
+  return [...fora.entries()].map(([dominio, n]) => ({ dominio, n })).sort((a, b) => b.n - a.n)
+}
+
+/**
+ * Recorta o storage_state, mantendo só o que o conector do portal precisa.
+ *
+ * NÃO muta a entrada. Devolve o estado novo e o inventário do que saiu, para que o
+ * chamador possa REGISTRAR o descarte — um recorte silencioso é indistinguível de um
+ * recorte que não aconteceu, e este repositório já pagou caro por silêncio.
+ *
+ * @param {{cookies?: Array, origins?: Array}} estado  saída de `context.storageState()`
+ * @param {string} conectorId
+ * @returns {{ estado: object, mantidos: number, descartados: Array<{dominio: string, n: number}> }}
+ */
+export function recortarSessao(estado, conectorId) {
+  const entrada = estado && typeof estado === 'object' ? estado : {}
+  const cookies = Array.isArray(entrada.cookies) ? entrada.cookies : []
+  const origins = Array.isArray(entrada.origins) ? entrada.origins : []
+
+  // Escape hatch para COMPARAR, não para ficar ligado. Ver o cabeçalho.
+  if (bypassSsoPermitido()) {
+    console.error(
+      `[sessao-escopo] ATENCAO: RADAR_SESSAO_MANTER_SSO=1 — a sessao de '${conectorId}' vai ` +
+      'INTEIRA para o cofre, com o Login Unico (identidade civil) da pessoa. Diagnostico apenas; ' +
+      'desligue assim que terminar. Este uso fica em radar_auditoria.')
+    return { estado: entrada, mantidos: cookies.length, descartados: [], bypassSso: true }
+  }
+
+  const lista = dominiosDoPortal(conectorId)
+  // SEM LISTA, FALHA FECHADO. Devolvia a sessão intacta — e com ela o SSO inteiro — para
+  // não virar perda de serviço. Só que "portal sem lista" é exatamente o id digitado
+  // errado ou o conector novo que ninguém classificou, e o caminho "na dúvida, guarda
+  // tudo" é o que este arquivo existe para fechar. Agora não sai NADA: todo chamador que
+  // grava no cofre passa por `sessaoTemCredencial`, então uma sessão vazia nunca
+  // substitui uma boa — no pior caso o portal novo não conecta, e diz por quê.
+  if (!lista.length) {
+    return {
+      estado: { ...entrada, cookies: [], origins: [] },
+      mantidos: 0,
+      descartados: resumirTudo(cookies, origins),
+      semLista: conectorId,
+    }
+  }
+
+  const fora = new Map()
+  const mantidos = cookies.filter((c) => {
+    if (permitido(c?.domain, lista)) return true
+    const d = normalizar(c?.domain) || '(sem dominio)'
+    fora.set(d, (fora.get(d) ?? 0) + 1)
+    return false
+  })
+
+  const origensMantidas = origins.filter((o) => {
+    let host = ''
+    try { host = new URL(o?.origin ?? '').hostname } catch { host = '' }
+    if (permitido(host, lista)) return true
+    const d = host || '(origin invalida)'
+    fora.set(d, (fora.get(d) ?? 0) + 1)
+    return false
+  })
+
+  return {
+    estado: { ...entrada, cookies: mantidos, origins: origensMantidas },
+    mantidos: mantidos.length,
+    descartados: [...fora.entries()].map(([dominio, n]) => ({ dominio, n })).sort((a, b) => b.n - a.n),
+  }
+}
+
+/**
+ * O recorte esvaziou uma sessão que tinha conteúdo?
+ *
+ * A comparação é "cookie é igual ao permitido, ou é subdomínio dele" — e NÃO o
+ * contrário. Um portal que emita o cookie no domínio-PAI (`.bb.com.br` para
+ * `licitacoes-e2.bb.com.br`) veria a sessão inteira ser descartada. Aceitar o pai
+ * resolveria esse caso e reabriria o que este arquivo existe para fechar: `serpro.gov.br`
+ * é pai de `cnetmobile.estaleiro.serpro.gov.br`, e voltaria com o analytics junto.
+ *
+ * Então a regra continua estrita e o caso vira BARULHO, não silêncio: hoje só o
+ * `comprasgov` e o `pcp` guardam sessão, e nos dois o domínio bate exato. Se um portal
+ * novo cair aqui, a linha abaixo diz exatamente qual domínio ficou de fora — em vez de
+ * um cofre vazio sem explicação.
+ */
+function avisarSeEsvaziou(conectorId, entrada, r) {
+  const tinha = (entrada.cookies?.length ?? 0) > 0
+  if (!tinha || r.mantidos > 0) return
+  console.warn(
+    `[sessao-escopo] ATENCAO: o recorte de '${conectorId}' nao deixou nenhum cookie. ` +
+    `Ficaram de fora: ${resumoDescarte(r.descartados)}. ` +
+    'Se algum desses e a sessao do portal (cookie emitido no dominio-pai), acrescente o ' +
+    'host em DOMINIOS_POR_PORTAL — nao relaxe a comparacao.')
+}
+
+/** Uma linha legível do que foi descartado, para log e auditoria. */
+export function resumoDescarte(descartados) {
+  if (!descartados?.length) return 'nada fora do escopo'
+  return descartados.map((d) => `${d.dominio}:${d.n}`).join(' ')
+}
+
+/**
+ * Serializa já recortado. É este o ponto que os chamadores devem usar — trocar
+ * `JSON.stringify(await ctx.storageState())` por esta chamada é a mudança inteira.
+ */
+export function serializarSessaoRecortada(estado, conectorId, { aoDescartar } = {}) {
+  const r = recortarSessao(estado, conectorId)
+  if (r.semLista) {
+    console.error(
+      `[sessao-escopo] portal '${r.semLista}' sem dominios de sessao conhecidos — NADA foi ` +
+      `guardado (falha fechada). Descartado: ${resumoDescarte(r.descartados)}. Se o portal e ` +
+      'legitimo, registre-o em portais.mjs (loginUrl/areaUrl) ou em DOMINIOS_POR_PORTAL.')
+  } else if (!r.bypassSso) {
+    avisarSeEsvaziou(conectorId, estado ?? {}, r)
+    if (r.descartados.length && aoDescartar) aoDescartar(r.descartados)
+  }
+  return { json: JSON.stringify(r.estado), ...r }
+}

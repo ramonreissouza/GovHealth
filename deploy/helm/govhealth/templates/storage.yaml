@@ -1,0 +1,43 @@
+{{/* PV estático em caminho fixo. `storageClassName` vazio impede o
+     local-path-provisioner do k3s de criar um volume dinâmico por baixo: o PVC
+     casa com ESTE PV, onde o dump foi restaurado, e com nenhum outro. */}}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: govhealth-postgres
+spec:
+  capacity:
+    storage: {{ .Values.db.storage }}
+  accessModes: [ReadWriteOnce]
+  {{/* Retain, nunca Delete: `helm uninstall` não pode levar o banco junto. */}}
+  persistentVolumeReclaimPolicy: Retain
+  {{/* Sem `storageClassName` no PV, de propósito. O API server descarta o
+       valor vazio ao gravar, e com `''` aqui o Helm via diferença em todo
+       upgrade e mandava um patch no PV. O deploy pelo Jenkins usa uma
+       ServiceAccount que só LÊ PV, e com ela o upgrade falhava. Para PV,
+       sem classe e classe vazia são a mesma coisa; o `''` continua no PVC
+       abaixo, onde impede o provisionador dinâmico. */}}
+  local:
+    path: {{ .Values.hostDataRoot }}/postgres
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [{{ .Values.nodeName }}]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: govhealth-postgres
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ''
+  volumeName: govhealth-postgres
+  resources:
+    requests:
+      storage: {{ .Values.db.storage }}

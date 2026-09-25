@@ -1,0 +1,6 @@
+apiVersion: v2
+name: govhealth
+description: App, worker e banco do GovHealth no k3s da VPS compartilhada
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

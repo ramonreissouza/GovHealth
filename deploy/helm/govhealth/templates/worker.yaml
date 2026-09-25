@@ -1,0 +1,37 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: worker }
+spec:
+  replicas: 1
+  {{/* Recreate é requisito, não estilo. O default do Deployment sobe o worker
+       novo ANTES de matar o velho, e por alguns segundos dois pg-boss agendam
+       e consomem os mesmos jobs. O compose protegia disso por acidente (um
+       serviço, um container); o k8s não protege. */}}
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      priorityClassName: govhealth-prod
+      automountServiceAccountToken: false
+      initContainers:
+{{ include "govhealth.waitForDb" . | indent 8 }}
+      containers:
+        - name: worker
+          image: '{{ .Values.image.worker }}:{{ .Values.image.tag }}'
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef: { name: {{ .Values.existingSecret }} }
+          env:
+            {{/* Fuso de São Paulo, como no compose: os crons do pg-boss
+                 (sync-pncp às 3h, alertas às 11h) são horário local. */}}
+            - { name: TZ, value: America/Sao_Paulo }
+          {{/* Sem probe HTTP: o worker não abre porta nenhuma. Se o processo
+               morrer, o container sai e o kubelet reinicia. */}}
+          resources: {{ toYaml .Values.worker.resources | nindent 12 }}
+      {{/* Tempo para o job em andamento terminar antes do SIGKILL. */}}
+      terminationGracePeriodSeconds: 120
+{{- end }}
