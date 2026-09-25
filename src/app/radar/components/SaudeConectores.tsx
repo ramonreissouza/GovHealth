@@ -87,11 +87,14 @@ function tituloDe(s: SaudeItem, agoraMs: number): string {
   if (parado(s, agoraMs)) return 'Sem verificar há horas — o coletor pode estar parado'
   if (confiavelAgora(s, agoraMs)) return 'Verificado'
   if (s.status === 'nunca_verificado') return 'Aguardando primeira verificação'
+  // Não é "aguardando": não existe passada a esperar para este portal.
+  if (s.status === 'nao_monitorado') return rotuloSaude(s.status).titulo
   return 'Aguardando a próxima passada'
 }
 
 /** A linha do relógio: até quando a gente olhou, sem prometer o que não leu. */
 function linhaEstado(s: SaudeItem, agoraMs: number) {
+  if (s.status === 'nao_monitorado') return 'o Radar não lê este portal'
   if (confiavelAgora(s, agoraMs)) return `verificado ${tempoDesde(s.verificadoEm, agoraMs)} · sem novidades até então`
   if (s.verificadoEm) return `última verificação OK ${tempoDesde(s.verificadoEm, agoraMs)}`
   return `tentativa ${tempoDesde(s.tentadoEm, agoraMs)}`
@@ -159,7 +162,11 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
   }
 
   const pedemAtencao = grupos.flatMap((g) => g.atencao)
-  const verificados = grupos.filter((g) => g.itens.every((s) => confiavelAgora(s, agoraMs))).length
+  // Portal que o Radar só mostra não entra na conta: "4 de 5 verificados" fazia o
+  // Compras.gov.br parecer um conector quebrado, quando não há nada nele a verificar.
+  // O selo cinza dele continua na faixa, e o clique diz por quê.
+  const lidos = grupos.filter((g) => !g.itens.every((s) => s.status === 'nao_monitorado'))
+  const verificados = lidos.filter((g) => g.itens.every((s) => confiavelAgora(s, agoraMs))).length
 
   return (
     <div className="space-y-1.5">
@@ -202,9 +209,9 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
           <span className="text-[10.5px] text-amber font-semibold ml-1">
             {pedemAtencao.length} precisa{pedemAtencao.length === 1 ? '' : 'm'} de atenção
           </span>
-        ) : (
+        ) : lidos.length > 0 && (
           <span className="text-[10.5px] text-faint ml-1">
-            {verificados} de {grupos.length} verificado{grupos.length === 1 ? '' : 's'}
+            {verificados} de {lidos.length} verificado{lidos.length === 1 ? '' : 's'}
           </span>
         )}
       </div>

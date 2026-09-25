@@ -7,8 +7,10 @@
 //   página pública; não pede credencial). É o caso do PCP: monitoramos o andamento
 //   (convocação, habilitação, recurso, prazo, homologação) de graça; a sessão do
 //   próprio cliente só é necessária para a sala AO VIVO (lances em tempo real).
-// Compras.gov.br lê o painel público de mensagens. PCP, BLL, BNC, Licitanet,
-// AMM Licita e Licitações-e são públicos.
+// Compras.gov.br é só MOSTRADO: o painel público de mensagens exige captcha e recusa
+// navegador automatizado (25/09/2026), então o chat oficial abre embutido no pregão
+// (lib/radar/chat-externo.mjs). PCP, BLL, BNC, Licitanet, AMM Licita e Licitações-e
+// são lidos pela página pública.
 
 export interface Conector {
   id: string
@@ -44,7 +46,10 @@ export const CONECTORES: Conector[] = [
   {
     id: 'comprasgov',
     nome: 'Compras.gov.br',
-    descricao: 'Piloto de mensagens públicas, sem tarifa de API. Pode exigir CAPTCHA manual no modo assistido. Conteúdo restrito não está incluído.',
+    // Texto de 25/09/2026: a leitura pública esbarra num captcha que recusa navegador
+    // automatizado (lib/radar/chat-externo.mjs). O chat é MOSTRADO dentro do pregão,
+    // não lido. Se a integração oficial (Serpro) for ligada, reescrever esta frase.
+    descricao: 'O chat oficial abre dentro do pregão, na página do governo, quando há o link público de acompanhamento. Sem leitura automática nem alerta: o portal exige captcha e recusa navegador automatizado.',
     disponivel: true,
     modoPublico: true,
     leitura: 'chat',

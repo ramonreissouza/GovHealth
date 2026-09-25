@@ -8,6 +8,10 @@ export type StatusSaude =
   | 'falha'
   | 'captcha_2fa'
   | 'nunca_verificado'
+  // Portal que o Radar só MOSTRA (página oficial dentro do pregão) e não lê — hoje o
+  // Compras.gov.br. Nunca é gravado em radar_saude: é montado em lib/radar/comprasgov.ts.
+  // Não é "aguardando": não há passada a esperar. Ver lib/radar/chat-externo.mjs.
+  | 'nao_monitorado'
 
 export type Prioridade = 'alta' | 'normal' | 'baixa'
 

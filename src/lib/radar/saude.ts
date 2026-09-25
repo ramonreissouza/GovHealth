@@ -24,6 +24,7 @@ const META: Record<StatusSaude, Omit<RotuloSaude, never>> = {
   portal_indisponivel: { cor: 'amarelo',  titulo: 'Portal indisponível na última tentativa', confiavel: false },
   falha:               { cor: 'vermelho', titulo: 'Falha no conector',                   confiavel: false },
   nunca_verificado:    { cor: 'cinza',    titulo: 'Aguardando primeira verificação',     confiavel: false },
+  nao_monitorado:      { cor: 'cinza',    titulo: 'Sem leitura automática — chat oficial abre no pregão', confiavel: false },
 }
 
 export function rotuloSaude(status: StatusSaude): RotuloSaude {

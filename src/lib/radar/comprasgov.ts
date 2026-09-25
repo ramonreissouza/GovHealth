@@ -74,11 +74,18 @@ export async function saudeComprasgov(titularId: string) {
         ...publico, status: 'falha',
         detalhe: 'A leitura pública precisa ser atualizada: há compra ainda não verificada ou o coletor está atrasado. Execute o coletor; se solicitado, resolva o CAPTCHA no modo assistido.',
       }
+      return publico
     }
-    return publico ?? {
-      credencial_id: null, conector_id: 'comprasgov', cnpj: null, status: 'nunca_verificado',
-      verificado_em: null, tentado_em: null,
-      detalhe: 'Leitura pública sem tarifa de API. Cadastre o link da compra para verificar as mensagens disponíveis. Conteúdo restrito não está coberto.',
+    // Sem leitura OK, o Compras.gov.br é portal que o Radar só MOSTRA (25/09/2026): a
+    // consulta pública pede captcha e recusa navegador automatizado, então nenhuma
+    // passada vai verificá-lo. Dizer "aguardando primeira verificação", com o ícone
+    // girando, prometia uma leitura que não vem; e o `captcha_2fa` que o coletor grava
+    // numa compra cadastrada pedia ao cliente uma ação que ele não tem como fazer.
+    // Ver lib/radar/chat-externo.mjs.
+    return {
+      credencial_id: null, conector_id: 'comprasgov', cnpj: null, status: 'nao_monitorado',
+      verificado_em: null, tentado_em: publico?.tentado_em ?? null,
+      detalhe: 'O chat oficial abre dentro do pregão quando há o link público de acompanhamento. Sem leitura automática nem alerta: o portal exige captcha e recusa navegador automatizado.',
     }
   }
   const { configurado, intervalo, compras, ambiente } = await comprasgovDoTenant(titularId)

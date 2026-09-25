@@ -30,7 +30,13 @@ const scriptSrc = process.env.NODE_ENV === 'production'
 // ATENÇÃO: isto é lido em tempo de BUILD. Mudar a variável na Vercel exige REDEPLOY —
 // não basta salvar a env e reiniciar.
 const embedOrigem = (process.env.RADAR_EMBED_ORIGIN || '').trim()
-const frameSrc = ['frame-src', "'self'", embedOrigem].filter(Boolean).join(' ')
+// A consulta PÚBLICA do Compras.gov.br, aberta dentro do pregão no Radar (25/09/2026).
+// O Radar não consegue ler esse chat (captcha que recusa navegador automatizado; ver
+// src/lib/radar/chat-externo.mjs), então quem abre é o navegador da própria pessoa,
+// num quadro da tela. Origem FIXA, e não por env como a do steel: é um endereço do
+// governo que não muda por ambiente, e só esta origem entra — nunca `*.gov.br`.
+const comprasgovPublico = 'https://cnetmobile.estaleiro.serpro.gov.br'
+const frameSrc = ['frame-src', "'self'", comprasgovPublico, embedOrigem].filter(Boolean).join(' ')
 
 const csp = [
   "default-src 'self'",

@@ -285,7 +285,14 @@ if (resultado.bypassSso) {
   // Cada portal roda por tenant que tenha processos dele e NÃO tenha credencial ativa
   // dele (quem conectou sessão já foi atendido no laço acima, em modo híbrido).
   if (!SIMULADO) {
-    for (const portalId of PORTAIS_PUBLICOS.filter((id) => !process.argv.includes('--comprasgov-publico') || id === 'comprasgov')) {
+    // COMPRAS.GOV.BR SÓ COM PEDIDO EXPLÍCITO (`--comprasgov-publico`, o do serviço
+    // assistido). Medido em 25/09/2026: a consulta pública recusa navegador automatizado
+    // mesmo com o captcha resolvido por uma pessoa, e o Radar passou a MOSTRAR esse chat
+    // dentro do pregão (src/lib/radar/chat-externo.mjs). Na passada de toda hora, tentar
+    // só repetiria a recusa contra um bloqueio antirrobô, e o `captcha_2fa` gravado em
+    // radar_saude pediria ao cliente uma ação que ele não tem como fazer.
+    const soComprasgov = process.argv.includes('--comprasgov-publico')
+    for (const portalId of PORTAIS_PUBLICOS.filter((id) => soComprasgov ? id === 'comprasgov' : id !== 'comprasgov')) {
       try {
         const inicioPublico = new Date().toISOString()
         const { rows: pubProcs } = await consultar(banco,

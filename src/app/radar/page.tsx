@@ -29,11 +29,17 @@ import {
 } from 'lucide-react'
 import { CONECTORES, conectorDisponivel, conectorPublico } from '@/lib/radar/conectores'
 import { destacar, temChave } from '@/lib/radar/destaque'
+import { chatSoNoPortal, portalSoVisualizacao, situacaoLeitura } from '@/lib/radar/chat-externo.mjs'
 import { nomePortal } from '@/lib/portais'
 import { CONFIG_PADRAO, type ConfigRadar } from '@/lib/radar/config'
 import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { Paginacao } from '@/components/ui/Paginacao'
+
+// Conectores que algum coletor LÊ. É daqui que a tela decide, pregão a pregão, se pode
+// dizer "monitoramento ativo" (ver situacaoLeitura em lib/radar/chat-externo.mjs). O
+// Compras.gov.br fica de fora: ele tem regra própria, por cadastro e saúde.
+const LEITORES = CONECTORES.filter((c) => c.disponivel && c.modoPublico && c.id !== 'comprasgov').map((c) => c.id)
 
 const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'status_processo', 'resultado_lote', 'cnpj']
 
@@ -249,6 +255,8 @@ export default function RadarPage() {
   const [busca, setBusca] = useState('')
   const [categoria, setCategoria] = useState('')
   const [selId, setSelId] = useState<string | null>(null)
+  /** Pregão do Compras.gov.br em que a pessoa trocou o chat oficial pelas capturadas. */
+  const [capturadasDe, setCapturadasDe] = useState<string | null>(null)
   const [conectar, setConectar] = useState(false)
   const [flags, setFlags] = useState<Flags>({})
   const [detalhes, setDetalhes] = useState<Processo | null>(null)
@@ -461,6 +469,16 @@ export default function RadarPage() {
   )
 
   const selecionado = filtrados.find((p) => p.id === selId) ?? null
+  // Chat que o Radar não lê (hoje, o Compras.gov.br): a conversa aberta ganha o aviso e
+  // o botão para o site oficial, em vez de prometer captura. Ver lib/radar/chat-externo.mjs.
+  const soNoPortal = selecionado && data ? chatSoNoPortal(selecionado, data.saude, LEITORES) : null
+  // Nenhum coletor lê o portal deste pregão: nada de "monitoramento ativo" nem de selo
+  // de palavra-chave, e a faixa diz por quê.
+  const semLeitor = !!selecionado && !!data && situacaoLeitura(selecionado, data.saude, LEITORES) === 'sem_leitor'
+  // Com o link público, o padrão é o CHAT OFICIAL embutido. "Capturadas" só existe para
+  // pregão com histórico da época em que a sessão gov.br funcionava. Guardar o id (e não
+  // um booleano) faz a escolha valer só para aquele pregão, sem efeito de reset.
+  const verOficial = !!soNoPortal?.link && capturadasDe !== selecionado?.id
 
   // Lotes presentes na conversa (o portal só informa em alguns casos).
   const lotes = useMemo(() => {
@@ -475,11 +493,17 @@ export default function RadarPage() {
     return lote ? selecionado.mensagens.filter((m) => m.lote === lote) : selecionado.mensagens
   }, [selecionado, lote])
 
+  const marcarTodasLidas = (p: Processo) => { for (const m of p.mensagens) if (!m.lida) void marcarLidaMsg(m) }
   const abrirProcesso = (p: Processo) => {
     setSelId(p.id)
-    for (const m of p.mensagens) if (!m.lida) void marcarLidaMsg(m)
+    // No Compras.gov.br com link público, a vista inicial é o CHAT OFICIAL e as capturadas
+    // ficam atrás da aba. Marcar como lidas aqui baixaria o contador de mensagens que a
+    // pessoa nem viu; elas são marcadas quando a aba "Capturadas" abre (verCapturadas).
+    // Reabrir um pregão que já estava em "Capturadas" mostra as capturadas: aí marca.
+    if (data && chatSoNoPortal(p, data.saude, LEITORES)?.link && capturadasDe !== p.id) return
+    marcarTodasLidas(p)
   }
-  const marcarTodasLidas = (p: Processo) => { for (const m of p.mensagens) if (!m.lida) void marcarLidaMsg(m) }
+  const verCapturadas = (p: Processo) => { setCapturadasDe(p.id); marcarTodasLidas(p) }
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -512,21 +536,21 @@ export default function RadarPage() {
             </div>
           </div>
 
-          {/* REQUISITO 4.2 — banner de incerteza.
-              Dois textos diferentes de propósito: "nunca ligou" é um estado de
-              instalação (ninguém concluiu o login do portal), não uma falha
-              intermitente de conector — e a saída para cada um é outra. */}
+          {/* REQUISITO 4.2 — banner de incerteza: nenhum portal foi lido com sucesso.
+              Mandava "concluir o login do Compras.gov.br em Conectar portal", e desde
+              25/09/2026 o Conectar portal responde, com razão, que não há nada a
+              conectar ali (o portal recusa navegador automatizado; o chat dele abre
+              dentro do pregão). A saída agora é a verdadeira: os portais públicos são
+              lidos sem login, na próxima passada do coletor. */}
           {semConectorOk ? (
             <div className="mb-4 flex items-start gap-2 bg-amber/10 border border-amber/30 rounded-lg px-4 py-3">
               <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
               <p className="text-[12px] text-amber">
-                <strong>Nenhum conector conectado.</strong> Os pregões abaixo estão selecionados pelo seu perfil e
-                são acompanhados por data e prazo, mas o <strong>chat dos portais que exigem login</strong>{' '}
-                (Compras.gov.br) <strong>não está sendo lido</strong>
+                <strong>Nenhum portal verificado ainda.</strong> Os pregões abaixo estão selecionados pelo seu perfil e
+                são acompanhados por data e prazo, mas <strong>nenhum chat foi lido com sucesso</strong>
                 {capturaNuncaLigou ? ' — nenhuma mensagem foi capturada até agora' : ''}.{' '}
-                {capacidades.cofre
-                  ? <>Conclua o login em <strong>Conectar portal</strong>.</>
-                  : <>A conexão por login do gov.br não está habilitada neste ambiente; o Portal de Compras Públicas monitora sem login.</>}
+                PCP, BLL, BNC, Licitanet e os demais portais públicos são lidos sem login, a cada passada do coletor.
+                O chat do Compras.gov.br não é lido: ele abre dentro do pregão, na página oficial, sem alerta.
               </p>
             </div>
           ) : null}
@@ -652,6 +676,8 @@ export default function RadarPage() {
                     const ativo = selId === p.id
                     const imp = !!flags[p.id]?.importante
                     const s = selo(p.portal)
+                    const leituraP = data ? situacaoLeitura(p, data.saude, LEITORES) : 'lido'
+                    const soPortal = data ? chatSoNoPortal(p, data.saude, LEITORES) : null
                     return (
                       <button key={p.id} onClick={() => abrirProcesso(p)}
                         className={clsx('w-full text-left px-3 py-2.5 border-b border-subtle/70 transition-colors',
@@ -684,7 +710,10 @@ export default function RadarPage() {
                           <span className="text-[10px] text-faint truncate flex-1">
                             {p.ultima
                               ? `${p.ultima.autor || '—'}: ${p.ultima.texto}`
-                              : capturaNuncaLigou ? 'Chat não monitorado — conector não conectado' : 'Sem mensagem capturada ainda'}
+                              : soPortal
+                                ? (soPortal.link ? 'Chat oficial do Compras.gov.br — abra para ver' : 'Chat só no site do Compras.gov.br')
+                                : leituraP === 'sem_leitor' ? 'O Radar não lê o chat deste portal'
+                                  : capturaNuncaLigou ? 'Chat ainda não lido' : 'Sem mensagem capturada ainda'}
                           </span>
                         </div>
                       </button>
@@ -774,10 +803,36 @@ export default function RadarPage() {
                       </div>
                     </div>
 
-                    {/* Abas: Mensagens do chat + lote */}
+                    {/* Abas: Mensagens do chat + lote. No Compras.gov.br com link público, as
+                        abas viram "Chat oficial" (a página do governo, embutida) e, só para
+                        quem tem histórico, "Capturadas pelo Radar". */}
                     <div className="px-4 py-2 border-b border-subtle flex items-center gap-3 flex-wrap">
-                      <span className="text-[12px] font-semibold text-strong">Mensagens do chat</span>
-                      {lotes.length > 0 ? (
+                      {soNoPortal?.link ? (
+                        <div role="tablist" aria-label="Conversa do pregão" className="flex items-center gap-1">
+                          <button type="button" role="tab" aria-selected={verOficial} onClick={() => setCapturadasDe(null)}
+                            className={clsx('text-[12px] px-2.5 py-1 rounded-md transition-colors',
+                              verOficial ? 'bg-accent/15 text-strong font-semibold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                            Chat oficial
+                          </button>
+                          {selecionado.mensagens.length > 0 && (
+                            <button type="button" role="tab" aria-selected={!verOficial} onClick={() => verCapturadas(selecionado)}
+                              className={clsx('text-[12px] px-2.5 py-1 rounded-md transition-colors',
+                                !verOficial ? 'bg-accent/15 text-strong font-semibold' : 'text-muted hover:text-strong hover:bg-bg3')}>
+                              Capturadas pelo Radar ({selecionado.mensagens.length})
+                              {/* Não lidas não somem ao abrir o pregão (ver abrirProcesso):
+                                  a aba mostra quantas esperam, até ser aberta. */}
+                              {verOficial && selecionado.naoLidas > 0 && (
+                                <span className="ml-1.5 text-[9px] font-mono-custom bg-accent text-black font-bold px-1.5 rounded-full">
+                                  {selecionado.naoLidas} não lida{selecionado.naoLidas === 1 ? '' : 's'}
+                                </span>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-[12px] font-semibold text-strong">Mensagens do chat</span>
+                      )}
+                      {verOficial ? null : lotes.length > 0 ? (
                         <>
                           <select value={lote} onChange={(e) => setLote(e.target.value)}
                             className="text-[11.5px] bg-bg3 border border-subtle rounded-md px-2 py-1 text-muted focus:border-accent outline-none">
@@ -789,10 +844,105 @@ export default function RadarPage() {
                       ) : (
                         <span className="text-[10.5px] text-faint">Este portal não separa o chat por lote.</span>
                       )}
-                      {config.escopo === 'palavra_chave' && (
+                      {/* Num chat que o Radar não lê não há aviso nenhum, com ou sem palavra-chave. */}
+                      {config.escopo === 'palavra_chave' && !soNoPortal && !semLeitor && (
                         <span className="text-[10px] text-amber ml-auto">Avisando só com palavra-chave</span>
                       )}
                     </div>
+
+                    {/* CHAT OFICIAL EMBUTIDO (Compras.gov.br). Quem abre a página é o
+                        navegador da própria pessoa, num quadro da tela: o captcha dela passa
+                        como passaria no site, e o Radar não lê nem simula nada. Por isso a
+                        faixa de cima diz, sem letra miúda, que daqui não sai alerta.
+                        Ver lib/radar/chat-externo.mjs. */}
+                    {/* O quadro fica MONTADO enquanto o pregão for o mesmo e só se esconde na
+                        aba "Capturadas": desmontar recarregaria a página do governo e jogaria
+                        fora o captcha já resolvido e o painel de mensagens aberto. */}
+                    {soNoPortal?.link && (
+                      <div className={clsx('flex-1 min-h-0 flex-col', verOficial ? 'flex' : 'hidden')}>
+                        <div className="px-4 py-2 border-b border-amber/30 bg-amber/10 flex items-start gap-2 flex-wrap">
+                          <AlertTriangle size={13} className="text-amber flex-shrink-0 mt-0.5" />
+                          <p className="text-[11px] text-muted leading-snug flex-1 basis-[260px] min-w-0">
+                            <strong className="text-strong">Página oficial do Compras.gov.br, aberta aqui pelo seu navegador.</strong>{' '}
+                            Clique no envelope (Mensagens) e, se pedir, resolva o captcha. O Radar não lê estas mensagens nem avisa sobre elas:
+                            o portal recusa navegador automatizado.
+                          </p>
+                          {/* Saída de emergência, e não o caminho: se o quadro não carregar
+                              (bloqueio de terceiros no navegador, portal fora), a mesma
+                              página abre em outra aba. */}
+                          <a href={soNoPortal.link} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-[11px] text-accent hover:underline flex-shrink-0">
+                            <ExternalLink size={12} /> Abrir em outra aba
+                          </a>
+                        </div>
+                        <div className="relative flex-1 min-h-[420px] bg-white">
+                          {/* `key`: trocar de pregão recarrega o quadro em vez de reaproveitar
+                              a página anterior. `sandbox` sem `allow-top-navigation`: a
+                              página do governo não consegue tirar a pessoa do Radar; com
+                              `allow-same-origin` ela mantém a PRÓPRIA origem (cookies e o
+                              captcha dela), o que só é seguro porque essa origem não é a
+                              nossa — nunca embutir aqui conteúdo servido pelo próprio app. */}
+                          <iframe
+                            key={soNoPortal.link}
+                            src={soNoPortal.link}
+                            title={`Chat oficial do Compras.gov.br — ${selecionado.licitacaoId}`}
+                            className="absolute inset-0 w-full h-full border-0"
+                            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {!verOficial && (<>
+                    {/* Sem o link público, ou lendo as capturadas: a faixa fica ACIMA da
+                        conversa, e não só no estado vazio. Um pregão com mensagens antigas,
+                        da época em que a sessão gov.br funcionava, também não recebe as
+                        novas, e a pessoa precisa saber disso antes de ler o histórico. */}
+                    {soNoPortal && (
+                      <div className="px-4 py-3 border-b border-amber/30 bg-amber/10 flex items-start gap-3 flex-wrap">
+                        <AlertTriangle size={15} className="text-amber flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1 basis-[260px]">
+                          <p className="text-[12px] font-semibold text-strong">
+                            {soNoPortal.link ? 'Mensagens capturadas quando a leitura ainda funcionava' : 'Este chat fica só no site do Compras.gov.br'}
+                          </p>
+                          <p className="text-[11px] text-muted mt-0.5 leading-snug">
+                            {soNoPortal.link
+                              ? 'As novas ficam só no chat oficial: o portal pede captcha e recusa navegador automatizado, então o Radar não lê nem avisa sobre elas.'
+                              : 'O portal pede captcha e recusa navegador automatizado, então o Radar não lê estas mensagens nem avisa sobre elas. Não temos o link público de acompanhamento desta compra para abri-la aqui.'}
+                          </p>
+                        </div>
+                        {soNoPortal.link ? (
+                          <button type="button" onClick={() => setCapturadasDe(null)}
+                            className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md bg-accent text-black font-semibold hover:bg-accent2 transition-colors flex-shrink-0">
+                            <MessageSquare size={13} /> Ver chat oficial
+                          </button>
+                        ) : (selecionado.linkOrigem || selecionado.linkPortal) ? (
+                          <a href={selecionado.linkOrigem || selecionado.linkPortal!} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong transition-colors flex-shrink-0">
+                            <ExternalLink size={13} /> Acessar local da disputa
+                          </a>
+                        ) : null}
+                      </div>
+                    )}
+                    {/* Portal que nenhum coletor lê. Mesma moldura, sem o quadro: não há
+                        página oficial conhecida para embutir. */}
+                    {semLeitor && (
+                      <div className="px-4 py-3 border-b border-amber/30 bg-amber/10 flex items-start gap-3 flex-wrap">
+                        <AlertTriangle size={15} className="text-amber flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0 flex-1 basis-[260px]">
+                          <p className="text-[12px] font-semibold text-strong">O Radar não lê o chat deste portal</p>
+                          <p className="text-[11px] text-muted mt-0.5 leading-snug">
+                            Nenhum coletor cobre o portal onde este pregão corre, então as mensagens dele não chegam aqui nem geram alerta.
+                            {selecionado.mensagens.length > 0 ? ' As que aparecem abaixo não se atualizam.' : ''}
+                          </p>
+                        </div>
+                        {(selecionado.linkOrigem || selecionado.linkPortal) && (
+                          <a href={selecionado.linkOrigem || selecionado.linkPortal!} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong transition-colors flex-shrink-0">
+                            <ExternalLink size={13} /> Acessar local da disputa
+                          </a>
+                        )}
+                      </div>
+                    )}
 
                     {/* Mensagens */}
                     <div className="flex-1 overflow-y-auto min-h-0 p-4 bg-bg">
@@ -801,11 +951,18 @@ export default function RadarPage() {
                           <div>
                             <MessageSquare size={22} className="text-faint mx-auto mb-2 opacity-50" />
                             <p className="text-[12px] text-muted">Nenhuma mensagem capturada neste pregão ainda</p>
-                            {/* Não afirmar "monitoramento ativo" sem conector conectado. */}
+                            {/* "Monitoramento ativo" só quando um coletor cobre ESTE pregão e algum
+                                portal já foi lido com sucesso. Nos outros casos, o estado real —
+                                e sem mandar para "Conectar portal", que nos portais públicos não
+                                tem o que conectar (a faixa do topo diz a mesma coisa). */}
                             <p className="text-[11px] text-faint mt-1 max-w-[380px]">
-                              {capturaNuncaLigou
-                                ? 'O chat deste pregão não está sendo lido: nenhum conector foi conectado ainda. Conecte um portal para começar a captura.'
-                                : 'O monitoramento está ativo — assim que o pregoeiro escrever no chat, aparece aqui.'}
+                              {soNoPortal
+                                ? 'As mensagens deste pregão não chegam aqui. Acompanhe pelo site oficial.'
+                                : semLeitor
+                                  ? 'O Radar não lê o chat deste portal. Acompanhe pelo local da disputa.'
+                                  : capturaNuncaLigou
+                                    ? 'Este chat ainda não foi lido: nenhum portal foi verificado com sucesso até agora. Veja a saúde dos conectores acima.'
+                                    : 'O monitoramento está ativo — assim que o pregoeiro escrever no chat, aparece aqui.'}
                             </p>
                           </div>
                         </div>
@@ -838,6 +995,7 @@ export default function RadarPage() {
                         )
                       })}
                     </div>
+                    </>)}
                   </>
                 )}
               </div>
@@ -1085,6 +1243,10 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
   const [pubUf, setPubUf] = useState('')
   const [pubLink, setPubLink] = useState('')
   const publico = conectorPublico(conectorId)
+  // Compras.gov.br sem leitura: não há o que conectar nem cadastrar. O formulário de
+  // link levava a uma compra que o coletor nunca consegue ler (captcha), e o cliente
+  // ficava esperando uma captura que não vem. Ver lib/radar/chat-externo.mjs.
+  const soVisualiza = portalSoVisualizacao(conectorId, saude)
   const nomeSel = CONECTORES.find((c) => c.id === conectorId)?.nome ?? conectorId
   const credId = useRef<string | null>(null)
   const poll = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -1273,7 +1435,10 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
                   // descrição, que é onde se descreve o portal.
                   const saudeDo = saude.filter((s) => s.conectorId === c.id)
                   const monitorando = saudeDo.some((s) => s.status === 'ok')
-                  const precisaRever = saudeDo.length > 0 && !monitorando
+                  // "Rever" pedia uma ação que não existe: no portal que o Radar só mostra
+                  // não há sessão a refazer nem link a corrigir.
+                  const soVisual = portalSoVisualizacao(c.id, saude)
+                  const precisaRever = saudeDo.length > 0 && !monitorando && !soVisual
                   const selo = 'text-[8px] font-mono-custom uppercase tracking-wide px-1 py-0.5 rounded flex-shrink-0'
 
                   return (
@@ -1284,6 +1449,8 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
                         <span className="text-[12px] font-semibold text-strong">{c.nome}</span>
                         {monitorando
                           ? <span className={clsx(selo, 'bg-emerald-500/15 text-emerald-400')}>monitorando</span>
+                          : soVisual
+                            ? <span className={clsx(selo, 'bg-bg4 text-faint')}>só visualização</span>
                           : precisaRever
                             ? <span className={clsx(selo, 'bg-amber/15 text-amber')}>rever</span>
                             : c.modoPublico
@@ -1297,7 +1464,21 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
               </div>
             </div>
 
-            {publico ? (
+            {soVisualiza ? (
+              <div className="bg-bg3 border border-subtle2 rounded-lg px-3 py-3 text-[12px] text-muted leading-snug space-y-2">
+                <p>
+                  <strong className="text-strong">Não há nada para conectar no Compras.gov.br.</strong>{' '}
+                  Os pregões dele que a seleção automática encontra pelo seu perfil aparecem na lista, e o{' '}
+                  <strong className="text-strong">chat oficial abre dentro do pregão</strong>, aqui no Radar, quando temos o
+                  link público de acompanhamento da compra. É a página do governo, aberta pelo seu navegador; se ela pedir
+                  captcha, você resolve ali mesmo.
+                </p>
+                <p className="text-[11px] text-faint">
+                  O que o Radar não faz neste portal: ler as mensagens sozinho e avisar por e-mail. O Compras.gov.br exige
+                  captcha e recusa navegador automatizado, e contornar isso seria burlar a proteção do portal.
+                </p>
+              </div>
+            ) : publico ? (
               <>
                 {/* Os dois portais públicos chegam ao processo por caminhos diferentes, e
                     dizer o caminho errado faz o cliente preencher o campo errado: o PCP
@@ -1358,8 +1539,14 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
 
             {erro && <p className="text-[12px] text-red mt-3">{erro}</p>}
             <div className="flex justify-end gap-2 mt-5">
-              <button onClick={() => { pararPoll(); onClose() }} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
-              {publico ? (
+              {soVisualiza ? (
+                <button onClick={() => { pararPoll(); onClose() }} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold">
+                  Entendi
+                </button>
+              ) : (
+                <button onClick={() => { pararPoll(); onClose() }} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
+              )}
+              {soVisualiza ? null : publico ? (
                 <button onClick={adicionarPublico} disabled={salvando || !pubObjeto.trim() || (conectorId !== 'pcp' && !pubLink.trim())} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
                   {salvando && <Loader2 size={13} className="animate-spin" />} Monitorar sem login
                 </button>
