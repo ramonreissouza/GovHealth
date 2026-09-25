@@ -90,6 +90,10 @@ export function chaveRodizio(portalId, titularId) {
  */
 export function explicarRodizio(offset, total) {
   if (!total) return ''
-  if (!offset) return `volta começando do 1º de ${total}`
-  return `volta começando do ${offset + 1}º de ${total} (os anteriores foram lidos na passada passada)`
+  // O MESMO módulo que `rotacionar` aplica. O ponto salvo sobrevive a uma lista que
+  // encolheu (processos encerrados), e sem isto o log dizia "115º de 2" — um início
+  // que não existe, enquanto a lista de fato começava do 2º.
+  const k = ((Math.trunc(Number(offset) || 0) % total) + total) % total
+  if (!k) return `volta começando do 1º de ${total}`
+  return `volta começando do ${k + 1}º de ${total} (os anteriores foram lidos na passada passada)`
 }

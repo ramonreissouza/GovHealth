@@ -478,12 +478,18 @@ try {
             // LE ate no dry-run (o dry so nao ESCREVE): sem isso um `--dry` mostraria a
             // volta sempre comecando do 1o, e quem usa o dry para conferir o rodizio veria
             // exatamente o bug que ele conserta.
-            if (!URGENTES) {
+            //
+            // DESLIGADO COM `--limit`. O limite corta a lista ANTES do rodízio, então o ponto
+            // salvo (medido na lista inteira) apontaria para outro lugar — e, numa passada
+            // real, o módulo pela lista cortada GRAVARIA POR CIMA o ponto de produção. O
+            // `--limit` é ferramenta de teste; ele não pode mexer no estado da passada de verdade.
+            const rodizio = !URGENTES && !LIMIT
+            if (rodizio) {
               const { rows: [cp] } = await consultar(banco,
                 'SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chaveRod])
               offsetRod = cp?.ultima_pagina ?? 0
             }
-            const procs = URGENTES ? procsNaOrdem : rotacionar(procsNaOrdem, offsetRod)
+            const procs = rodizio ? rotacionar(procsNaOrdem, offsetRod) : procsNaOrdem
             const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
             // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
             // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
@@ -504,7 +510,7 @@ try {
             // O rodizio entra no log: rodizio silencioso e indistinguivel de rodizio que
             // nao aconteceu, e a pergunta que alguem vai fazer e "por que o processo X nao
             // foi lido hoje?".
-            const frase = URGENTES ? '' : explicarRodizio(offsetRod, procs.length)
+            const frase = rodizio ? explicarRodizio(offsetRod, procs.length) : (LIMIT && !URGENTES ? 'rodízio desligado com --limit' : '')
             console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})${frase ? ` · ${frase}` : ''}`)
 
             const g = await gravarMensagens(banco, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
@@ -521,7 +527,7 @@ try {
             //
             // Conector que nao informa `lidos` nao roda: melhor manter o comportamento
             // antigo do que girar a lista por um numero inventado.
-            if (!URGENTES && Number.isFinite(Number(resultado.lidos))) {
+            if (rodizio && Number.isFinite(Number(resultado.lidos))) {
               const novo = proximoOffset(offsetRod, Number(resultado.lidos), procs.length)
               await consultar(banco,
                 `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)

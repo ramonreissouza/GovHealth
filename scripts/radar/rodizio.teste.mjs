@@ -113,6 +113,11 @@ const L = ['a', 'b', 'c', 'd', 'e']
   afirmar('frase no meio', explicarRodizio(21, 60),
     'volta começando do 22º de 60 (os anteriores foram lidos na passada passada)')
   afirmar('sem lista, sem frase', explicarRodizio(3, 0), '')
+  // A lista encolheu desde a última passada: a frase diz onde a volta DE FATO começa,
+  // que é o que `rotacionar` faz — não um "115º de 2" que não existe.
+  afirmar('lista encolheu: a frase aplica o mesmo módulo', explicarRodizio(115, 2),
+    'volta começando do 2º de 2 (os anteriores foram lidos na passada passada)')
+  afirmar('frase e rotação concordam', explicarRodizio(115, 2).includes(`${rotacionar([1, 2], 115)[0]}º`), true)
 }
 
 console.log(`\n${ok} ok, ${falhou} falharam\n`)
