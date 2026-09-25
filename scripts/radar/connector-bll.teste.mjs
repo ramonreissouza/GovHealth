@@ -14,7 +14,7 @@
 //
 // O relógio aqui é virtual de propósito: a suíte não dorme e não toca a rede.
 
-import { lerProcesso } from './connector-bll.mjs'
+import { lerProcesso, novoEstadoLeitura, urlDeProcesso, ehCompraDireta, HOSTS_PORTAL, resultadoDaPassada } from './connector-bll.mjs'
 import { PortalRecusou, usarEsperaDeBackoff } from './connector-base.mjs'
 
 usarEsperaDeBackoff(() => 0)
@@ -163,6 +163,112 @@ console.log('\nconnector-bll — a corrida do bootstrap\n')
   const page = paginaFalsa({ status: 404 })
   const r = await lerProcesso(page, 'https://bllcompras.com/Process/ProcessView?param1=x')
   afirmar('404: segue a leitura, não é recusa', r.linhas, LINHAS)
+}
+
+// 8) SEM reCAPTCHA, 60 PÁGINAS. A espera de 20 s é por página: sem memória, isto custava
+//    60 × 20 s = 20 min a mais por tenant. A primeira página paga a espera inteira e
+//    PROVA que o portal não precisa dela (estourou e leu assim mesmo); as outras não.
+{
+  const estado = novoEstadoLeitura()
+  let esperaTotal = 0
+  let lidas = 0
+  for (let i = 0; i < 60; i++) {
+    const page = paginaFalsa({ prontoEm: Infinity })
+    page.locator = () => ({
+      first: () => ({
+        async waitFor() {},
+        async click() { page._est.cliques++; page._est.modalAberto = true; page._est.quadro = LINHAS },
+      }),
+    })
+    const antes = page.waitForFunction.bind(page)
+    page.waitForFunction = async (fn, arg, opts) => {
+      const t0 = page._est.relogio
+      try { return await antes(fn, arg, opts) } finally { esperaTotal += page._est.relogio - t0 }
+    }
+    const r = await lerProcesso(page, 'https://bllcompras.com/Process/ProcessView?param1=x', estado)
+    if (r.linhas) lidas++
+  }
+  afirmar('sem reCAPTCHA: as 60 páginas leem', lidas, 60)
+  afirmar('sem reCAPTCHA: a 1ª paga a espera cheia, as outras 59 a curta', esperaTotal, 20000 + 59 * 2000)
+  afirmar('sem reCAPTCHA: menos de 3 min de espera no total (era 20 min)', esperaTotal < 3 * 60 * 1000, true)
+}
+
+// 9) "O grecaptcha não veio" SOZINHO não prova nada. Se a espera estourou e a leitura
+//    FALHOU, a próxima página tem de esperar cheio de novo — senão uma rede lenta na
+//    primeira página faria as 59 seguintes clicarem cedo, que é o defeito original.
+{
+  const estado = novoEstadoLeitura()
+  const lenta = paginaFalsa({ prontoEm: Infinity, cliquesMortos: 9 })
+  await lerProcesso(lenta, 'https://bllcompras.com/Process/ProcessView?param1=x', estado)
+  afirmar('estourou e falhou: NÃO dispensa o bootstrap', estado.bootstrapDispensavel, false)
+
+  // E se o grecaptcha volta a aparecer, a dispensa é revogada.
+  estado.bootstrapDispensavel = true
+  await lerProcesso(paginaFalsa({ prontoEm: 0 }), 'https://bllcompras.com/Process/ProcessView?param1=x', estado)
+  afirmar('grecaptcha voltou: revoga a dispensa', estado.bootstrapDispensavel, false)
+}
+
+console.log('\nconnector-bll — só navega para o próprio portal (SSRF)\n')
+
+// 10) A validação era `includes('bllcompras') && /\/Process\//`. Tudo abaixo passava, e
+//     a URL vai direto para `page.goto`.
+{
+  const H = HOSTS_PORTAL.bll
+  const casos = [
+    ['https://bllcompras.com/Process/ProcessView?param1=x', true],
+    ['https://www.bllcompras.com/Process/ProcessView?param1=x', true],
+    ['https://BLLCOMPRAS.COM/Process/ProcessView?param1=x', true],
+    ['https://bllcompras.com:443/Process/ProcessView?param1=x', true],
+    ['https://bllcompras.com.exemplo.net/Process/x', false],
+    ['https://exemplo.net/bllcompras.com/Process/x', false],
+    ['https://evilbllcompras.com/Process/x', false],
+    ['https://x.bllcompras.com/Process/x', false],
+    ['http://127.0.0.1/Process/bllcompras.com', false],
+    ['http://bllcompras.com/Process/ProcessView?param1=x', false],
+    ['https://user:senha@bllcompras.com/Process/x', false],
+    ['https://bllcompras.com@127.0.0.1/Process/x', false],
+    ['https://bllcompras.com:8080/Process/x', false],
+    ['https://169.254.169.254/Process/bllcompras.com', false],
+    ['https://bllcompras.com/outra/Process/x', false],
+    ['https://bllcompras.com/Home?volta=/Process/x', false],
+    ['file:///C:/bllcompras.com/Process/x', false],
+    ['javascript:alert(1)//bllcompras.com/Process/', false],
+    ['', false],
+    [null, false],
+  ]
+  for (const [url, esperado] of casos) afirmar(`processo ${esperado ? 'aceita' : 'recusa'} ${url}`, urlDeProcesso(url, H), esperado)
+
+  afirmar('BNC não aceita link do BLL', urlDeProcesso('https://bllcompras.com/Process/x', HOSTS_PORTAL.bnc), false)
+  afirmar('compra direta reconhecida', ehCompraDireta('https://bnccompras.com/DirectBuy/View?param1=x', HOSTS_PORTAL.bnc), true)
+  afirmar('compra direta em host alheio recusada', ehCompraDireta('https://bnccompras.com.evil.io/DirectBuy/x', HOSTS_PORTAL.bnc), false)
+}
+
+console.log('\nconnector-bll — leitura parcial não é ok\n')
+
+// 11) Uma página lida e 59 perdidas davam `ok`: verde na tela e verificado_em avançando
+//     sobre páginas que ninguém abriu.
+{
+  const alvos = Array.from({ length: 60 }, (_, i) => ({ licitacaoId: `L${i}` }))
+  const base = { nome: 'BLL', alvos, comMensagem: 1, recusa: null, truncados: 0, diretas: 0, credencial: {} }
+  const msgs = [{ texto: 'x' }]
+
+  const parcial = resultadoDaPassada({ ...base, mensagens: msgs, falhas: Array.from({ length: 59 }, (_, i) => `L${i + 1}: timeout`) })
+  afirmar('59 de 60 falharam: NÃO é ok', parcial.status, 'falha')
+  afirmar('parcial: preserva o que foi lido', parcial.mensagens.length, 1)
+  afirmar('parcial: diz que foi parcial e quanto', parcial.detalhe.startsWith('leitura parcial: 1 de 60'), true)
+  afirmar('parcial: diz o motivo', parcial.detalhe.includes('L1: timeout'), true)
+
+  const umaSo = resultadoDaPassada({ ...base, mensagens: msgs, falhas: ['L7: a aba "Mensagens" não apareceu na página'] })
+  afirmar('1 de 60 falhou: também não é ok', umaSo.status, 'falha')
+
+  const todas = resultadoDaPassada({ ...base, mensagens: [], falhas: alvos.map((a) => `${a.licitacaoId}: x`) })
+  afirmar('todas falharam: falha', todas.status, 'falha')
+
+  const limpa = resultadoDaPassada({ ...base, mensagens: msgs, falhas: [] })
+  afirmar('nenhuma falha: ok', limpa.status, 'ok')
+
+  const recusa = resultadoDaPassada({ ...base, mensagens: msgs, falhas: [], recusa: { status: 429 } })
+  afirmar('recusa do portal continua portal_indisponivel', recusa.status, 'portal_indisponivel')
 }
 
 console.log(`\n${ok} ok, ${falhou} falharam\n`)

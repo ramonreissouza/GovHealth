@@ -88,6 +88,55 @@ export async function esperarBootstrap(page, timeout = BOOTSTRAP_TIMEOUT_MS) {
 }
 
 /**
+ * Espera curta depois que o portal PROVOU não precisar do bootstrap.
+ *
+ * Sem memória, um BLL sem reCAPTCHA custaria os 20 s inteiros em CADA página: 60 × 20 s
+ * = 20 min a mais por tenant, numa passada sequencial. Só que "o grecaptcha não veio"
+ * sozinho não prova nada — pode ser só uma rede lenta na primeira página, e aí cortar a
+ * espera faria todas as seguintes clicarem cedo demais (o defeito original). A prova é
+ * o par: a espera estourou E a leitura deu certo mesmo assim. Só então a espera encolhe.
+ */
+const BOOTSTRAP_DISPENSADO_MS = 2000
+
+/**
+ * Estado compartilhado entre as páginas de UMA passada (um navegador).
+ * @returns {{ bootstrapDispensavel: boolean }}
+ */
+export function novoEstadoLeitura() {
+  return { bootstrapDispensavel: false }
+}
+
+/**
+ * Hosts aceitos, por extenso. NÃO é `includes(dominio)`: com substring passavam
+ * `https://bllcompras.com.exemplo.net/Process/x` e `http://127.0.0.1/Process/bllcompras.com`
+ * — e a URL vai direto para `page.goto`, ou seja, o worker navegaria para onde o link
+ * mandasse, inclusive para a rede interna dele (SSRF).
+ *
+ * Medido no banco em 25/09/2026: os 332 links de BLL/BNC em radar_processos são todos
+ * `https://bllcompras.com` ou `https://bnccompras.com`. O `www.` entra só por ser o mesmo
+ * site (nenhum link medido usa); qualquer outro subdomínio fica de fora até aparecer.
+ */
+export const HOSTS_PORTAL = {
+  bll: ['bllcompras.com', 'www.bllcompras.com'],
+  bnc: ['bnccompras.com', 'www.bnccompras.com'],
+}
+
+/**
+ * Devolve a URL parseada se ela é HTTPS, sem credencial embutida, na porta padrão e com
+ * o hostname EXATAMENTE numa lista explícita. Qualquer outra coisa: null.
+ */
+export function urlDoPortal(url, hosts) {
+  let u
+  try { u = new URL(String(url ?? '')) } catch { return null }
+  if (u.protocol !== 'https:') return null
+  if (u.username || u.password) return null
+  // `new URL` já normaliza :443 para ''. Qualquer porta que sobre é outro serviço.
+  if (u.port) return null
+  if (!hosts.includes(u.hostname.toLowerCase())) return null
+  return u
+}
+
+/**
  * A URL é uma página de PROCESSO deste portal (e não um link solto do PNCP)?
  *
  * `/DirectBuy/` fica DE FORA de propósito. A compra direta é outra tela: medido em
@@ -96,15 +145,15 @@ export async function esperarBootstrap(page, timeout = BOOTSTRAP_TIMEOUT_MS) {
  * a saúde do conector de falhas permanentes que ninguém pode consertar. `ehCompraDireta`
  * separa esse caso para ele aparecer como o que é.
  */
-export function urlDeProcesso(url, dominio) {
-  const u = String(url ?? '')
-  return u.toLowerCase().includes(dominio) && /\/Process\//i.test(u)
+export function urlDeProcesso(url, hosts) {
+  const u = urlDoPortal(url, hosts)
+  return !!u && /^\/Process\//i.test(u.pathname)
 }
 
 /** Compra direta do BLL/BNC: página pública, mas sem quadro de mensagens. */
-export function ehCompraDireta(url, dominio) {
-  const u = String(url ?? '')
-  return u.toLowerCase().includes(dominio) && /\/DirectBuy\//i.test(u)
+export function ehCompraDireta(url, hosts) {
+  const u = urlDoPortal(url, hosts)
+  return !!u && /^\/DirectBuy\//i.test(u.pathname)
 }
 
 /**
@@ -133,7 +182,7 @@ export async function extrairMensagensBll(page) {
  * Abre a página pública de UM processo e devolve as mensagens.
  * @returns {Promise<{linhas: Array<{texto:string,horario:string}>} | {erro: string}>}
  */
-export async function lerProcesso(page, url) {
+export async function lerProcesso(page, url, estado = novoEstadoLeitura()) {
   // `abrirPagina` (e não `page.goto` cru) porque goto NÃO lança em 403: sem olhar o
   // status, uma recusa do portal chegaria aqui disfarçada de "a aba não apareceu".
   await abrirPagina(page, url, { timeout: 45000, tentativas: 2 })
@@ -147,7 +196,9 @@ export async function lerProcesso(page, url) {
   }
 
   // Visível ≠ pronta. Ver o comentário de BOOTSTRAP_TIMEOUT_MS.
-  await esperarBootstrap(page)
+  const pronto = await esperarBootstrap(page, estado.bootstrapDispensavel ? BOOTSTRAP_DISPENSADO_MS : BOOTSTRAP_TIMEOUT_MS)
+  // Veio o grecaptcha: o portal voltou a depender dele, e a espera volta ao tamanho cheio.
+  if (pronto) estado.bootstrapDispensavel = false
 
   // O modal carrega em dois saltos (view e depois a lista). Esperar o tbody EXISTIR é
   // mais fiel do que esperar um tempo fixo: quando não há mensagem, o tbody aparece
@@ -184,7 +235,67 @@ export async function lerProcesso(page, url) {
   await page.waitForTimeout(3000)
   const linhas = await extrairMensagensBll(page)
   if (linhas === null) return { erro: 'o quadro de mensagens sumiu antes da leitura' }
+  // A espera estourou e a leitura deu certo assim mesmo: agora SIM está provado que este
+  // portal não precisa do bootstrap. Ver BOOTSTRAP_DISPENSADO_MS.
+  if (!pronto) estado.bootstrapDispensavel = true
   return { linhas }
+}
+
+/**
+ * Decide o status da passada a partir do que foi lido. Separado do `sync` para ser
+ * testado sem navegador: é aqui que mora a regra "parcial não é ok".
+ */
+export function resultadoDaPassada({ nome, alvos, mensagens, falhas, comMensagem, recusa, truncados, diretas, credencial }) {
+  // O portal fechou a porta. Não é "falha do conector" nem "sem novidades": é uma
+  // terceira coisa, e dizer qual poupa quem lê de caçar um seletor que está correto.
+  if (recusa) {
+    const lidas = mensagens.length ? ` · ${mensagens.length} mensagem(ns) lida(s) antes disso` : ''
+    return {
+      status: 'portal_indisponivel',
+      mensagens,
+      detalhe: `o ${nome} recusou a conexão (HTTP ${recusa.status}) — parei na 1ª recusa para não insistir contra o bloqueio${lidas}`,
+    }
+  }
+
+  // TODAS as páginas falharam = o portal mudou (ou caiu). Isso NÃO pode virar "ok com
+  // 0 mensagens": é exatamente o silêncio que o cliente leria como "sem novidades".
+  if (falhas.length === alvos.length) {
+    return {
+      status: 'falha',
+      mensagens: [],
+      detalhe: `nenhuma das ${alvos.length} página(s) do ${nome} pôde ser lida — ${falhas[0]}`,
+    }
+  }
+
+  const partes = [`${mensagens.length} mensagem(ns) em ${comMensagem}/${alvos.length} processo(s)`]
+  // COM O MOTIVO. "1 página não lida" e mais nada é o mesmo pecado do diagnóstico
+  // errado, só que menor: quem lê a saúde não tem como saber se foi o portal, a
+  // página ou o conector — e sem isso ninguém investiga uma falha parcial.
+  if (falhas.length) partes.push(`${falhas.length} página(s) não lida(s) — ${falhas[0]}`)
+  if (truncados) partes.push(`${truncados} além do teto de ${TETO_PROCESSOS} nesta passada`)
+  if (diretas) partes.push(`${diretas} compra(s) direta(s) sem quadro de mensagens`)
+  // Dito sempre, para ninguém confundir o log público com a sala de disputa.
+  partes.push('log público (a sala ao vivo exige a sessão do fornecedor)')
+  if (credencial?.storageState) partes.push('sessão salva ainda não usada por este portal')
+
+  // LEITURA PARCIAL NÃO É `ok`. Com `ok`, 59 páginas perdidas e 1 lida deixavam o
+  // conector verde e avançavam `verificado_em` — e a tela então afirmava "sem
+  // novidades" sobre páginas que ninguém abriu, onde podia estar uma convocação.
+  // É o requisito 4.2 ao pé da letra.
+  //
+  // `falha`, e não um status novo: `falha` já é "não verificado" em toda a cadeia
+  // (verificado_em fica parado, a UI não afirma nada). As mensagens lidas SEGUEM —
+  // o orquestrador grava o que veio qualquer que seja o status — e o detalhe diz que
+  // foi parcial e por quê, para ninguém confundir com o portal fora do ar.
+  if (falhas.length) {
+    return {
+      status: 'falha',
+      mensagens,
+      detalhe: `leitura parcial: ${alvos.length - falhas.length} de ${alvos.length} página(s) lida(s) · ${partes.join(' · ')}`,
+    }
+  }
+
+  return { status: 'ok', mensagens, detalhe: partes.join(' · ') }
 }
 
 /**
@@ -193,7 +304,8 @@ export async function lerProcesso(page, url) {
  */
 export function criarConectorBllBnc({ id }) {
   const META = portalMeta(id)
-  const DOMINIO = META.dominio
+  const HOSTS = HOSTS_PORTAL[id]
+  if (!HOSTS) throw new Error(`connector-bll: sem lista de hosts para "${id}" (ver HOSTS_PORTAL)`)
 
   return async function sync({ credencial, processos = [], simulado }) {
     if (simulado) {
@@ -205,8 +317,8 @@ export function criarConectorBllBnc({ id }) {
 
     // Só processos cuja URL é mesmo deste portal. Um link do PNCP ou de outro portal
     // aqui viraria uma navegação inútil e um erro que não diz nada.
-    const todos = processos.filter((p) => urlDeProcesso(p?.urlPublica, DOMINIO))
-    const diretas = processos.filter((p) => ehCompraDireta(p?.urlPublica, DOMINIO)).length
+    const todos = processos.filter((p) => urlDeProcesso(p?.urlPublica, HOSTS))
+    const diretas = processos.filter((p) => ehCompraDireta(p?.urlPublica, HOSTS)).length
     const semUrl = processos.length - todos.length - diretas
     const alvos = todos.slice(0, TETO_PROCESSOS)
     const truncados = todos.length - alvos.length
@@ -235,10 +347,11 @@ export function criarConectorBllBnc({ id }) {
       browser = await withBackoff(() => chromium.launch({ headless: true }))
       const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
       const page = await context.newPage()
+      const estadoLeitura = novoEstadoLeitura()
 
       for (const p of alvos) {
         try {
-          const r = await lerProcesso(page, p.urlPublica)
+          const r = await lerProcesso(page, p.urlPublica, estadoLeitura)
           if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); continue }
           if (r.linhas.length) comMensagem++
           for (const l of r.linhas) {
@@ -277,39 +390,7 @@ export function criarConectorBllBnc({ id }) {
       try { if (browser) await browser.close() } catch { /* ignore */ }
     }
 
-    // O portal fechou a porta. Não é "falha do conector" nem "sem novidades": é uma
-    // terceira coisa, e dizer qual poupa quem lê de caçar um seletor que está correto.
-    if (recusa) {
-      const lidas = mensagens.length ? ` · ${mensagens.length} mensagem(ns) lida(s) antes disso` : ''
-      return {
-        status: 'portal_indisponivel',
-        mensagens,
-        detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — parei na 1ª recusa para não insistir contra o bloqueio${lidas}`,
-      }
-    }
-
-    // TODAS as páginas falharam = o portal mudou (ou caiu). Isso NÃO pode virar "ok com
-    // 0 mensagens": é exatamente o silêncio que o cliente leria como "sem novidades".
-    if (falhas.length === alvos.length) {
-      return {
-        status: 'falha',
-        mensagens: [],
-        detalhe: `nenhuma das ${alvos.length} página(s) do ${META.nome} pôde ser lida — ${falhas[0]}`,
-      }
-    }
-
-    const partes = [`${mensagens.length} mensagem(ns) em ${comMensagem}/${alvos.length} processo(s)`]
-    // COM O MOTIVO. "1 página não lida" e mais nada é o mesmo pecado do diagnóstico
-    // errado, só que menor: quem lê a saúde não tem como saber se foi o portal, a
-    // página ou o conector — e sem isso ninguém investiga uma falha parcial.
-    if (falhas.length) partes.push(`${falhas.length} página(s) não lida(s) — ${falhas[0]}`)
-    if (truncados) partes.push(`${truncados} além do teto de ${TETO_PROCESSOS} nesta passada`)
-    if (diretas) partes.push(`${diretas} compra(s) direta(s) sem quadro de mensagens`)
-    // Dito sempre, para ninguém confundir o log público com a sala de disputa.
-    partes.push('log público (a sala ao vivo exige a sessão do fornecedor)')
-    if (credencial?.storageState) partes.push('sessão salva ainda não usada por este portal')
-
-    return { status: 'ok', mensagens, detalhe: partes.join(' · ') }
+    return resultadoDaPassada({ nome: META.nome, alvos, mensagens, falhas, comMensagem, recusa, truncados, diretas, credencial })
   }
 }
 
