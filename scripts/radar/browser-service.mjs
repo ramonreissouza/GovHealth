@@ -15,6 +15,7 @@ import crypto from 'node:crypto'
 import { criarSessao, idDe, cdpUrlDe, cdpUrlDaSessaoViva, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
 import { encrypt } from './capture.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
+import { criarLimitador, respostaLimite } from './limite-credencial.mjs'
 import { PORTAIS } from './portais.mjs'
 import { sslParaHost } from '../lib/pg-ssl.mjs'
 
@@ -355,6 +356,12 @@ function repassar(req, res, caminho, token) {
   req.pipe(r)
 }
 
+// Limite POR CONEXÃO e por rota. Não fica no nginx por IP: quem chama estas rotas é o
+// servidor do Next, então todo tenant chega com o IP da Vercel e dividiria um balde
+// só. Ver limite-credencial.mjs.
+const LIMITADOR = criarLimitador()
+const ROTAS = { '/session': 'session', '/capture': 'capture', '/cancel': 'cancel' }
+
 const server = http.createServer(async (req, res) => {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)) }
 
@@ -381,6 +388,13 @@ const server = http.createServer(async (req, res) => {
   const body = await readBody(req)
   const id = body.credencialId
   if (!id) return send(400, { erro: 'credencialId obrigatório' })
+  const rota = ROTAS[req.url]
+  if (!rota) return send(404, { erro: 'rota' })
+  const limite = LIMITADOR.permitir(rota, String(id))
+  if (!limite.ok) {
+    res.setHeader('Retry-After', String(limite.retryAfter))
+    return send(429, respostaLimite(rota, limite.retryAfter))
+  }
   try {
     let r
     if (req.url === '/session') r = await iniciar(id)

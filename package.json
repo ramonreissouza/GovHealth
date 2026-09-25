@@ -29,6 +29,7 @@
     "pncp:breaker:teste": "node scripts/pncp-breaker.teste.mjs",
     "cobertura:regua:teste": "node scripts/cobertura-regua.teste.mjs",
     "radar:pista:teste": "node scripts/radar/pista-navegador.teste.mjs",
+    "radar:limite:teste": "node scripts/radar/limite-credencial.teste.mjs",
     "radar:egovrs:teste": "node scripts/radar/connector-egovrs.teste.mjs",
     "radar:comprasbr:teste": "node scripts/radar/connector-comprasbr.teste.mjs",
     "radar:licitacoes-e:teste": "node scripts/radar/connector-licitacoes-e.teste.mjs",
