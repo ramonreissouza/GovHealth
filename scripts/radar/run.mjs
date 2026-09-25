@@ -13,12 +13,12 @@
 
 import fs from 'node:fs'
 import crypto from 'node:crypto'
-import pg from 'pg'
 import { conectorSync } from './registry.mjs'
 import { PORTAIS_PUBLICOS } from './portais.mjs'
 import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 import { sessaoTemCredencial } from './capture.mjs'
-import { sslParaHost } from '../lib/pg-ssl.mjs'
+import { novoPool } from '../lib/pg-ssl.mjs'
+import { consultar, emTransacao } from './banco-resiliente.mjs'
 
 // ── env ────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -124,7 +124,7 @@ const prioridadeDe = (cats) => (cats.some((c) => ALTA.has(c)) ? 'alta' : cats.le
 // ── PCP público: resolve a URL pública de cada processo (manual > auto-resolver) ─
 // link_portal já apontando p/ /processos do PCP = link colado pelo cliente (fallback).
 // Sem link → tenta o auto-resolver e, se achar com confiança, CACHEIA em link_portal.
-async function resolverUrlsPCP(client, processos, dry) {
+async function resolverUrlsPCP(banco, processos, dry) {
   const mapaUrl = new Map()
   for (const p of processos) {
     const manual = (p.link_portal || '').includes('portaldecompraspublicas.com.br/processos') ? p.link_portal : null
@@ -134,7 +134,7 @@ async function resolverUrlsPCP(client, processos, dry) {
       if (achado?.url) {
         mapaUrl.set(p.licitacao_id, achado.url)
         console.log(`    ↳ PCP resolvido (conf ${achado.confianca}) p/ "${(p.titulo || p.licitacao_id).slice(0, 50)}": ${achado.candidato.numero}/${achado.candidato.uf}`)
-        if (!dry) await client.query(`UPDATE radar_processos SET link_portal = $2, atualizado_em = now() WHERE id = $1`, [p.id, achado.url])
+        if (!dry) await banco.query(`UPDATE radar_processos SET link_portal = $2, atualizado_em = now() WHERE id = $1`, [p.id, achado.url])
       } else {
         console.log(`    ↳ PCP sem match confiável p/ "${(p.titulo || p.licitacao_id).slice(0, 50)}" — precisa do link manual (${PCP_BASE_PROCESSOS})`)
       }
@@ -197,7 +197,7 @@ function classificarSoPadroes(texto) {
 
 // ── Persiste mensagens novas + enfileira notificações (compartilhado pelos dois
 // caminhos: credencial e público). Retorna {total, novas}. Respeita DRY. ─────────
-async function gravarMensagens(client, ctx, mensagens) {
+async function gravarMensagens(banco, ctx, mensagens) {
   const { titularId, conectorId, cnpj, mapa, regras, destinatario } = ctx
   let total = 0, novas = 0, emails = 0, contidas = 0
   // Cópia ordenada: quem decide o que vira e-mail é a atenção que a mensagem merece,
@@ -211,52 +211,82 @@ async function gravarMensagens(client, ctx, mensagens) {
     const hash = msgHash({ conectorId, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem })
     total++
     if (DRY) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
-    const { rows: ins } = await client.query(
-      `INSERT INTO radar_mensagens
-         (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13)
-       ON CONFLICT (msg_hash) DO NOTHING
-       RETURNING id`,
-      [hash, titularId, proc.id, conectorId, cnpj, m.licitacaoId, m.autor, m.texto,
-       JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade],
-    )
-    if (!ins.length) continue // já existia (dedup)
-    novas++
-    const msgId = ins[0].id
     const assunto = proc.titulo || m.licitacaoId
     // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
     const jaMandou = porProcesso.get(proc.id) ?? 0
-    if (valeEmail(m.horarioOrigem) && jaMandou >= TETO_EMAIL_PROCESSO) contidas++
-    if (valeEmail(m.horarioOrigem) && jaMandou < TETO_EMAIL_PROCESSO) {
-      porProcesso.set(proc.id, jaMandou + 1)
-      await client.query(
-        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
-         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
-        [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+    const querEmail = valeEmail(m.horarioOrigem) && jaMandou < TETO_EMAIL_PROCESSO
+    // A MENSAGEM E OS ALERTAS DELA SÃO UMA COISA SÓ. Com instruções soltas, uma queda
+    // entre o INSERT da mensagem e o das notificações deixava o `msg_hash` gravado e o
+    // alerta não — e a rodada seguinte, achando o hash, nunca o recriava. Ver
+    // emTransacao em banco-resiliente.mjs. Contadores ficam FORA: numa repetição da
+    // transação, dentro dela seriam contados duas vezes.
+    const gravada = await emTransacao(banco, async (db) => {
+      const { rows: ins } = await db.query(
+        `INSERT INTO radar_mensagens
+           (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13)
+         ON CONFLICT (msg_hash) DO NOTHING
+         RETURNING id`,
+        [hash, titularId, proc.id, conectorId, cnpj, m.licitacaoId, m.autor, m.texto,
+         JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade],
       )
-      emails++
-    }
-    await client.query(
-      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
-       VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
-      [`nm:${msgId}:app`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
-    )
-    await client.query(
-      `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
-       VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
-      [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
-    )
+      if (!ins.length) return false // já existia (dedup) — e, com a transação, JÁ COM os alertas
+      const msgId = ins[0].id
+      if (querEmail) {
+        await db.query(
+          `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
+           VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
+          [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+        )
+      }
+      await db.query(
+        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
+         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
+        [`nm:${msgId}:app`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+      )
+      await db.query(
+        `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+         VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
+        [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
+      )
+      return true
+    })
+    if (!gravada) continue
+    novas++
+    if (querEmail) { porProcesso.set(proc.id, jaMandou + 1); emails++ }
+    else if (valeEmail(m.horarioOrigem)) contidas++
   }
   return { total, novas, emails, contidas }
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
-const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: sslParaHost(process.env.DATABASE_URL) })
-await client.connect()
+// POOL, e não `pg.Client` — pelo MESMO motivo já documentado em connect-service.mjs
+// em 20/08/2026, que na época foi corrigido lá e não aqui.
+//
+// O PgBouncer derruba conexão ociosa. Num `pg.Client` sem handler de 'error', esse
+// ECONNRESET vira exceção NÃO TRATADA e o Node ENCERRA O PROCESSO no meio da passada:
+//
+//   node:events:486   throw er; // Unhandled 'error' event
+//   Error: Connection terminated unexpectedly   (pg/lib/banco.js:204)
+//
+// Aconteceu 12 vezes no radar.log. E a passada é SEQUENCIAL, então morrer no meio não
+// atrasa um conector: apaga todos os que ainda não tiveram vez. Era isso que deixava
+// BLL, Licitanet e PCP com "sem verificar há 21 h" enquanto o BNC estava verde — eles
+// não falhavam, eles nunca chegavam a ser tentados.
+//
+// O pool troca a conexão morta por outra sozinho; o handler abaixo impede que o evento
+// suba. `max: 3` porque a passada é sequencial — não há o que paralelizar aqui.
+//
+// O handler cobre SÓ a conexão ociosa. A que cai com uma consulta EM CURSO rejeita a
+// promise, e sem mais nada isso subia ao catch global e apagava a fila do mesmo jeito.
+// Por isso, além dele: `consultar` (retry curto no que é idempotente, ver
+// banco-resiliente.mjs) e um try/catch por conector nos dois laços abaixo.
+const banco = novoPool(process.env.DATABASE_URL, { max: 3, idleTimeoutMillis: 10_000 })
+banco.on('error', (e) => console.error('aviso: conexao do pool caiu e foi descartada:', e?.message ?? e))
 
 let totalMsgs = 0, novasMsgs = 0, emailsMsgs = 0, contidasMsgs = 0, conectores = 0
 try {
-  const { rows: creds } = await client.query(
+  const { rows: creds } = await consultar(banco,
     `SELECT c.id, c.titular_id, c.user_id, c.conector_id, c.cnpj, c.login, c.cred_cipher, c.storage_state
        FROM radar_credenciais c
        LEFT JOIN radar_saude s ON s.credencial_id = c.id
@@ -271,122 +301,130 @@ try {
   // Passada de urgência com fila vazia é o caso NORMAL — a maioria das rodadas de 20
   // min não tem sessão à porta. Sai antes de qualquer navegador subir.
   if (URGENTES) {
-    const { rows: [{ n }] } = await client.query(
+    const { rows: [{ n }] } = await consultar(banco,
       `SELECT count(*)::int n FROM radar_processos p
         WHERE p.status = 'ativo' AND p.mutado = false${FILTRO_URGENTE}`)
     if (!n) {
       console.log('✓ Radar urgente: nenhum processo com sessão entre ontem e amanhã. Nada a fazer.')
-      await client.end()
+      await banco.end()
       process.exit(0)
     }
     console.log(`→ ${n} processo(s) com sessão à porta`)
   }
 
   for (const cred of (ONLY_PUBLICO ? [] : creds)) {
-    conectores++
-    const inicio = Date.now()
-
-    // Processos ativos (não silenciados) do tenant p/ este conector.
-    const { rows: processos } = await client.query(
-      `SELECT p.id, p.licitacao_id, p.titulo, p.uf, p.link_portal FROM radar_processos p
-        WHERE p.titular_id = $1 AND p.conector_id = $2 AND p.status = 'ativo' AND p.mutado = false${filtro}`,
-      [cred.titular_id, cred.conector_id],
-    )
-    const mapa = new Map(processos.map((p) => [p.licitacao_id, p]))
-
-    // Nada urgente para esta credencial: não abre navegador nem toca no portal. Só na
-    // passada de urgência — na completa, rodar com lista vazia ainda serve para
-    // atualizar a saúde do conector.
-    if (URGENTES && !processos.length) {
-      console.log(`  · ${cred.conector_id}/${cred.cnpj}: nenhum processo com sessão à porta — pulando`)
-      continue
-    }
-
-    // PCP: resolve a URL pública de cada processo (manual > auto), p/ o modo público.
-    const urlPublicaPorLic = cred.conector_id === 'pcp' ? await resolverUrlsPCP(client, processos, DRY) : new Map()
-
-    // Regras do tenant (+ globais) e destinatário dos alertas.
-    const { rows: regras } = await client.query(
-      `SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`,
-      [cred.titular_id],
-    )
-    const { rows: [tit] } = await client.query(`SELECT email FROM usuarios WHERE id = $1`, [cred.titular_id])
-    const destinatario = tit?.email ?? cred.titular_id
-
-    // Decifra e roda o conector.
-    let resultado
     try {
-      // Modelo padrão = sessão capturada (storage_state). `cred_cipher` (senha) é
-      // legado/opcional e pode ser NULL — só decifra se existir.
-      const credencial = SIMULADO
-        ? { login: cred.login }
-        : {
-            login: cred.login,
-            senha: cred.cred_cipher ? decrypt(cred.cred_cipher) : undefined,
-            storageState: cred.storage_state ? decrypt(cred.storage_state) : undefined,
-          }
-      const sync = conectorSync(cred.conector_id)
-      if (!sync) {
-        resultado = { status: 'falha', detalhe: `conector desconhecido: ${cred.conector_id}`, mensagens: [] }
-      } else {
-        resultado = await sync({
-          credencial,
-          processos: processos.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })),
-          simulado: SIMULADO,
-        })
+      conectores++
+      const inicio = Date.now()
+
+      // Processos ativos (não silenciados) do tenant p/ este conector.
+      const { rows: processos } = await consultar(banco,
+        `SELECT p.id, p.licitacao_id, p.titulo, p.uf, p.link_portal FROM radar_processos p
+          WHERE p.titular_id = $1 AND p.conector_id = $2 AND p.status = 'ativo' AND p.mutado = false${filtro}`,
+        [cred.titular_id, cred.conector_id],
+      )
+      const mapa = new Map(processos.map((p) => [p.licitacao_id, p]))
+
+      // Nada urgente para esta credencial: não abre navegador nem toca no portal. Só na
+      // passada de urgência — na completa, rodar com lista vazia ainda serve para
+      // atualizar a saúde do conector.
+      if (URGENTES && !processos.length) {
+        console.log(`  · ${cred.conector_id}/${cred.cnpj}: nenhum processo com sessão à porta — pulando`)
+        continue
+      }
+
+      // PCP: resolve a URL pública de cada processo (manual > auto), p/ o modo público.
+      const urlPublicaPorLic = cred.conector_id === 'pcp' ? await resolverUrlsPCP(banco, processos, DRY) : new Map()
+
+      // Regras do tenant (+ globais) e destinatário dos alertas.
+      const { rows: regras } = await consultar(banco,
+        `SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`,
+        [cred.titular_id],
+      )
+      const { rows: [tit] } = await consultar(banco, `SELECT email FROM usuarios WHERE id = $1`, [cred.titular_id])
+      const destinatario = tit?.email ?? cred.titular_id
+
+      // Decifra e roda o conector.
+      let resultado
+      try {
+        // Modelo padrão = sessão capturada (storage_state). `cred_cipher` (senha) é
+        // legado/opcional e pode ser NULL — só decifra se existir.
+        const credencial = SIMULADO
+          ? { login: cred.login }
+          : {
+              login: cred.login,
+              senha: cred.cred_cipher ? decrypt(cred.cred_cipher) : undefined,
+              storageState: cred.storage_state ? decrypt(cred.storage_state) : undefined,
+            }
+        const sync = conectorSync(cred.conector_id)
+        if (!sync) {
+          resultado = { status: 'falha', detalhe: `conector desconhecido: ${cred.conector_id}`, mensagens: [] }
+        } else {
+          resultado = await sync({
+            credencial,
+            processos: processos.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })),
+            simulado: SIMULADO,
+          })
+        }
+      } catch (e) {
+        resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] }
+      }
+
+      console.log(`  · ${cred.conector_id}/${cred.cnpj}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
+
+      // Grava mensagens novas + enfileira notificações (helper compartilhado).
+      const g = await gravarMensagens(banco, { titularId: cred.titular_id, conectorId: cred.conector_id, cnpj: cred.cnpj, mapa, regras, destinatario }, resultado.mensagens)
+      totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas
+
+      // Saúde do conector (requisito 4.2): verificado_em só avança em 'ok'.
+      if (!DRY) {
+        const okAgora = resultado.status === 'ok'
+        // Persiste sessão renovada (cifrada) quando o conector devolveu storageState.
+        // NUNCA regravar o cofre com algo PIOR do que ele já tem.
+        //
+        // Esta gravação existe para renovar a sessão, mas não conferia o que estava
+        // renovando. Em 13/09/2026 custou a sessão de um cliente: o conector reportou
+        // `ok` por engano (olhava a SPA antes de renderizar), devolveu o estado de um
+        // navegador que nunca logou, e a passada seguinte salvou por cima — os 11 cookies
+        // do login viraram dois cookies do Google Analytics.
+        //
+        // Regra: sessão sem cookie de credencial não substitui sessão existente. Perder a
+        // renovação custa uma reconexão; perder o cofre custa o cliente refazer o login.
+        const renovacaoUtil = resultado.storageState && sessaoTemCredencial(resultado.storageState)
+        if (okAgora && resultado.storageState && !renovacaoUtil) {
+          console.warn(`    (renovação DESCARTADA: a sessão devolvida não tem cookie de credencial — cofre preservado)`)
+        }
+        if (okAgora && renovacaoUtil && !SIMULADO) {
+          try {
+            const raw = process.env.RADAR_CRED_KEY
+            const key = Buffer.from(raw.trim(), 'hex')
+            const iv = crypto.randomBytes(12)
+            const c = crypto.createCipheriv('aes-256-gcm', key, iv)
+            const ctb = Buffer.concat([c.update(resultado.storageState, 'utf8'), c.final()])
+            const blob = `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${ctb.toString('base64')}`
+            await consultar(banco, `UPDATE radar_credenciais SET storage_state = $2, atualizado_em = now() WHERE id = $1`, [cred.id, blob])
+          } catch (e) { console.warn('    (não foi possível salvar a sessão):', e.message) }
+        }
+        await consultar(banco,
+          `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, duracao_ms, atualizado_em)
+           VALUES ($1,$2,$3,$4, ${okAgora ? 'now()' : 'NULL'}, now(), $5, $6, now())
+           -- O predicado NÃO é decoração: radar_saude_cred_uq é um índice único PARCIAL
+           -- (WHERE credencial_id IS NOT NULL), e o Postgres só infere índice parcial se
+           -- o ON CONFLICT repetir o predicado. Sem ele, 42P10 — era o que derrubava
+           -- TODA passada do Radar desde que a PK virou índice parcial.
+           ON CONFLICT (credencial_id) WHERE credencial_id IS NOT NULL DO UPDATE SET
+             status = EXCLUDED.status,
+             verificado_em = ${okAgora ? 'now()' : 'radar_saude.verificado_em'},
+             tentado_em = now(), detalhe = EXCLUDED.detalhe, duracao_ms = EXCLUDED.duracao_ms, atualizado_em = now()`,
+          [cred.id, cred.titular_id, cred.conector_id, resultado.status, resultado.detalhe ?? null, Date.now() - inicio],
+        )
       }
     } catch (e) {
-      resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] }
-    }
-
-    console.log(`  · ${cred.conector_id}/${cred.cnpj}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
-
-    // Grava mensagens novas + enfileira notificações (helper compartilhado).
-    const g = await gravarMensagens(client, { titularId: cred.titular_id, conectorId: cred.conector_id, cnpj: cred.cnpj, mapa, regras, destinatario }, resultado.mensagens)
-    totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas
-
-    // Saúde do conector (requisito 4.2): verificado_em só avança em 'ok'.
-    if (!DRY) {
-      const okAgora = resultado.status === 'ok'
-      // Persiste sessão renovada (cifrada) quando o conector devolveu storageState.
-      // NUNCA regravar o cofre com algo PIOR do que ele já tem.
-      //
-      // Esta gravação existe para renovar a sessão, mas não conferia o que estava
-      // renovando. Em 13/09/2026 custou a sessão de um cliente: o conector reportou
-      // `ok` por engano (olhava a SPA antes de renderizar), devolveu o estado de um
-      // navegador que nunca logou, e a passada seguinte salvou por cima — os 11 cookies
-      // do login viraram dois cookies do Google Analytics.
-      //
-      // Regra: sessão sem cookie de credencial não substitui sessão existente. Perder a
-      // renovação custa uma reconexão; perder o cofre custa o cliente refazer o login.
-      const renovacaoUtil = resultado.storageState && sessaoTemCredencial(resultado.storageState)
-      if (okAgora && resultado.storageState && !renovacaoUtil) {
-        console.warn(`    (renovação DESCARTADA: a sessão devolvida não tem cookie de credencial — cofre preservado)`)
-      }
-      if (okAgora && renovacaoUtil && !SIMULADO) {
-        try {
-          const raw = process.env.RADAR_CRED_KEY
-          const key = Buffer.from(raw.trim(), 'hex')
-          const iv = crypto.randomBytes(12)
-          const c = crypto.createCipheriv('aes-256-gcm', key, iv)
-          const ctb = Buffer.concat([c.update(resultado.storageState, 'utf8'), c.final()])
-          const blob = `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${ctb.toString('base64')}`
-          await client.query(`UPDATE radar_credenciais SET storage_state = $2, atualizado_em = now() WHERE id = $1`, [cred.id, blob])
-        } catch (e) { console.warn('    (não foi possível salvar a sessão):', e.message) }
-      }
-      await client.query(
-        `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, duracao_ms, atualizado_em)
-         VALUES ($1,$2,$3,$4, ${okAgora ? 'now()' : 'NULL'}, now(), $5, $6, now())
-         -- O predicado NÃO é decoração: radar_saude_cred_uq é um índice único PARCIAL
-         -- (WHERE credencial_id IS NOT NULL), e o Postgres só infere índice parcial se
-         -- o ON CONFLICT repetir o predicado. Sem ele, 42P10 — era o que derrubava
-         -- TODA passada do Radar desde que a PK virou índice parcial.
-         ON CONFLICT (credencial_id) WHERE credencial_id IS NOT NULL DO UPDATE SET
-           status = EXCLUDED.status,
-           verificado_em = ${okAgora ? 'now()' : 'radar_saude.verificado_em'},
-           tentado_em = now(), detalhe = EXCLUDED.detalhe, duracao_ms = EXCLUDED.duracao_ms, atualizado_em = now()`,
-        [cred.id, cred.titular_id, cred.conector_id, resultado.status, resultado.detalhe ?? null, Date.now() - inicio],
-      )
+      // UM conector caiu (quase sempre a conexão com o banco, já depois do retry).
+      // Não é motivo para os que ainda não tiveram vez ficarem sem passada: era
+      // exatamente assim que a fila inteira sumia. Fica o erro, e segue a fila.
+      console.error(`  ✗ ${cred.conector_id}/${cred.cnpj}: a passada deste conector caiu — ${String(e?.message ?? e).slice(0, 180)}`)
+      process.exitCode = 1
     }
   }
 
@@ -400,67 +438,82 @@ try {
   // dele (quem conectou sessão já foi atendido no laço acima, em modo híbrido).
   if (!SIMULADO) {
     for (const portalId of PORTAIS_PUBLICOS) {
-      const { rows: pubProcs } = await client.query(
-        `SELECT p.id, p.titular_id, p.licitacao_id, p.titulo, p.uf, p.link_portal
-           FROM radar_processos p
-           LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
-          WHERE p.conector_id = $1 AND p.status = 'ativo' AND p.mutado = false
-            AND NOT EXISTS (SELECT 1 FROM radar_credenciais cr
-                            WHERE cr.titular_id = p.titular_id AND cr.conector_id = $1 AND cr.ativo = true)${filtro}
-          -- A ORDEM É POLÍTICA, NÃO ENFEITE. Ler a página pública custa ~12 s por
-          -- processo e o conector tem teto por passada; então o que está perto da sessão
-          -- vai primeiro, e o teto corta a cauda fria em vez de sortear quem fica de fora.
-          -- Processo sem data casada em contratacoes (metade deles, medido) vai ao fim,
-          -- não fica de fora.
-          ORDER BY (coalesce(c.data_encerramento_proposta, c.data_abertura_proposta) IS NULL),
-                   abs(coalesce(c.data_encerramento_proposta, c.data_abertura_proposta) - current_date),
-                   p.criado_em DESC`,
-        [portalId],
-      )
-      const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs
-      const porTitular = new Map()
-      for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
-      if (porTitular.size) console.log(`→ ${portalId} público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
-
-      const syncPortal = conectorSync(portalId)
-      for (const [titularId, procs] of porTitular) {
-        conectores++
-        const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
-        // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
-        // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
-        // gravado pela seleção a partir do `link_externo` do PNCP.
-        const urlPublicaPorLic = portalId === 'pcp'
-          ? await resolverUrlsPCP(client, procs, DRY)
-          : new Map(procs.filter((p) => p.link_portal).map((p) => [p.licitacao_id, p.link_portal]))
-        const { rows: regras } = await client.query(`SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
-        const { rows: [tit] } = await client.query(`SELECT email FROM usuarios WHERE id = $1`, [titularId])
-        const destinatario = tit?.email ?? titularId
-
-        let resultado
-        try {
-          resultado = syncPortal
-            ? await syncPortal({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
-            : { status: 'falha', detalhe: `conector ${portalId} ausente`, mensagens: [] }
-        } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
-        console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
-
-        const g = await gravarMensagens(client, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
-        totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas; contidasMsgs += g.contidas
-
-        // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
-        // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
-        // configurado" — se contradizendo na cara do usuário.
-        if (DRY) continue
-        const okPub = resultado.status === 'ok'
-        await client.query(
-          `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
-           VALUES (NULL,$1,$2,$3, ${okPub ? 'now()' : 'NULL'}, now(), $4, now())
-           ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
-             status = EXCLUDED.status,
-             verificado_em = ${okPub ? 'now()' : 'radar_saude.verificado_em'},
-             tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
-          [titularId, portalId, resultado.status, resultado.detalhe ?? null],
+      try {
+        const { rows: pubProcs } = await consultar(banco,
+          `SELECT p.id, p.titular_id, p.licitacao_id, p.titulo, p.uf, p.link_portal
+             FROM radar_processos p
+             LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
+            WHERE p.conector_id = $1 AND p.status = 'ativo' AND p.mutado = false
+              AND NOT EXISTS (SELECT 1 FROM radar_credenciais cr
+                              WHERE cr.titular_id = p.titular_id AND cr.conector_id = $1 AND cr.ativo = true)${filtro}
+            -- A ORDEM É POLÍTICA, NÃO ENFEITE. Ler a página pública custa ~12 s por
+            -- processo e o conector tem teto por passada; então o que está perto da sessão
+            -- vai primeiro, e o teto corta a cauda fria em vez de sortear quem fica de fora.
+            -- Processo sem data casada em contratacoes (metade deles, medido) vai ao fim,
+            -- não fica de fora.
+            ORDER BY (coalesce(c.data_encerramento_proposta, c.data_abertura_proposta) IS NULL),
+                     abs(coalesce(c.data_encerramento_proposta, c.data_abertura_proposta) - current_date),
+                     p.criado_em DESC`,
+          [portalId],
         )
+        const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs
+        const porTitular = new Map()
+        for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
+        if (porTitular.size) console.log(`→ ${portalId} público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
+
+        const syncPortal = conectorSync(portalId)
+        for (const [titularId, procs] of porTitular) {
+          try {
+            conectores++
+            const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
+            // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
+            // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
+            // gravado pela seleção a partir do `link_externo` do PNCP.
+            const urlPublicaPorLic = portalId === 'pcp'
+              ? await resolverUrlsPCP(banco, procs, DRY)
+              : new Map(procs.filter((p) => p.link_portal).map((p) => [p.licitacao_id, p.link_portal]))
+            const { rows: regras } = await consultar(banco, `SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
+            const { rows: [tit] } = await consultar(banco, `SELECT email FROM usuarios WHERE id = $1`, [titularId])
+            const destinatario = tit?.email ?? titularId
+
+            let resultado
+            try {
+              resultado = syncPortal
+                ? await syncPortal({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
+                : { status: 'falha', detalhe: `conector ${portalId} ausente`, mensagens: [] }
+            } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
+            console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})`)
+
+            const g = await gravarMensagens(banco, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
+            totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas
+
+            // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
+            // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
+            // configurado" — se contradizendo na cara do usuário.
+            if (DRY) continue
+            const okPub = resultado.status === 'ok'
+            await consultar(banco,
+              `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
+               VALUES (NULL,$1,$2,$3, ${okPub ? 'now()' : 'NULL'}, now(), $4, now())
+               ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
+                 status = EXCLUDED.status,
+                 verificado_em = ${okPub ? 'now()' : 'radar_saude.verificado_em'},
+                 tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
+              [titularId, portalId, resultado.status, resultado.detalhe ?? null],
+            )
+          } catch (e) {
+            // UM conector caiu (quase sempre a conexão com o banco, já depois do retry).
+            // Não é motivo para os que ainda não tiveram vez ficarem sem passada: era
+            // exatamente assim que a fila inteira sumia. Fica o erro, e segue a fila.
+            console.error(`  ✗ ${portalId}[público]/${titularId}: a passada deste conector caiu — ${String(e?.message ?? e).slice(0, 180)}`)
+            process.exitCode = 1
+          }
+        }
+      } catch (e) {
+        // O mesmo isolamento, um nível acima: aqui o que cai é a consulta do PORTAL
+        // (a lista de processos), e o próximo portal público ainda tem de rodar.
+        console.error(`  ✗ ${portalId}[público]: a passada deste conector caiu — ${String(e?.message ?? e).slice(0, 180)}`)
+        process.exitCode = 1
       }
     }
   }
@@ -470,5 +523,5 @@ try {
   console.error('Falha no Radar sync:', e)
   process.exitCode = 1
 } finally {
-  await client.end()
+  await banco.end()
 }
