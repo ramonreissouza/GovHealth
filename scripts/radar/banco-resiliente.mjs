@@ -13,12 +13,15 @@
 //   2. o run.mjs isola cada conector num try/catch — o que ainda assim falhar derruba
 //      aquele conector, não a fila.
 //
-// POR QUE NÃO REPETIR TUDO. `gravarMensagens` decide se notifica pelo RETURNING do
-// INSERT … ON CONFLICT DO NOTHING. Se a primeira tentativa gravou e só a resposta se
-// perdeu, a repetição volta vazia, a mensagem passa por "já existia" e o cliente NUNCA
-// recebe o alerta. Repetir ali trocaria uma passada interrompida por um alerta perdido
-// em silêncio — pior, porque ninguém fica sabendo. Por isso a gravação de mensagens
-// fica de fora e é protegida só pelo isolamento.
+// POR QUE NÃO REPETIR INSTRUÇÃO SOLTA. `gravarMensagens` decide se notifica pelo
+// RETURNING do INSERT … ON CONFLICT DO NOTHING. Com as instruções soltas, uma queda
+// DEPOIS do INSERT da mensagem e ANTES das notificações deixava a mensagem gravada e o
+// alerta não: a rodada seguinte achava o `msg_hash`, passava por "já existia", e o
+// cliente NUNCA recebia o alerta — em silêncio (revisão da #34, 2ª rodada).
+//
+// A saída é `emTransacao`: a mensagem, as notificações e a auditoria dela entram JUNTAS
+// ou não entram. Aí repetir é seguro — se o COMMIT se perdeu na volta mas aconteceu,
+// tudo já está lá (a repetição só encontra o hash); se não aconteceu, tudo é refeito.
 
 // Códigos de "a conexão sumiu", não de "a consulta está errada". Erro de SQL, de
 // permissão ou de constraint NÃO entra: repetir não conserta, só esconde.
@@ -61,6 +64,40 @@ export async function comRetry(fn, { tentativas = 3, esperasMs = [500, 2000], do
     }
   }
   throw ultimo
+}
+
+/**
+ * Roda `fn(client)` numa transação própria, repetindo a transação INTEIRA em erro de
+ * conexão. `fn` recebe o client e deve devolver o resultado; efeitos fora do banco
+ * (contadores, mapas) ficam com quem chamou, DEPOIS do retorno — dentro de `fn` eles
+ * seriam contados duas vezes numa repetição.
+ *
+ * Se `banco` já é um client em transação de quem chamou (tem `release`: é um PoolClient,
+ * como o do `transacaoPublica`), não abre outra — a atomicidade já é a da transação de
+ * fora. Só um Pool (tem `connect` e não `release`) ganha transação própria.
+ */
+export async function emTransacao(banco, fn, opts = {}) {
+  if (typeof banco?.release === 'function' || typeof banco?.connect !== 'function') return fn(banco)
+  return comRetry(async () => {
+    const client = await banco.connect()
+    let quebrou = null
+    try {
+      await client.query('BEGIN')
+      const r = await fn(client)
+      await client.query('COMMIT')
+      return r
+    } catch (e) {
+      quebrou = e
+      await client.query('ROLLBACK').catch(() => {})
+      throw e
+    } finally {
+      // Conexão que caiu não volta para o pool: `release(erro)` a descarta.
+      client.release(quebrou && erroTransitorio(quebrou) ? quebrou : undefined)
+    }
+  }, {
+    aoRepetir: (e, n) => console.warn(`    (conexão caiu no meio da gravação — refazendo a transação, tentativa ${n + 1}: ${e?.code ?? e?.message ?? e})`),
+    ...opts,
+  })
 }
 
 /** `banco.query` com retry — atalho para as leituras e upserts do run.mjs. */
