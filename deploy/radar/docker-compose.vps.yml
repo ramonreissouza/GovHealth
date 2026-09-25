@@ -1,6 +1,22 @@
 # deploy/radar/docker-compose.vps.yml — a pilha do Radar numa VPS.
 #
-#   docker compose -f deploy/radar/docker-compose.vps.yml up -d --build
+# ── DUAS TOPOLOGIAS, escolha pelo perfil ─────────────────────────────────────
+#
+# A) VPS COMPARTILHADA com o app (é o caso de govhealth.techealth.com.br). O nginx
+#    do SISTEMA já tem as portas 80/443 e passa a servir também o `radar.*`:
+#
+#      docker compose -f deploy/radar/docker-compose.vps.yml up -d --build
+#
+#    Sobem só steel + browser-service; o serviço fica em 127.0.0.1:3200 e quem
+#    termina o TLS é o host, com o site deploy/app/nginx/radar.conf.
+#
+# B) VPS DEDICADA ao Radar, sem nginx de sistema. Aí o compose traz o seu próprio
+#    nginx com TLS e renovação automática:
+#
+#      docker compose -f deploy/radar/docker-compose.vps.yml --profile nginx-proprio up -d --build
+#
+#    Sem o `--profile`, nginx e certbot não sobem — de propósito: na topologia (A)
+#    eles colidiriam com o nginx do host em "address already in use".
 #
 # Diferença para o docker-compose.radar.yml da raiz (que é o de desenvolvimento, na
 # máquina do operador): aqui o steel NÃO publica porta nenhuma, entra um nginx com TLS
@@ -44,6 +60,18 @@ services:
     restart: unless-stopped
     networks: [interna]
     depends_on: [steel]
+    # Só é usada na topologia "nginx do host" (ver o cabeçalho deste arquivo). Com o
+    # nginx do compose (perfil `nginx-proprio`) esta linha é inofensiva mas inútil:
+    # lá quem alcança o serviço é o container vizinho, pela rede `interna`.
+    #
+    # O PREFIXO `127.0.0.1:` NÃO É ENFEITE. Escrito como "3200:3200", o Docker
+    # publicaria em 0.0.0.0 e escreveria a regra direto no iptables, PASSANDO POR
+    # CIMA do firewall da nuvem — um `ufw deny 3200` não salvaria. A porta ficaria
+    # na internet, e quem fala com ela cria sessão de navegador e lê o live view.
+    # É a mesma armadilha documentada no `steel` acima, só que aqui precisamos de
+    # uma porta: então ela existe, mas apenas para a loopback da própria VPS.
+    ports:
+      - '127.0.0.1:3200:3200'
     # DATABASE_URL, RADAR_CRED_KEY, RADAR_CONNECT_TOKEN e RADAR_PUBLIC_URL vêm daqui.
     # O serviço recusa subir sem os três primeiros (exit 1), o que é o comportamento
     # certo: melhor não subir do que subir sem cofre.
@@ -57,7 +85,22 @@ services:
     mem_limit: 512m
 
   # ── A porta de entrada: TLS, WebSocket e lista de rotas permitidas ──────────
+  #
+  # SÓ SOBEM COM O PERFIL `nginx-proprio`, e isso é deliberado:
+  #
+  #   docker compose -f deploy/radar/docker-compose.vps.yml --profile nginx-proprio up -d
+  #
+  # Estes dois publicam 80 e 443 NO HOST. Na VPS onde o app já roda, essas portas
+  # são do nginx do sistema (que serve govhealth.techealth.com.br e o tecsuply) —
+  # os containers simplesmente não sobem, com "address already in use". Por isso o
+  # padrão passou a ser NÃO subi-los: quem termina o TLS é o nginx do host, com o
+  # site deploy/app/nginx/radar.conf, que repassa para 127.0.0.1:3200.
+  #
+  # O perfil continua aqui porque a outra topologia é legítima: numa VPS dedicada
+  # só ao Radar, sem nginx de sistema, este par é a forma mais simples de ter TLS
+  # e renovação automática sem instalar nada no host.
   nginx:
+    profiles: ['nginx-proprio']
     image: nginx:1.27-alpine
     container_name: radar-nginx
     restart: unless-stopped
@@ -77,6 +120,10 @@ services:
 
   # ── Renovação do certificado ────────────────────────────────────────────────
   certbot:
+    # Mesmo perfil do nginx: sem o nginx do compose não há webroot para o desafio.
+    # Na topologia do nginx do host quem renova é o certbot DO HOST, o mesmo que já
+    # renova govhealth.techealth.com.br.
+    profiles: ['nginx-proprio']
     image: certbot/certbot:latest
     container_name: radar-certbot
     restart: unless-stopped
