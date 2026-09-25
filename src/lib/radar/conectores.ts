@@ -7,7 +7,7 @@
 //   página pública; não pede credencial). É o caso do PCP: monitoramos o andamento
 //   (convocação, habilitação, recurso, prazo, homologação) de graça; a sessão do
 //   próprio cliente só é necessária para a sala AO VIVO (lances em tempo real).
-// Compras.gov.br usa captura de sessão (login gov.br). PCP, BLL, BNC, Licitanet,
+// Compras.gov.br lê o painel público de mensagens. PCP, BLL, BNC, Licitanet,
 // AMM Licita e Licitações-e são públicos.
 
 export interface Conector {
@@ -44,9 +44,10 @@ export const CONECTORES: Conector[] = [
   {
     id: 'comprasgov',
     nome: 'Compras.gov.br',
-    descricao: 'Portal federal (ex-ComprasNet). Login via gov.br.',
+    descricao: 'Piloto de mensagens públicas, sem tarifa de API. Pode exigir CAPTCHA manual no modo assistido. Conteúdo restrito não está incluído.',
     disponivel: true,
-    leitura: 'chat', // a área logada tem as mensagens do certame
+    modoPublico: true,
+    leitura: 'chat',
   },
   {
     id: 'pcp',
@@ -224,6 +225,14 @@ export function licitacaoDoPortal(
 ): boolean {
   const c = POR_ID.get(conectorId)
   if (!c) return false
+  if (conectorId === 'comprasgov') {
+    try {
+      const url = new URL(lic.link_externo ?? '')
+      return ['http:', 'https:'].includes(url.protocol) &&
+        (url.hostname === 'cnetmobile.estaleiro.serpro.gov.br' ||
+         ['comprasnet.gov.br', 'compras.gov.br'].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`)))
+    } catch { return false }
+  }
   const link = (lic.link_externo ?? '').toLowerCase()
   if (c.dominio && link.includes(c.dominio)) return true
   const objeto = (lic.objeto_compra ?? '').trim().toLowerCase()

@@ -9,6 +9,7 @@ import { tenantDe } from '@/lib/radar/db'
 import { sincronizarSelecao, filtrosDoSetup } from '@/lib/radar/selecao'
 import { resolverPortal } from '@/lib/portais'
 import { cofreDisponivel } from '@/lib/radar/crypto'
+import { saudeComprasgov } from '@/lib/radar/comprasgov'
 
 export const runtime = 'nodejs'
 // O trabalho do `after()` corre DENTRO desta invocação e gasta deste mesmo orçamento.
@@ -209,9 +210,11 @@ export async function GET(req: NextRequest) {
   }>(
     `SELECT s.credencial_id, s.conector_id, c.cnpj, s.status, s.verificado_em, s.tentado_em, s.detalhe
        FROM radar_saude s LEFT JOIN radar_credenciais c ON c.id = s.credencial_id
-      WHERE s.titular_id = $1`,
+      WHERE s.titular_id = $1 AND s.conector_id <> 'comprasgov'`,
     [t.titularId],
   )
+
+  saude.push(await saudeComprasgov(t.titularId))
 
   return NextResponse.json({
     mensagens,
@@ -226,8 +229,8 @@ export async function GET(req: NextRequest) {
       // PORTAL REAL onde a sessão roda, derivado do que o PNCP entregou. Distinto de
       // `conectorId`, que é quem CAPTURA o chat: o selo deixa de dizer Compras.gov
       // para um pregão que na verdade acontece na Licitanet/BNC/BLL.
-      portal: resolverPortal({ linkExterno: p.link_externo, objeto: p.objeto, fonte: p.fonte }),
-      linkOrigem: p.link_externo,
+      portal: resolverPortal({ linkExterno: p.link_externo ?? (p.origem === 'manual' ? p.link_portal : null), objeto: p.objeto, fonte: p.fonte }),
+      linkOrigem: p.link_externo ?? (p.origem === 'manual' ? p.link_portal : null),
       // "Monitorado por mim" × "por todos": quem cadastrou/recebeu a seleção.
       meu: p.user_id === t.userId,
     })),

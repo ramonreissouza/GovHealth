@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
+import { saudeComprasgov } from '@/lib/radar/comprasgov'
 
 export const runtime = 'nodejs'
 
@@ -13,9 +14,9 @@ export async function GET(req: NextRequest) {
   const rows = await query(
     `SELECT s.credencial_id, s.conector_id, c.cnpj, s.status, s.verificado_em, s.tentado_em, s.detalhe, s.duracao_ms
        FROM radar_saude s LEFT JOIN radar_credenciais c ON c.id = s.credencial_id
-      WHERE s.titular_id = $1
+      WHERE s.titular_id = $1 AND s.conector_id <> 'comprasgov'
       ORDER BY c.cnpj`,
     [t.titularId],
   )
-  return NextResponse.json({ conectores: rows })
+  return NextResponse.json({ conectores: [...rows, await saudeComprasgov(t.titularId)] })
 }

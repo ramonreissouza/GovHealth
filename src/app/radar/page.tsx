@@ -1306,7 +1306,9 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
                 <p className="text-[12px] text-muted mb-4">
                   O {nomeSel} publica o <strong className="text-strong">andamento de cada processo</strong> numa página pública —
                   monitoramos <strong className="text-strong">sem login</strong>.{' '}
-                  {conectorId === 'pcp'
+                  {conectorId === 'comprasgov'
+                    ? <>O Compras.gov.br está em piloto. Cole o link de acompanhamento da compra. O portal pode exigir CAPTCHA mesmo sem login; nesse caso, a coleta precisa de intervenção no modo assistido.</>
+                    : conectorId === 'pcp'
                     ? <>Informe o objeto e a UF; nós achamos o processo automaticamente. Se não acharmos com segurança, cole o link do processo no portal.</>
                     : <>As licitações deste portal já entram sozinhas pelo seu perfil, com o link do processo que o próprio PNCP publica. Use este formulário só para acompanhar um processo <strong className="text-strong">fora do perfil</strong> — aí precisamos do link da página dele.</>}
                 </p>
@@ -1319,8 +1321,9 @@ function ConectarModal({ capacidades, saude, onClose, onSaved }: {
                     placeholder={conectorId === 'pcp' ? 'cole aqui se souber a URL exata do processo' : 'cole a URL da página do processo no portal'} />
                 </div>
                 <p className="text-[11px] text-faint mt-3 leading-snug">
-                  A sala <strong>ao vivo</strong> (lances em tempo real) usa a sua própria sessão do portal e entra numa próxima etapa —
-                  o andamento público já avisa convocação, habilitação, recurso, prazo e homologação.
+                  {conectorId === 'comprasgov'
+                    ? <>Cadastrar o link não confirma a conexão. A saúde do conector indicará a primeira leitura, bloqueios ou histórico parcial. Somente mensagens públicas são cobertas; mantenha o acompanhamento oficial enquanto o piloto não confirmar a captura.</>
+                    : <>A sala <strong>ao vivo</strong> (lances em tempo real) usa a sua própria sessão do portal e entra numa próxima etapa — o andamento público já avisa convocação, habilitação, recurso, prazo e homologação.</>}
                 </p>
               </>
             ) : conectorDisponivel(conectorId) && !capacidades.cofre ? (

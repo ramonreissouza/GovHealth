@@ -95,3 +95,26 @@ COPY src ./src
 
 USER nextjs
 CMD ["npx", "tsx", "src/worker/index.ts"]
+
+# Coletor oficial, sem navegador. Habilitado pelo profile radar-comprasgov.
+FROM worker AS radar-comprasgov
+COPY scripts/lib/pg-ssl.mjs ./scripts/lib/pg-ssl.mjs
+COPY scripts/radar/connector-comprasgov-api.mjs scripts/radar/comprasgov-persistencia.mjs scripts/radar/run-comprasgov-api.mjs scripts/radar/serve-comprasgov-api.mjs ./scripts/radar/
+COPY scripts/migrate-radar-comprasgov.mjs ./scripts/migrate-radar-comprasgov.mjs
+COPY db/schema-radar-comprasgov.sql ./db/schema-radar-comprasgov.sql
+CMD ["node", "scripts/radar/serve-comprasgov-api.mjs"]
+
+# Coletor gratuito: Chromium e bibliotecas oficiais no Debian (sem Alpine).
+FROM node:24-bookworm-slim AS radar-comprasgov-publico
+WORKDIR /app
+ENV NODE_ENV=production PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev && npx playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
+COPY scripts/radar ./scripts/radar
+COPY scripts/lib ./scripts/lib
+COPY scripts/migrate-radar-publico.mjs ./scripts/migrate-radar-publico.mjs
+COPY src/lib/radar ./src/lib/radar
+COPY db/schema-radar-publico.sql ./db/schema-radar-publico.sql
+USER node
+CMD ["node", "scripts/radar/serve-comprasgov-publico.mjs"]
