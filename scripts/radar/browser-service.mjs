@@ -14,6 +14,7 @@ import net from 'node:net'
 import crypto from 'node:crypto'
 import { criarSessao, idDe, cdpUrlDe, cdpUrlDaSessaoViva, encerrarSessao, sessaoAtivaId, ACOMPANHAMENTO_URL } from './steel.mjs'
 import { encrypt } from './capture.mjs'
+import { concluirCaptura } from './captura-hospedada.mjs'
 import { pegar, anotarSessao, podeCapturar, donoDoToken, soltar } from './pista-navegador.mjs'
 import { PORTAIS } from './portais.mjs'
 import { sslParaHost } from '../lib/pg-ssl.mjs'
@@ -220,45 +221,11 @@ async function capturar(credencialId) {
       await pagInicial.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {})
     }
 
-    const url = ctx.pages()[0]?.url() ?? ''
-    const estado = await ctx.storageState()
-    const storageState = JSON.stringify(estado)
-    // Lido o cofre, o navegador não guarda mais nada de ninguém. Se falhar daqui para
-    // baixo, o pior caso é o fornecedor refazer o login — nunca outro herdar a sessão.
-    const pagina = ctx.pages()[0]
-    if (pagina) await limparEstado(ctx, pagina)
-    await browser.close()
-
-    // URL NÃO PROVA LOGIN — e este projeto já pagou por isso uma vez (o falso
-    // "conectado" do Radar). Medido em 11/09/2026 contra o steel real: uma sessão em
-    // que NINGUÉM logou parou em `/comprasnet-web/seguro/acompanhamento`, que não casa
-    // com nenhum padrão de login. Só pela URL, o serviço declararia sucesso, cifraria
-    // um cofre VAZIO e marcaria a saúde como ok. O fornecedor veria "Conectado ao
-    // gov.br" e o monitoramento nunca traria uma mensagem.
-    //
-    // O sinal que não mente é o cofre ter conteúdo: sessão autenticada TEM cookie.
-    // Zero cookie é, com certeza, login não concluído — e é a checagem barata que
-    // pega o caso comum de "cliquei em já concluí antes de terminar".
-    const emLogin = /acesso\.gov\.br|sso\.|\/login|autenticacao/i.test(url)
-    const semCookie = !estado.cookies?.length
-
-    if (emLogin || semCookie) {
-      const porque = semCookie ? 'nenhum cookie de sessão — o login não foi concluído' : 'ainda na tela de login do gov.br'
-      await marcarSaude(cred, 'sessao_expirada', `Login ainda não concluído: ${porque}`)
-      return { status: 200, conexao: 'conectando', aviso: porque }
-    }
-
-    await q(`UPDATE radar_credenciais SET storage_state=$2, metodo='sessao', conexao_status='conectado', conexao_detalhe=NULL, ativo=true, atualizado_em=now() WHERE id=$1`,
-      [cred.id, encrypt(KEY, storageState)])
-    await marcarSaude(cred, 'ok', 'sessão capturada via gov.br (navegador hospedado)')
-    await q(`INSERT INTO radar_auditoria (titular_id,acao,entidade,entidade_id,detalhe) VALUES ($1,'cred_conectada','radar_credenciais',$2,$3::jsonb)`,
-      [cred.titular_id, cred.id, JSON.stringify({ via: 'hosted' })])
-    await encerrarSessao(cred.conexao_session_id).catch(() => {})
-    // Pista livre e token morto no mesmo instante em que a sessão é gravada: o live
-    // view não pode sobreviver à captura, senão o link continuaria abrindo um
-    // navegador autenticado depois de o fornecedor achar que terminou.
-    soltar(credencialId)
-    return { status: 200, conexao: 'conectado' }
+    // Decidir, limpar e gravar — NESSA ordem. Ver captura-hospedada.mjs.
+    return await concluirCaptura({ ctx, browser, cred, credencialId }, {
+      limparEstado, q, marcarSaude, encerrarSessao, soltar,
+      cifrar: (json) => encrypt(KEY, json),
+    })
   } catch (e) {
     await q(`UPDATE radar_credenciais SET conexao_status='erro', conexao_detalhe=$2 WHERE id=$1`, [cred.id, String(e.message).slice(0, 180)])
     return { erro: e.message, status: 502 }

@@ -6,6 +6,7 @@
 
 import crypto from 'node:crypto'
 import { portalMeta } from './portais.mjs'
+import { serializarSessaoRecortada, resumoDescarte } from './sessao-escopo.mjs'
 
 export const ACOMPANHAMENTO_URL = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/seguro/fornecedor'
 
@@ -144,8 +145,24 @@ export async function capturarSessaoPortal(conectorId, { waitS = 300, onAbrir } 
       }
       return { status: 'sessao_expirada', detalhe: `Login no ${meta.nome} não concluído dentro do tempo — tente novamente` }
     }
-    const storageState = JSON.stringify(await context.storageState())
+    // RECORTE ANTES DE SAIR DAQUI. O que a função devolve é o que vai ser cifrado no
+    // cofre — então é aqui, e não no chamador, que o cookie do Login Único tem de
+    // morrer. Ver scripts/radar/sessao-escopo.mjs.
+    const recorte = serializarSessaoRecortada(
+      await context.storageState(), conectorId,
+      { aoDescartar: (d) => console.log(`  [sessao] fora do escopo do ${conectorId}, descartado: ${resumoDescarte(d)}`) },
+    )
+    const storageState = recorte.json
     await browser.close()
+    // Portal sem política de domínios: o recorte falhou FECHADO e não sobrou nada. Dizer
+    // "sessão inválida, refaça o login" aqui mandaria o fornecedor repetir um login que
+    // estava certo, para sempre — o defeito é de cadastro do portal, e é isso que se diz.
+    if (recorte.semLista) {
+      return {
+        status: 'falha',
+        detalhe: `O ${meta.nome} não tem domínios de sessão definidos — por segurança nada foi guardado (ver scripts/radar/sessao-escopo.mjs)`,
+      }
+    }
     // Rede de segurança contra falso "ok" (ver sessaoTemCredencial): o detector do
     // portal pode acertar a URL e ainda assim não haver sessão nenhuma.
     if (!sessaoTemCredencial(storageState)) {
@@ -154,7 +171,9 @@ export async function capturarSessaoPortal(conectorId, { waitS = 300, onAbrir } 
         detalhe: `A janela do ${meta.nome} não terminou com uma sessão válida (nenhum cookie/token de login) — refaça a conexão e conclua o login`,
       }
     }
-    return { status: 'ok', detalhe: `sessão capturada via login no ${meta.nome}`, storageState }
+    // `bypassSso` sobe para quem GRAVA (connect.mjs, connect-service.mjs), que é quem tem
+    // banco para registrar o uso em radar_auditoria. Ver auditarBypassSso.
+    return { status: 'ok', detalhe: `sessão capturada via login no ${meta.nome}`, storageState, bypassSso: recorte.bypassSso === true }
   } catch (e) {
     try { if (browser) await browser.close() } catch { /* ignore */ }
     const msg = String(e?.message ?? e).slice(0, 180)

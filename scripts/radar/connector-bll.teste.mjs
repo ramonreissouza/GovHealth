@@ -269,6 +269,21 @@ console.log('\nconnector-bll — leitura parcial não é ok\n')
 
   const recusa = resultadoDaPassada({ ...base, mensagens: msgs, falhas: [], recusa: { status: 429 } })
   afirmar('recusa do portal continua portal_indisponivel', recusa.status, 'portal_indisponivel')
+
+  // O rodízio (rodizio.mjs) avança por `lidos`. Se a regra do status o perdesse, a
+  // passada seguinte recomeçaria do 1º — o defeito que o rodízio existe para matar.
+  const comLidos = resultadoDaPassada({ ...base, mensagens: msgs, falhas: ['L9: x'], lidos: 59 })
+  afirmar('parcial: carrega `lidos` para o rodízio', comLidos.lidos, 59)
+  afirmar('ok: carrega `lidos`', resultadoDaPassada({ ...base, mensagens: msgs, falhas: [], lidos: 60 }).lidos, 60)
+  afirmar('recusa: carrega `lidos`', resultadoDaPassada({ ...base, mensagens: msgs, falhas: [], lidos: 21, recusa: { status: 429 } }).lidos, 21)
+
+  // E `consumidos`, que é o que o rodízio avança agora (revisão da #38). Em TODOS os
+  // ramos — inclusive "todas falharam", que é justamente o lote que prendia o ponto.
+  const cons = (extra) => resultadoDaPassada({ ...base, mensagens: msgs, falhas: [], consumidos: 60, ...extra }).consumidos
+  afirmar('ok: carrega `consumidos`', cons({}), 60)
+  afirmar('parcial: carrega `consumidos`', cons({ falhas: ['L1: x'] }), 60)
+  afirmar('todas falharam: carrega `consumidos`', cons({ mensagens: [], falhas: alvos.map((a) => `${a.licitacaoId}: x`) }), 60)
+  afirmar('recusa: carrega `consumidos`', cons({ consumidos: 21, recusa: { status: 429 } }), 21)
 }
 
 console.log(`\n${ok} ok, ${falhou} falharam\n`)

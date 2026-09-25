@@ -31,6 +31,7 @@
 
 import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff, abrirPagina, PortalRecusou } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
+import { contadorDeConsumo } from './rodizio.mjs'
 
 const META = portalMeta('licitanet')
 const UA_NAVEGADOR =
@@ -158,11 +159,15 @@ export async function sync({ credencial, processos = [], simulado }) {
   const semUrl = processos.length - todos.length
   const alvos = todos.slice(0, TETO_PROCESSOS)
   const truncados = todos.length - alvos.length
+  // Posições da lista RECEBIDA que esta passada consumiu — é o que o rodízio avança.
+  // Ver contadorDeConsumo em rodizio.mjs: falha local consome, recusa não.
+  const consumo = contadorDeConsumo(processos)
 
   if (!alvos.length) {
     return {
       status: 'ok',
       mensagens: [],
+      consumidos: processos.length,
       detalhe: `nenhum processo com sessão pública do ${META.nome} nesta passada${semUrl ? ` (${semUrl} sem link /sessao/)` : ''}`,
     }
   }
@@ -189,8 +194,9 @@ export async function sync({ credencial, processos = [], simulado }) {
     for (const p of alvos) {
       try {
         const r = await lerSessao(page, p.urlPublica)
-        if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); continue }
+        if (r.erro) { falhas.push(`${p.licitacaoId}: ${r.erro}`); consumo.consumiu(p); continue }
         lidos++
+        consumo.consumiu(p)
         if (r.linhas.length) comMensagem++
         for (const l of r.linhas) {
           mensagens.push(
@@ -205,8 +211,9 @@ export async function sync({ credencial, processos = [], simulado }) {
         // para nós inteiro, não para este processo: as outras 59 tentativas seriam
         // 59 páginas de erro — e, se a regra do WAF for por taxa, renovariam o
         // bloqueio em vez de esperá-lo passar.
-        if (e instanceof PortalRecusou) { recusa = e; recusadoNestaRodada = e.status; break }
+        if (e instanceof PortalRecusou) { consumo.parouEm(p); recusa = e; recusadoNestaRodada = e.status; break }
         falhas.push(`${p.licitacaoId}: ${String(e?.message ?? e).slice(0, 80)}`)
+        consumo.consumiu(p)
       }
     }
   } catch (e) {
@@ -229,11 +236,19 @@ export async function sync({ credencial, processos = [], simulado }) {
   // dizer "o nosso conector quebrou" e manda consertar código que está certo.
   // As mensagens lidas ANTES da recusa vão junto — foram lidas de verdade —, mas o
   // status continua sendo de incerteza, porque o resto da passada não aconteceu.
+  if (!recusa && !truncados) consumo.tudo()
+
   if (recusa) {
     const parcial = lidos ? `${lidos} de ${alvos.length} processo(s) lidos antes` : 'nenhuma página foi lida'
     return {
       status: 'portal_indisponivel',
       mensagens,
+      // QUANTOS FORAM LIDOS DE VERDADE, para o rodizio da proxima passada comecar
+      // DEPOIS deles. Sem este numero o run.mjs nao tem como saber onde o portal
+      // cortou, e a passada seguinte recomeca do mesmo primeiro — foi assim que os
+      // processos 22 a 60 nunca eram lidos. Ver scripts/radar/rodizio.mjs.
+      lidos,
+      consumidos: consumo.valor,
       detalhe: `o ${META.nome} recusou a conexão (HTTP ${recusa.status}) — ${parcial}; parei na 1ª recusa para não insistir contra o bloqueio`,
     }
   }
@@ -242,6 +257,8 @@ export async function sync({ credencial, processos = [], simulado }) {
     return {
       status: 'falha',
       mensagens: [],
+      lidos,
+      consumidos: consumo.valor,
       detalhe: `nenhuma das ${alvos.length} sessão(ões) do ${META.nome} pôde ser lida — ${falhas[0]}`,
     }
   }
@@ -254,5 +271,7 @@ export async function sync({ credencial, processos = [], simulado }) {
   partes.push('painel público (as mais recentes da sessão)')
   if (credencial?.storageState) partes.push('sessão salva ainda não usada por este portal')
 
-  return { status: 'ok', mensagens, detalhe: partes.join(' · ') }
+  // `lidos` tambem no caminho feliz: a passada que le tudo faz o rodizio dar a volta
+  // inteira e voltar ao inicio, em vez de ficar parado achando que nada aconteceu.
+  return { status: 'ok', mensagens, lidos, consumidos: consumo.valor, detalhe: partes.join(' · ') }
 }

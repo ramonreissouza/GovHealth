@@ -25,7 +25,7 @@ import { clsx } from 'clsx'
 import {
   Radar, AlertTriangle, ExternalLink, X, Check, Plus, Loader2, Bell,
   Search, Star, Archive, ArchiveRestore, CheckCheck, MessageSquare, Paperclip,
-  Inbox as InboxIcon, MoreVertical, RefreshCw, Info, BellOff, Settings,
+  Inbox as InboxIcon, MoreVertical, RefreshCw, Info, BellOff, Settings, Gavel,
 } from 'lucide-react'
 import { CONECTORES, conectorDisponivel, conectorPublico } from '@/lib/radar/conectores'
 import { destacar, temChave } from '@/lib/radar/destaque'
@@ -47,6 +47,8 @@ interface Mensagem {
 interface ProcessoApi {
   id: string; conectorId: string; cnpj: string; licitacaoId: string; titulo: string | null
   uf: string | null; valor: number | null; prioridade: string; mutado: boolean; origem: string
+  /** O fornecedor disse que entrou NESTE pregao. Nao e deducao nossa — ver schema-radar.sql. */
+  participando: boolean
   linkPortal: string | null; atualizadoEm: string
   orgao: string | null; municipio: string | null; modalidade: string | null
   prazo: string | null; abertura: string | null; situacao: 'aberta' | 'encerrada'; meu: boolean
@@ -71,6 +73,12 @@ interface Inbox {
 /** Pregão + sua conversa, já ordenada. */
 interface Processo extends ProcessoApi {
   mensagens: Mensagem[]
+  /**
+   * Card montado SO a partir das mensagens, porque o processo nao veio na lista da
+   * rota. Nao tem orgao, prazo, situacao nem `participando` — e quem depende desses
+   * campos precisa saber que eles nao existem, em vez de ler o valor inventado.
+   */
+  orfao: boolean
   naoLidas: number
   ultima: Mensagem | null
   prioridadeAlta: boolean
@@ -90,6 +98,7 @@ function montarProcessos(data: Inbox): Processo[] {
     porProcesso.delete(p.id)
     return {
       ...p,
+      orfao: false,
       mensagens: msgs,
       naoLidas: msgs.filter((m) => !m.lida).length,
       ultima: msgs[msgs.length - 1] ?? null,
@@ -105,6 +114,9 @@ function montarProcessos(data: Inbox): Processo[] {
     procs.push({
       id, conectorId: u.conector_id, cnpj: u.cnpj, licitacaoId: u.licitacao_id,
       titulo: u.titulo, uf: null, valor: null, prioridade: u.prioridade, mutado: false,
+      // `false` aqui NAO e medicao, e o valor que sobrou por nao termos o processo.
+      // `orfao: true` ao lado e o que impede a tela de trata-lo como resposta.
+      participando: false, orfao: true,
       origem: 'auto', linkPortal: u.link_portal, atualizadoEm: u.capturado_em,
       orgao: null, municipio: null, modalidade: null, prazo: null, abertura: null,
       situacao: 'aberta', meu: true, portal: u.conector_id, linkOrigem: null,
@@ -212,7 +224,7 @@ const FLAGS_KEY = 'radar_flags_v1'
 function lerFlags(): Flags { try { return JSON.parse(localStorage.getItem(FLAGS_KEY) || '{}') } catch { return {} } }
 function salvarFlags(f: Flags) { try { localStorage.setItem(FLAGS_KEY, JSON.stringify(f)) } catch { /* quota */ } }
 
-type Filtro = 'todos' | 'nao_lidas' | 'importantes' | 'desativados' | 'arquivados'
+type Filtro = 'todos' | 'nao_lidas' | 'participando' | 'importantes' | 'desativados' | 'arquivados'
 
 // Quantos cards a lista desenha por vez. A seleção é automática e rende centenas de
 // pregões (o titular de teste tem 309, outro 547): montar todos de uma vez fazia cada
@@ -222,6 +234,7 @@ const POR_PAGINA = 60
 const FILTRO_LABEL: Record<Filtro, string> = {
   todos: 'Todos os pregões monitorados',
   nao_lidas: 'Somente com mensagem não lida',
+  participando: 'Somente em que estou participando',
   importantes: 'Somente marcados como importante',
   desativados: 'Monitoramento desativado',
   arquivados: 'Arquivados',
@@ -351,6 +364,23 @@ export default function RadarPage() {
     })
   }
 
+  // UM TOQUE, SEM CONFIRMACAO. O estado troca na tela antes da resposta e volta
+  // sozinho se o servidor recusar — marcar participacao e barato de desfazer, e um
+  // modal de confirmacao aqui so faria o fornecedor deixar de marcar.
+  async function alternarParticipacao(p: Processo) {
+    const participando = !p.participando
+    setData((d) => d ? { ...d, processos: d.processos.map((x) => x.id === p.id ? { ...x, participando } : x) } : d)
+    try {
+      const r = await fetch('/api/radar/processos', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, participando }),
+      })
+      if (!r.ok) throw new Error(String(r.status))
+    } catch {
+      setData((d) => d ? { ...d, processos: d.processos.map((x) => x.id === p.id ? { ...x, participando: !participando } : x) } : d)
+    }
+  }
+
   /** Liga/desliga o monitoramento de um pregão (kebab do benchmark). */
   async function alternarMonitoramento(p: Processo) {
     const mutado = !p.mutado
@@ -389,6 +419,7 @@ export default function RadarPage() {
       if (filtro === 'arquivados') { if (!arq) return false } else if (arq) return false
       if (filtro === 'desativados') { if (!p.mutado) return false } else if (p.mutado && filtro !== 'todos') return false
       if (filtro === 'nao_lidas' && p.naoLidas === 0) return false
+      if (filtro === 'participando' && !p.participando) return false
       if (filtro === 'importantes' && !imp) return false
       if (portalFiltro && p.portal !== portalFiltro) return false
       if (categoria && !p.mensagens.some((m) => m.categorias.includes(categoria))) return false
@@ -405,6 +436,7 @@ export default function RadarPage() {
     return {
       todos: ativos.length,
       nao_lidas: ativos.filter((p) => p.naoLidas > 0 && !p.mutado).length,
+      participando: ativos.filter((p) => p.participando).length,
       importantes: ativos.filter((p) => flags[p.id]?.importante).length,
       desativados: ativos.filter((p) => p.mutado).length,
       arquivados: processos.filter((p) => flags[p.id]?.arquivado).length,
@@ -642,6 +674,11 @@ export default function RadarPage() {
                         {/* Selo do portal + prévia */}
                         <div className="flex items-center gap-1.5 mt-1.5">
                           <span className={clsx('text-[8.5px] font-mono-custom uppercase tracking-wide border px-1.5 py-0.5 rounded flex-shrink-0', s.cls)}>{s.label}</span>
+                          {/* A linha é um <button>; um controle dentro dela seria botão
+                              aninhado (HTML inválido, e o clique de um comeria o do outro).
+                              Aqui a marca só APARECE — quem alterna é o botão do cabeçalho
+                              do processo aberto. */}
+                          {p.participando && <span className="text-[8.5px] font-mono-custom uppercase tracking-wide bg-emerald-500/15 text-emerald-300 px-1.5 py-0.5 rounded flex-shrink-0">participando</span>}
                           {p.mutado && <span className="text-[8.5px] font-mono-custom uppercase tracking-wide bg-bg4 text-faint px-1.5 py-0.5 rounded flex-shrink-0">desativado</span>}
                           {p.naoLidas > 0 && <span className="text-[9px] font-mono-custom bg-accent text-black font-bold px-1.5 rounded-full flex-shrink-0">{p.naoLidas}</span>}
                           <span className="text-[10px] text-faint truncate flex-1">
@@ -706,6 +743,23 @@ export default function RadarPage() {
                         <button onClick={() => void carregar(true)} title="Atualizar" disabled={atualizando}
                           className="p-1.5 rounded-md text-faint hover:text-accent hover:bg-bg3 transition-colors disabled:opacity-50">
                           <RefreshCw size={15} className={atualizando ? 'animate-spin' : ''} /></button>
+                        {/* "ESTOU PARTICIPANDO DESTE" — um toque, sem modal e sem confirmação.
+                            A seleção automática diz o que INTERESSA ao perfil; só o fornecedor
+                            sabe em quais ele de fato entrou, e nenhuma API responde isso (não
+                            existe "minhas compras por CNPJ", e a participação é sigilosa até a
+                            sessão). O rótulo é o que ele reconhece: ele "entra num pregão", não
+                            "habilita monitoramento". */}
+                        <button onClick={() => void alternarParticipacao(selecionado)}
+                          disabled={selecionado.orfao}
+                          title={selecionado.orfao
+                            ? 'Este pregão saiu da sua seleção — a conversa continua aqui, mas não dá para marcar participação nele'
+                            : selecionado.participando ? 'Você marcou que está participando deste pregão' : 'Estou participando deste pregão'}
+                          aria-pressed={selecionado.participando}
+                          className={clsx('p-1.5 rounded-md transition-colors',
+                            selecionado.orfao ? 'text-faint/30 cursor-not-allowed'
+                              : selecionado.participando ? 'text-emerald-400 bg-emerald-500/10 hover:bg-bg3'
+                                : 'text-faint hover:text-emerald-400 hover:bg-bg3')}>
+                          <Gavel size={15} /></button>
                         <button onClick={() => setFlag(selecionado.id, { importante: !flags[selecionado.id]?.importante })} title="Importante"
                           className={clsx('p-1.5 rounded-md transition-colors hover:bg-bg3', flags[selecionado.id]?.importante ? 'text-amber' : 'text-faint hover:text-amber')}>
                           <Star size={15} className={flags[selecionado.id]?.importante ? 'fill-amber' : ''} /></button>
@@ -713,6 +767,7 @@ export default function RadarPage() {
                           processo={selecionado}
                           onDetalhes={() => setDetalhes(selecionado)}
                           onMonitoramento={() => void alternarMonitoramento(selecionado)}
+                          onParticipacao={() => void alternarParticipacao(selecionado)}
                           onArquivar={() => { const arq = !flags[selecionado.id]?.arquivado; setFlag(selecionado.id, { arquivado: arq }); if (arq) setSelId(null) }}
                           arquivado={!!flags[selecionado.id]?.arquivado}
                         />
@@ -851,8 +906,9 @@ function TextoDestacado({ texto, chaves }: { texto: string; chaves: string[] }) 
 }
 
 /** Menu ⋮ da conversa: Informações · Acessar local da disputa · Desativar monitoramento. */
-function Kebab({ processo, onDetalhes, onMonitoramento, onArquivar, arquivado }: {
-  processo: Processo; onDetalhes: () => void; onMonitoramento: () => void; onArquivar: () => void; arquivado: boolean
+function Kebab({ processo, onDetalhes, onMonitoramento, onParticipacao, onArquivar, arquivado }: {
+  processo: Processo; onDetalhes: () => void; onMonitoramento: () => void; onParticipacao: () => void
+  onArquivar: () => void; arquivado: boolean
 }) {
   const [aberto, setAberto] = useState(false)
   const cx = useRef<HTMLDivElement>(null)
@@ -897,6 +953,13 @@ function Kebab({ processo, onDetalhes, onMonitoramento, onArquivar, arquivado }:
           <Item onClick={onArquivar} icone={arquivado ? <ArchiveRestore size={13} /> : <Archive size={13} />}>
             {arquivado ? 'Desarquivar' : 'Arquivar'}
           </Item>
+          {/* O mesmo comando do martelo, agora com NOME. O icone sozinho nao diz o
+              que faz, e este e o comando que o fornecedor mais vai usar. */}
+          {!processo.orfao && (
+            <Item onClick={onParticipacao} icone={<Gavel size={13} />}>
+              {processo.participando ? 'Não estou mais participando' : 'Estou participando deste'}
+            </Item>
+          )}
           <div className="border-t border-subtle my-1" />
           <Item onClick={onMonitoramento} icone={processo.mutado ? <Bell size={13} /> : <BellOff size={13} />}>
             {processo.mutado ? 'Ativar monitoramento' : 'Desativar monitoramento'}
