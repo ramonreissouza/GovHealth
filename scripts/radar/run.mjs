@@ -20,6 +20,7 @@ import { resolverUrlPublicaPCP, PCP_BASE_PROCESSOS } from './pcp-resolver.mjs'
 import { sessaoTemCredencial } from './capture.mjs'
 import { novoPool } from '../lib/pg-ssl.mjs'
 import { consultar } from './banco-resiliente.mjs'
+import { auditarBypassSso } from './sessao-escopo.mjs'
 
 // ── env ────────────────────────────────────────────────────────────────────
 function loadEnv() {
@@ -395,6 +396,9 @@ try {
             const ctb = Buffer.concat([c.update(resultado.storageState, 'utf8'), c.final()])
             const blob = `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${ctb.toString('base64')}`
             await consultar(banco, `UPDATE radar_credenciais SET storage_state = $2, atualizado_em = now() WHERE id = $1`, [cred.id, blob])
+            if (resultado.bypassSso) {
+              await auditarBypassSso((sql, p) => consultar(banco, sql, p), { titularId: cred.titular_id, credencialId: cred.id, conectorId: cred.conector_id, via: 'renovacao' })
+            }
           } catch (e) { console.warn('    (não foi possível salvar a sessão):', e.message) }
         }
         await consultar(banco,
@@ -521,14 +525,19 @@ try {
             // configurado" — se contradizendo na cara do usuário.
             if (DRY) continue
 
-            // ONDE A PROXIMA VOLTA COMECA. `resultado.lidos` e quantos o conector leu DE
-            // VERDADE — nao quantos recebeu. Avancar pelo recebido pularia justamente os
-            // que o portal recusou, e o buraco so mudaria de lugar.
+            // ONDE A PROXIMA VOLTA COMECA. `resultado.consumidos` e quantas posicoes DESTA
+            // lista o conector gastou: lidas ou falhas daquela pagina, mas NAO as que o
+            // portal recusou (ver contadorDeConsumo em rodizio.mjs). Nao e o recebido —
+            // avancar pelo recebido pularia justamente os recusados. E nao e mais
+            // `lidos`: com ele, um primeiro lote que falhava sempre deixava o ponto parado
+            // e a cauda nunca era tentada (revisao da #38).
             //
-            // Conector que nao informa `lidos` nao roda: melhor manter o comportamento
-            // antigo do que girar a lista por um numero inventado.
-            if (rodizio && Number.isFinite(Number(resultado.lidos))) {
-              const novo = proximoOffset(offsetRod, Number(resultado.lidos), procs.length)
+            // `lidos` fica so como compatibilidade com conector que ainda nao conta
+            // consumo. Conector que nao informa nenhum dos dois nao roda: melhor manter o
+            // comportamento antigo do que girar a lista por um numero inventado.
+            const avanco = Number.isFinite(Number(resultado.consumidos)) ? Number(resultado.consumidos) : Number(resultado.lidos)
+            if (rodizio && Number.isFinite(avanco)) {
+              const novo = proximoOffset(offsetRod, avanco, procs.length)
               await consultar(banco,
                 `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
                  ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina,

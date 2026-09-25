@@ -36,6 +36,7 @@
     "radar:bll:teste": "node scripts/radar/connector-bll.teste.mjs",
     "radar:banco:teste": "node scripts/radar/banco-resiliente.teste.mjs",
     "radar:capture:teste": "node scripts/radar/capture.teste.mjs",
+    "radar:captura-hospedada:teste": "node scripts/radar/captura-hospedada.teste.mjs",
     "radar:licitacoes-e:teste": "node scripts/radar/connector-licitacoes-e.teste.mjs",
     "radar:delta": "node --env-file=.env.local scripts/migrar-delta-radar.mjs",
     "radar:delta:aplicar": "node --env-file=.env.local scripts/migrar-delta-radar.mjs --aplicar",

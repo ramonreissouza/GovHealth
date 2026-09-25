@@ -5,7 +5,7 @@
 // uma vez. Foi a ausência exata disso que deixou os processos 22 a 60 sem leitura
 // nenhuma, passada após passada, com a tela dizendo "21 lidos".
 
-import { rotacionar, proximoOffset, chaveRodizio, explicarRodizio } from './rodizio.mjs'
+import { rotacionar, proximoOffset, chaveRodizio, explicarRodizio, contadorDeConsumo } from './rodizio.mjs'
 
 let ok = 0, falhou = 0
 function afirmar(nome, valor, esperado) {
@@ -118,6 +118,68 @@ const L = ['a', 'b', 'c', 'd', 'e']
   afirmar('lista encolheu: a frase aplica o mesmo módulo', explicarRodizio(115, 2),
     'volta começando do 2º de 2 (os anteriores foram lidos na passada passada)')
   afirmar('frase e rotação concordam', explicarRodizio(115, 2).includes(`${rotacionar([1, 2], 115)[0]}º`), true)
+}
+
+// 8) FALHA LOCAL CONSOME POSIÇÃO ─────────────────────────────────────────────────────
+//    O caso da revisão da #38: 100 processos, teto de 60 por passada, e os 60 primeiros
+//    falham SEMPRE (página que mudou). Avançando por `lidos`, o ponto ficava em 0 para
+//    sempre e os processos 61 a 100 nunca eram tentados.
+{
+  const TETO = 60
+  const lista = Array.from({ length: 100 }, (_, i) => ({ id: i, quebrado: i < 60 }))
+  /** Um conector fiel à regra: tenta até o teto, conta consumo e sucesso. */
+  function passada(procs) {
+    const cont = contadorDeConsumo(procs)
+    const alvos = procs.slice(0, TETO)
+    let lidos = 0
+    const tentados = []
+    for (const p of alvos) {
+      tentados.push(p.id)
+      if (!p.quebrado) lidos++
+      cont.consumiu(p)
+    }
+    if (alvos.length === procs.length) cont.tudo()
+    return { lidos, consumidos: cont.valor, tentados }
+  }
+
+  const tentouAlgumaVez = new Set()
+  let offsetLidos = 0, offsetConsumo = 0
+  const tentadosPorLidos = new Set()
+  for (let volta = 0; volta < 3; volta++) {
+    const r1 = passada(rotacionar(lista, offsetLidos))
+    r1.tentados.forEach((id) => tentadosPorLidos.add(id))
+    offsetLidos = proximoOffset(offsetLidos, r1.lidos, lista.length)
+
+    const r2 = passada(rotacionar(lista, offsetConsumo))
+    r2.tentados.forEach((id) => tentouAlgumaVez.add(id))
+    offsetConsumo = proximoOffset(offsetConsumo, r2.consumidos, lista.length)
+  }
+  afirmar('O DEFEITO: avançando por `lidos`, 61 a 100 nunca são tentados', tentadosPorLidos.size, 60)
+  afirmar('por consumo: os 100 são tentados em 2 passadas', tentouAlgumaVez.size, 100)
+}
+
+// 9) AS QUATRO REGRAS DO CONTADOR ────────────────────────────────────────────────────
+{
+  const procs = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id }))
+  const c1 = contadorDeConsumo(procs)
+  c1.consumiu(procs[0]); c1.consumiu(procs[2])
+  afirmar('pular o b (sem link) e ler o c consome até o c', c1.valor, 3)
+
+  const c2 = contadorDeConsumo(procs)
+  c2.consumiu(procs[0]); c2.parouEm(procs[1])
+  afirmar('recusa no b: consumido só o a (a próxima volta começa no b)', c2.valor, 1)
+
+  const c3 = contadorDeConsumo(procs)
+  c3.parouEm(procs[0])
+  afirmar('recusa antes do 1º: consome zero', c3.valor, 0)
+
+  const c4 = contadorDeConsumo(procs)
+  c4.consumiu(procs[1]); c4.tudo()
+  afirmar('lista percorrida inteira: consome tudo', c4.valor, 5)
+
+  const c5 = contadorDeConsumo(procs)
+  c5.consumiu({ id: 'estranho' })
+  afirmar('item que não está na lista não move nada', c5.valor, 0)
 }
 
 console.log(`\n${ok} ok, ${falhou} falharam\n`)
