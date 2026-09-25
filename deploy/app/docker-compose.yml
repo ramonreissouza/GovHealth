@@ -52,6 +52,13 @@ x-app-env: &app-env
   RADAR_CONNECT_URL:
   RADAR_CONNECT_TOKEN:
   RADAR_EMBED_ORIGIN:
+  RADAR_COMPRASGOV_ENABLED:
+  RADAR_COMPRASGOV_AMBIENTE:
+  RADAR_COMPRASGOV_INTERVAL_SECONDS:
+  RADAR_COMPRASGOV_MAX_REQUESTS:
+  RADAR_PUBLICO_INTERVAL_SECONDS:
+  SERPRO_CONSUMER_KEY:
+  SERPRO_CONSUMER_SECRET:
   CRON_SECRET:
   RESEND_API_KEY:
   RESEND_FROM_EMAIL:
@@ -200,6 +207,42 @@ services:
     environment:
       <<: *app-env
       DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
+      TZ: America/Sao_Paulo
+
+  radar-comprasgov:
+    profiles: ['radar-comprasgov']
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+      target: radar-comprasgov
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
+      RADAR_COMPRASGOV_ENABLED:
+      RADAR_COMPRASGOV_AMBIENTE:
+      RADAR_COMPRASGOV_INTERVAL_SECONDS:
+      RADAR_COMPRASGOV_MAX_REQUESTS:
+      SERPRO_CONSUMER_KEY:
+      SERPRO_CONSUMER_SECRET:
+      TZ: UTC
+
+  radar-comprasgov-publico:
+    profiles: ['radar-publico']
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+      target: radar-comprasgov-publico
+    restart: unless-stopped
+    init: true
+    shm_size: '256mb'
+    stop_grace_period: 30s
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
+      RADAR_PUBLICO_INTERVAL_SECONDS: ${RADAR_PUBLICO_INTERVAL_SECONDS:-300}
       TZ: America/Sao_Paulo
 
 volumes:

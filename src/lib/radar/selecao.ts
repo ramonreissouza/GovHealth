@@ -177,9 +177,8 @@ export async function sincronizarSelecao(
   )
   const publicos = CONECTORES.filter((c) => c.disponivel && c.modoPublico).map((c) => c.id)
   const conectados = credConectores.map((r) => r.conector_id)
-  // Sem credencial alguma, o Compras.gov.br continua entrando: os processos ficam
-  // selecionados e acompanhados por prazo desde já, e passam a ter chat assim que o
-  // cliente conclui o login.
+  // Compras.gov.br só recebe candidatos com origem confirmada no portal.
+  // O piloto público consulta apenas compras cadastradas explicitamente pelo link.
   const conectoresBase = [...new Set(conectados.length ? conectados : [CONECTOR_PADRAO])]
 
   // ── GRAVAÇÃO EM LOTE (2026-09-16) ──────────────────────────────────────────
@@ -232,7 +231,7 @@ export async function sincronizarSelecao(
       // Uma linha POR PORTAL conectado (cada worker de portal enxerga o seu). O portal
       // público só entra para as licitações que realmente correm nele — do contrário o
       // worker sai procurando no PCP a página de um pregão do BB.
-      const conectoresAlvo = [...conectoresBase, ...publicos.filter((id) => licitacaoDoPortal(id, c))]
+      const conectoresAlvo = [...new Set([...conectoresBase, ...publicos])].filter((id) => licitacaoDoPortal(id, c))
       for (const conectorId of conectoresAlvo) {
         const id = `${conectorId}:${titularId}:${c.numero_controle_pncp}`.slice(0, 200)
         linhas.set(id, {

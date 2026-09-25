@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
 import { conectorPublico } from '@/lib/radar/conectores'
+import { compraPublica } from '@/lib/radar/comprasgov-publico.mjs'
 
 export const runtime = 'nodejs'
 
@@ -71,7 +72,9 @@ export async function POST(req: NextRequest) {
   // Em portal PÚBLICO, a licitação é o próprio objeto/título — não exige nº de controle
   // (quem adiciona à mão nem sempre tem o número em mãos). Era 'pcp' escrito na regra, e
   // por isso adicionar um processo do BLL/BNC à mão respondia 400 sem explicar por quê.
-  const licitacaoId = (body.licitacaoId ?? '').trim() || (conectorPublico(conectorId) ? (body.titulo ?? '').trim().slice(0, 120) : '')
+  const compra = conectorId === 'comprasgov' ? compraPublica(body.linkPortal) : null
+  if (conectorId === 'comprasgov' && !compra) return NextResponse.json({ error: 'Cole o link público de acompanhamento da compra no Compras.gov.br, contendo ?compra= e os 17 dígitos da identificação.' }, { status: 400 })
+  const licitacaoId = compra ? `comprasgov:publico:${compra.chave}` : (body.licitacaoId ?? '').trim() || (conectorPublico(conectorId) ? (body.titulo ?? '').trim().slice(0, 120) : '')
   if (!licitacaoId) return NextResponse.json({ error: 'licitacaoId (ou título) obrigatório' }, { status: 400 })
   const id = randomUUID()
   await query(
@@ -82,7 +85,7 @@ export async function POST(req: NextRequest) {
        uf = COALESCE(EXCLUDED.uf, radar_processos.uf),
        link_portal = COALESCE(EXCLUDED.link_portal, radar_processos.link_portal),
        atualizado_em = now()`,
-    [id, t.titularId, t.userId, conectorId, cnpj, licitacaoId, body.titulo ?? null, uf, body.linkPortal ?? null],
+    [id, t.titularId, t.userId, conectorId, cnpj, licitacaoId, body.titulo ?? null, uf, compra?.url ?? body.linkPortal ?? null],
   )
   return NextResponse.json({ ok: true })
 }

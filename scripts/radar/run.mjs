@@ -12,6 +12,8 @@
 //   node scripts/radar/run.mjs --simulado --dry # fixtures, sem gravar (só imprime)
 
 import fs from 'node:fs'
+import { coordenarColeta, transacaoPublica } from './publico-lease.mjs'
+import { gravarMensagens as persistirMensagens } from './mensagens-persistencia.mjs'
 import crypto from 'node:crypto'
 import { conectorSync } from './registry.mjs'
 import { PORTAIS_PUBLICOS } from './portais.mjs'
@@ -32,12 +34,14 @@ function loadEnv() {
   } catch { /* sem .env.local */ }
 }
 loadEnv()
+if (process.argv.includes('--assistido')) process.env.RADAR_PUBLICO_ASSISTIDO = '1'
 
 const DRY = process.argv.includes('--dry')
+const gravarMensagens = (banco, ctx, mensagens) => persistirMensagens(banco, ctx, mensagens, { dry: DRY })
 const SIMULADO = process.argv.includes('--simulado')
 // Pula o laço de credenciais e roda só o passo público (PCP, BLL, BNC). O nome antigo
 // (--pcp-only) continua valendo: era o único portal público quando a flag nasceu.
-const ONLY_PUBLICO = process.argv.includes('--publico-only') || process.argv.includes('--pcp-only')
+const ONLY_PUBLICO = process.argv.includes('--publico-only') || process.argv.includes('--pcp-only') || process.argv.includes('--comprasgov-publico')
 // PASSADA DE URGÊNCIA (a cada 20 min, contra as 2 h da passada completa).
 // Só processos com sessão à porta: é quando o chat ferve (convocação, diligência com
 // prazo de horas, intenção de recurso) e 2 h de atraso custa o certame.
@@ -74,53 +78,6 @@ function decrypt(blob) {
   return Buffer.concat([d.update(Buffer.from(ct, 'base64')), d.final()]).toString('utf8')
 }
 
-// ── hash (mesmo de src/lib/radar/hash.ts) ────────────────────────────────────
-const SEP = '␟'
-function msgHash({ conectorId, licitacaoId, autor, texto, horarioOrigem }) {
-  const partes = [conectorId, licitacaoId, (autor ?? '').trim(), texto.trim(), (horarioOrigem ?? '').trim()]
-  return crypto.createHash('sha256').update(partes.join(SEP)).digest('hex')
-}
-
-// ── classificação (espelha src/lib/radar/regras.ts) ──────────────────────────
-const PADROES = [
-  ['convocacao', /convoca[çc]?[ãa]?o?|convocad|comparec/i],
-  ['negociacao', /negocia|contraproposta|reduzir.*valor|melhor.*lance/i],
-  ['proposta_ajustada', /proposta ajustada|reajust|nova proposta|proposta readequ/i],
-  ['habilitacao', /habilita|inabilita|documenta[çc]?[ãa]?o?|documento.*complement/i],
-  ['diligencia', /dilig[êe]nc/i],
-  ['recurso', /recurso|contrarraz|impugna/i],
-  // `encerr` SOLTO saiu daqui (espelha src/lib/radar/regras.ts): quem fala de prazo
-  // escreve "prazo", e o token solto transformava "o ITEM 213 foi encerrado" em
-  // prioridade ALTA — 34 de 60 mensagens de uma sessão do Licitanet, rotina de disputa
-  // empurrando suspensão e intenção de recurso para fora do topo da caixa.
-  ['prazo', /prazo|at[ée] (o dia|as|às)|vencimento|expira/i],
-  // Mudança de estado do processo (suspensão, revogação, prorrogação…). Espelha
-  // src/lib/radar/regras.ts: sem ela, "o Processo foi SUSPENSO, reabertura dia X"
-  // caía como prioridade BAIXA por não conter nenhuma das outras palavras.
-  ['status_processo', /suspens|suspend|retomad|reabertura|reaberto|revoga|anulad|cancelad|prorrogad[oa]|prorroga[çc][ãa]o d[aeo]|adiad|remarcad/i],
-  // Desfecho do lote (fracassado/deserto/adjudicado/homologado). Espelha regras.ts e NÃO
-  // entra em ALTA: é resultado, não urgência — mas deixar em 'baixa' era tratar como
-  // ruído uma frase cujo sentido o Radar reconhece.
-  ['resultado_lote', /fracassad|desert[oa]|adjudicad|homologad/i],
-]
-const ALTA = new Set(['convocacao', 'prazo', 'recurso', 'diligencia', 'status_processo'])
-const norm = (s) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
-
-function classificar(texto, cnpj, regras) {
-  const hay = norm(texto)
-  const cats = new Set()
-  for (const [tipo, re] of PADROES) if (re.test(hay)) cats.add(tipo)
-  const dig = (cnpj ?? '').replace(/\D+/g, '')
-  if (dig && (texto ?? '').replace(/\D+/g, '').includes(dig)) cats.add('cnpj')
-  for (const r of regras) {
-    if (!r.ativo) continue
-    if (r.tipo === 'qualquer') { cats.add('qualquer'); continue }
-    if (r.padrao && hay.includes(norm(r.padrao))) cats.add(r.tipo === 'keyword' ? 'keyword' : r.tipo)
-  }
-  return [...cats]
-}
-const prioridadeDe = (cats) => (cats.some((c) => ALTA.has(c)) ? 'alta' : cats.length ? 'normal' : 'baixa')
-
 // ── PCP público: resolve a URL pública de cada processo (manual > auto-resolver) ─
 // link_portal já apontando p/ /processos do PCP = link colado pelo cliente (fallback).
 // Sem link → tenta o auto-resolver e, se achar com confiança, CACHEIA em link_portal.
@@ -141,113 +98,6 @@ async function resolverUrlsPCP(banco, processos, dry) {
     } catch (e) { console.warn(`    ↳ PCP resolver falhou: ${e?.message ?? e}`) }
   }
   return mapaUrl
-}
-
-// HISTÓRICO NÃO É NOTÍCIA.
-//
-// Na PRIMEIRA vez que o Radar vê um processo, o portal entrega o log INTEIRO dele de
-// uma vez — semanas de eventos. Todas essas linhas são "novas" para o banco, e o
-// enfileiramento mandava UM E-MAIL POR LINHA: 176 e-mails saíram de dez processos de
-// teste do BNC, sobre coisas que aconteceram semanas atrás. Num tenant real, com
-// centenas de processos, isso é o cliente abrindo a caixa com milhares de alertas
-// retroativos no primeiro dia — e desligando o produto no segundo.
-//
-// Então o e-mail passa a ser sobre o que ACABOU de acontecer. O resto continua gravado
-// e aparece na caixa do Radar (é contexto útil do processo), mas não toca o telefone de
-// ninguém. Mensagem sem horário de origem notifica: não dá para afirmar que é velha.
-const JANELA_EMAIL_H = 48
-
-// E UM PREGÃO VIVO TAMBÉM NÃO É UMA CAIXA DE ENTRADA.
-//
-// A janela de 48 h resolve o histórico, não a enxurrada. Num pregão de 213 itens do
-// Licitanet, o portal narra CADA item ("o ITEM 212 está na fase competitiva", "o ITEM
-// 213 foi encerrado") — são centenas de mensagens legítimas e recentes numa tarde só.
-// Sem teto, o cliente receberia centenas de e-mails de um único processo enquanto
-// disputa outro.
-//
-// Então o e-mail carrega no máximo as `TETO_EMAIL_PROCESSO` mais importantes de cada
-// processo a cada passada — as de prioridade alta primeiro, e entre iguais as mais
-// recentes. O RESTO NÃO SOME: continua gravado, classificado e visível na caixa do
-// Radar. O que o teto corta é o toque no telefone, não a informação.
-const TETO_EMAIL_PROCESSO = 5
-
-/** A mensagem é recente o bastante para virar e-mail? Sem horário → sim (conservador). */
-function valeEmail(horarioOrigem) {
-  if (!horarioOrigem) return true
-  const t = Date.parse(horarioOrigem)
-  if (Number.isNaN(t)) return true
-  return Date.now() - t <= JANELA_EMAIL_H * 3600_000
-}
-
-/** Ordem de ATENDIMENTO do e-mail: alta primeiro, depois a mais recente. */
-function ordemDeAtencao(a, b) {
-  const alta = (m) => (prioridadeDe(classificarSoPadroes(m.texto)) === 'alta' ? 0 : 1)
-  const d = alta(a) - alta(b)
-  if (d) return d
-  return (Date.parse(b.horarioOrigem ?? 0) || 0) - (Date.parse(a.horarioOrigem ?? 0) || 0)
-}
-
-/** Classificação só pelos padrões fixos — basta para ordenar, sem ler regras do tenant. */
-function classificarSoPadroes(texto) {
-  const hay = norm(texto)
-  const cats = []
-  for (const [tipo, re] of PADROES) if (re.test(hay)) cats.push(tipo)
-  return cats
-}
-
-// ── Persiste mensagens novas + enfileira notificações (compartilhado pelos dois
-// caminhos: credencial e público). Retorna {total, novas}. Respeita DRY. ─────────
-async function gravarMensagens(banco, ctx, mensagens) {
-  const { titularId, conectorId, cnpj, mapa, regras, destinatario } = ctx
-  let total = 0, novas = 0, emails = 0, contidas = 0
-  // Cópia ordenada: quem decide o que vira e-mail é a atenção que a mensagem merece,
-  // não a ordem em que o portal devolveu.
-  const porProcesso = new Map()
-  for (const m of [...mensagens].sort(ordemDeAtencao)) {
-    const proc = mapa.get(m.licitacaoId)
-    if (!proc) continue // mensagem de processo não monitorado — ignora
-    const cats = classificar(m.texto, cnpj, regras)
-    const prioridade = prioridadeDe(cats)
-    const hash = msgHash({ conectorId, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem })
-    total++
-    if (DRY) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
-    const { rows: ins } = await banco.query(
-      `INSERT INTO radar_mensagens
-         (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13)
-       ON CONFLICT (msg_hash) DO NOTHING
-       RETURNING id`,
-      [hash, titularId, proc.id, conectorId, cnpj, m.licitacaoId, m.autor, m.texto,
-       JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade],
-    )
-    if (!ins.length) continue // já existia (dedup)
-    novas++
-    const msgId = ins[0].id
-    const assunto = proc.titulo || m.licitacaoId
-    // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
-    const jaMandou = porProcesso.get(proc.id) ?? 0
-    if (valeEmail(m.horarioOrigem) && jaMandou >= TETO_EMAIL_PROCESSO) contidas++
-    if (valeEmail(m.horarioOrigem) && jaMandou < TETO_EMAIL_PROCESSO) {
-      porProcesso.set(proc.id, jaMandou + 1)
-      await banco.query(
-        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
-         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
-        [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
-      )
-      emails++
-    }
-    await banco.query(
-      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
-       VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
-      [`nm:${msgId}:app`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
-    )
-    await banco.query(
-      `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
-       VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
-      [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
-    )
-  }
-  return { total, novas, emails, contidas }
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -277,6 +127,7 @@ try {
        FROM radar_credenciais c
        LEFT JOIN radar_saude s ON s.credencial_id = c.id
       WHERE c.ativo = true
+        ${SIMULADO ? '' : `AND c.conector_id <> 'comprasgov'`}
         -- Na passada de 20 min, credencial que já pede intervenção humana fica de fora:
         -- insistir no login a cada 20 min não resolve CAPTCHA nem sessão expirada, e
         -- ainda arrisca bloqueio da conta no portal. A passada de 2 h continua tentando.
@@ -415,14 +266,16 @@ try {
   // Cada portal roda por tenant que tenha processos dele e NÃO tenha credencial ativa
   // dele (quem conectou sessão já foi atendido no laço acima, em modo híbrido).
   if (!SIMULADO) {
-    for (const portalId of PORTAIS_PUBLICOS) {
+    for (const portalId of PORTAIS_PUBLICOS.filter((id) => !process.argv.includes('--comprasgov-publico') || id === 'comprasgov')) {
+      const inicioPublico = new Date().toISOString()
       const { rows: pubProcs } = await banco.query(
         `SELECT p.id, p.titular_id, p.licitacao_id, p.titulo, p.uf, p.link_portal
            FROM radar_processos p
            LEFT JOIN contratacoes c ON c.numero_controle_pncp = p.licitacao_id
           WHERE p.conector_id = $1 AND p.status = 'ativo' AND p.mutado = false
-            AND NOT EXISTS (SELECT 1 FROM radar_credenciais cr
-                            WHERE cr.titular_id = p.titular_id AND cr.conector_id = $1 AND cr.ativo = true)${filtro}
+            AND ($1 = 'comprasgov' OR NOT EXISTS (SELECT 1 FROM radar_credenciais cr
+                            WHERE cr.titular_id = p.titular_id AND cr.conector_id = $1 AND cr.ativo = true))
+            AND ($1 <> 'comprasgov' OR (p.origem='manual' AND p.licitacao_id LIKE 'comprasgov:publico:%'))${filtro}
           -- A ORDEM É POLÍTICA, NÃO ENFEITE. Ler a página pública custa ~12 s por
           -- processo e o conector tem teto por passada; então o que está perto da sessão
           -- vai primeiro, e o teto corta a cauda fria em vez de sortear quem fica de fora.
@@ -434,97 +287,113 @@ try {
         [portalId],
       )
       const pubUsar = LIMIT ? pubProcs.slice(0, LIMIT) : pubProcs
-      const porTitular = new Map()
-      for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
-      if (porTitular.size) console.log(`→ ${portalId} público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
-
-      const syncPortal = conectorSync(portalId)
-      for (const [titularId, procsNaOrdem] of porTitular) {
-        conectores++
-
-        // ── RODIZIO ──────────────────────────────────────────────────────────────
-        //
-        // Medido no Licitanet em 22/09/2026: "recusou a conexao (HTTP 429) — 21 de 60
-        // processo(s) lidos antes". O conector agiu certo. O problema era a passada
-        // SEGUINTE: a ordem acima e estavel, entao ela recomecava do mesmo primeiro, lia
-        // os mesmos ~21 e levava 429 no mesmo ponto. Os processos 22 a 60 NUNCA eram
-        // lidos — o teto configurado era 60 e o teto real virou 21, sem nada na tela
-        // dizendo isso. O cliente le "21 lidos" e supoe cobertura.
-        //
-        // Girar a lista nao exige saber a regra do WAF deles (que nao sabemos): seja
-        // qual for o ponto do corte, a volta seguinte comeca depois dele.
-        //
-        // SO NA PASSADA COMPLETA. Na de urgencia a lista ja e filtrada para quem tem
-        // sessao a porta, e ali "mais quente primeiro" e a resposta certa: pregao com
-        // sessao hoje nao cede a vez para um de mes que vem.
-        const chaveRod = chaveRodizio(portalId, titularId)
-        let offsetRod = 0
-        // LE ate no dry-run (o dry so nao ESCREVE): sem isso um `--dry` mostraria a
-        // volta sempre comecando do 1o, e quem usa o dry para conferir o rodizio veria
-        // exatamente o bug que ele conserta.
-        if (!URGENTES) {
-          const { rows: [cp] } = await banco.query(
-            'SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chaveRod])
-          offsetRod = cp?.ultima_pagina ?? 0
-        }
-        const procs = URGENTES ? procsNaOrdem : rotacionar(procsNaOrdem, offsetRod)
-        const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
-        // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
-        // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
-        // gravado pela seleção a partir do `link_externo` do PNCP.
-        const urlPublicaPorLic = portalId === 'pcp'
-          ? await resolverUrlsPCP(banco, procs, DRY)
-          : new Map(procs.filter((p) => p.link_portal).map((p) => [p.licitacao_id, p.link_portal]))
-        const { rows: regras } = await banco.query(`SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
-        const { rows: [tit] } = await banco.query(`SELECT email FROM usuarios WHERE id = $1`, [titularId])
-        const destinatario = tit?.email ?? titularId
-
-        let resultado
-        try {
-          resultado = syncPortal
-            ? await syncPortal({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
-            : { status: 'falha', detalhe: `conector ${portalId} ausente`, mensagens: [] }
-        } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
-        // O rodizio entra no log: rodizio silencioso e indistinguivel de rodizio que
-        // nao aconteceu, e a pergunta que alguem vai fazer e "por que o processo X nao
-        // foi lido hoje?".
-        const frase = URGENTES ? '' : explicarRodizio(offsetRod, procs.length)
-        console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})${frase ? ` · ${frase}` : ''}`)
-
-        const g = await gravarMensagens(banco, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
-        totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas; contidasMsgs += g.contidas
-
-        // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
-        // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
-        // configurado" — se contradizendo na cara do usuário.
-        if (DRY) continue
-
-        // ONDE A PROXIMA VOLTA COMECA. `resultado.lidos` e quantos o conector leu DE
-        // VERDADE — nao quantos recebeu. Avancar pelo recebido pularia justamente os
-        // que o portal recusou, e o buraco so mudaria de lugar.
-        //
-        // Conector que nao informa `lidos` nao roda: melhor manter o comportamento
-        // antigo do que girar a lista por um numero inventado.
-        if (!URGENTES && Number.isFinite(Number(resultado.lidos))) {
-          const novo = proximoOffset(offsetRod, Number(resultado.lidos), procs.length)
-          await banco.query(
-            `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
-             ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina,
-                                               atualizado_em = now()`,
-            [chaveRod, novo])
-        }
-
-        const okPub = resultado.status === 'ok'
-        await banco.query(
-          `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
-           VALUES (NULL,$1,$2,$3, ${okPub ? 'now()' : 'NULL'}, now(), $4, now())
-           ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
-             status = EXCLUDED.status,
-             verificado_em = ${okPub ? 'now()' : 'radar_saude.verificado_em'},
-             tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
-          [titularId, portalId, resultado.status, resultado.detalhe ?? null],
-        )
+      const lease = portalId === 'comprasgov' && pubUsar.length && !DRY
+        ? await coordenarColeta(banco, portalId) : null
+      if (portalId === 'comprasgov' && pubUsar.length && !DRY && !lease) {
+        console.log('  · comprasgov: outra rodada está em execução ou o portal está em pausa.')
+        continue
       }
+      let esperaPortal = 300
+      try {
+        const porTitular = new Map()
+        for (const p of pubUsar) (porTitular.get(p.titular_id) ?? porTitular.set(p.titular_id, []).get(p.titular_id)).push(p)
+        if (porTitular.size) console.log(`→ ${portalId} público (sem login): ${porTitular.size} tenant(s), ${pubUsar.length}${LIMIT ? `/${pubProcs.length}` : ''} processo(s)`)
+
+        const syncPortal = conectorSync(portalId)
+        for (const [titularId, procsNaOrdem] of porTitular) {
+          conectores++
+
+          // ── RODIZIO ──────────────────────────────────────────────────────────────
+          //
+          // Medido no Licitanet em 22/09/2026: "recusou a conexao (HTTP 429) — 21 de 60
+          // processo(s) lidos antes". O conector agiu certo. O problema era a passada
+          // SEGUINTE: a ordem acima e estavel, entao ela recomecava do mesmo primeiro, lia
+          // os mesmos ~21 e levava 429 no mesmo ponto. Os processos 22 a 60 NUNCA eram
+          // lidos — o teto configurado era 60 e o teto real virou 21, sem nada na tela
+          // dizendo isso. O cliente le "21 lidos" e supoe cobertura.
+          //
+          // Girar a lista nao exige saber a regra do WAF deles (que nao sabemos): seja
+          // qual for o ponto do corte, a volta seguinte comeca depois dele.
+          //
+          // SO NA PASSADA COMPLETA. Na de urgencia a lista ja e filtrada para quem tem
+          // sessao a porta, e ali "mais quente primeiro" e a resposta certa: pregao com
+          // sessao hoje nao cede a vez para um de mes que vem.
+          const chaveRod = chaveRodizio(portalId, titularId)
+          let offsetRod = 0
+          // LE ate no dry-run (o dry so nao ESCREVE): sem isso um `--dry` mostraria a
+          // volta sempre comecando do 1o, e quem usa o dry para conferir o rodizio veria
+          // exatamente o bug que ele conserta.
+          if (!URGENTES) {
+            const { rows: [cp] } = await banco.query(
+              'SELECT ultima_pagina FROM etl_checkpoint WHERE chave = $1', [chaveRod])
+            offsetRod = cp?.ultima_pagina ?? 0
+          }
+          const procs = URGENTES ? procsNaOrdem : rotacionar(procsNaOrdem, offsetRod)
+          const mapa = new Map(procs.map((p) => [p.licitacao_id, p]))
+          // O PCP não publica o endereço do processo no PNCP: precisa do resolvedor (ou do
+          // link colado pelo cliente). BLL/BNC publicam — o link já está em link_portal,
+          // gravado pela seleção a partir do `link_externo` do PNCP.
+          const urlPublicaPorLic = portalId === 'pcp'
+            ? await resolverUrlsPCP(banco, procs, DRY)
+            : new Map(procs.filter((p) => p.link_portal).map((p) => [p.licitacao_id, p.link_portal]))
+          const { rows: regras } = await banco.query(`SELECT tipo, padrao, ativo FROM radar_regras WHERE titular_id = $1 OR titular_id IS NULL`, [titularId])
+          const { rows: [tit] } = await banco.query(`SELECT email FROM usuarios WHERE id = $1`, [titularId])
+          const destinatario = tit?.email ?? titularId
+
+          let resultado
+          try {
+            resultado = syncPortal
+              ? await syncPortal({ credencial: {}, processos: procs.map((p) => ({ licitacaoId: p.licitacao_id, titulo: p.titulo, uf: p.uf, urlPublica: urlPublicaPorLic.get(p.licitacao_id) })), simulado: false })
+              : { status: 'falha', detalhe: `conector ${portalId} ausente`, mensagens: [] }
+          } catch (e) { resultado = { status: 'falha', detalhe: String(e?.message ?? e).slice(0, 180), mensagens: [] } }
+          // O rodizio entra no log: rodizio silencioso e indistinguivel de rodizio que
+          // nao aconteceu, e a pergunta que alguem vai fazer e "por que o processo X nao
+          // foi lido hoje?".
+          const frase = URGENTES ? '' : explicarRodizio(offsetRod, procs.length)
+          console.log(`  · ${portalId}[público]/${titularId}: status=${resultado.status} msgs=${resultado.mensagens.length} (${resultado.detalhe ?? ''})${frase ? ` · ${frase}` : ''}`)
+
+          if (portalId === 'comprasgov' && resultado.status !== 'ok') process.exitCode = 1
+          if (portalId === 'comprasgov' && ['portal_indisponivel', 'captcha_2fa'].includes(resultado.status)) esperaPortal = Math.max(1800, resultado.retryAfterSeconds || 0)
+          await transacaoPublica(banco, lease, async (client) => {
+            const g = await gravarMensagens(client, { titularId, conectorId: portalId, cnpj: '', mapa, regras, destinatario }, resultado.mensagens)
+            totalMsgs += g.total; novasMsgs += g.novas; emailsMsgs += g.emails; contidasMsgs += g.contidas; contidasMsgs += g.contidas
+
+            // Saúde do monitor PÚBLICO (sem credencial). Sem isto a tela mostrava as
+            // mensagens capturadas e, logo acima, "CONECTORES OK 0 / nenhum conector
+            // configurado" — se contradizendo na cara do usuário.
+            if (DRY) return
+
+            // ONDE A PROXIMA VOLTA COMECA. `resultado.lidos` e quantos o conector leu DE
+            // VERDADE — nao quantos recebeu. Avancar pelo recebido pularia justamente os
+            // que o portal recusou, e o buraco so mudaria de lugar.
+            //
+            // Conector que nao informa `lidos` nao roda: melhor manter o comportamento
+            // antigo do que girar a lista por um numero inventado.
+            if (!URGENTES && Number.isFinite(Number(resultado.lidos))) {
+              const novo = proximoOffset(offsetRod, Number(resultado.lidos), procs.length)
+              await client.query(
+                `INSERT INTO etl_checkpoint (chave, ultima_pagina) VALUES ($1, $2)
+                 ON CONFLICT (chave) DO UPDATE SET ultima_pagina = EXCLUDED.ultima_pagina,
+                                                   atualizado_em = now()`,
+                [chaveRod, novo])
+            }
+
+            // Compras cadastradas durante a rodada ainda precisam de uma leitura.
+            const verificadoPublico = resultado.status === 'ok'
+              ? (portalId === 'comprasgov' ? inicioPublico : new Date().toISOString()) : null
+            await client.query(
+              `INSERT INTO radar_saude (credencial_id, titular_id, conector_id, status, verificado_em, tentado_em, detalhe, atualizado_em)
+               VALUES (NULL,$1,$2,$3,$5::timestamptz,now(),$4,now())
+               ON CONFLICT (titular_id, conector_id) WHERE credencial_id IS NULL DO UPDATE SET
+                 status = EXCLUDED.status,
+                 verificado_em = coalesce(EXCLUDED.verificado_em,radar_saude.verificado_em),
+                 tentado_em = now(), detalhe = EXCLUDED.detalhe, atualizado_em = now()`,
+              [titularId, portalId, resultado.status, resultado.detalhe ?? null, verificadoPublico],
+            )
+          })
+          if (portalId === 'comprasgov' && ['portal_indisponivel', 'captcha_2fa'].includes(resultado.status)) break
+        }
+      } finally { await lease?.fechar(esperaPortal) }
     }
   }
 

@@ -1,5 +1,7 @@
 # Radar do Compras.gov.br — plano de execução
 
+> Histórico de 22/09/2026, substituído pelo [caminho público sem tarifa de API](radar-comprasgov-gratuito.md), escolhido em 24/09/2026. Não usar as premissas abaixo para ativar o serviço: o portal também atende órgãos estaduais e municipais, e o número/modalidade PNCP não identifica automaticamente uma compra SIASG. O coletor novo não depende de login gov.br.
+
 **Escrito em 22/09/2026.** Destinado a ser executado por um modelo de menor custo, passo a
 passo, sem tomar decisões de arquitetura. Toda decisão já foi tomada aqui. Onde houver
 dúvida, **pare e pergunte** — não infira.

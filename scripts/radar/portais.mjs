@@ -12,6 +12,7 @@ export const PORTAIS = {
   comprasgov: {
     id: 'comprasgov',
     nome: 'Compras.gov.br',
+    publico: true,
     // Página onde o humano faz o login. É a TELA DE LOGIN em si, não a página
     // institucional de "acesso ao sistema" — o fornecedor não deve ter de caçar um
     // botão dentro de um iframe. Confirmado em 13/09/2026: título "Faça o Login no
