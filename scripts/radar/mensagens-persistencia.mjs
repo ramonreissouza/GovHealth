@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { emTransacao } from './banco-resiliente.mjs'
 
 const SEP = '␟'
 function msgHash({ conectorId, licitacaoId, autor, texto, horarioOrigem }) {
@@ -116,41 +117,54 @@ export async function gravarMensagens(banco, ctx, mensagens, { dry = false } = {
       ? crypto.createHash('sha256').update(JSON.stringify([titularId, proc.id, baseHash])).digest('hex') : baseHash
     total++
     if (dry) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
-    const { rows: ins } = await banco.query(
-      `INSERT INTO radar_mensagens
-         (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade, lote)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14)
-       ON CONFLICT (msg_hash) DO NOTHING
-       RETURNING id`,
-      [hash, titularId, proc.id, conectorId, cnpj, m.licitacaoId, m.autor, m.texto,
-       JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade, m.lote ?? null],
-    )
-    if (!ins.length) continue // já existia (dedup)
-    novas++
-    const msgId = ins[0].id
     const assunto = proc.titulo || m.licitacaoId
     // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
     const jaMandou = porProcesso.get(proc.id) ?? 0
-    if (valeEmail(m.horarioOrigem) && jaMandou >= TETO_EMAIL_PROCESSO) contidas++
-    if (valeEmail(m.horarioOrigem) && jaMandou < TETO_EMAIL_PROCESSO) {
-      porProcesso.set(proc.id, jaMandou + 1)
-      await banco.query(
-        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
-         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
-        [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+    const querEmail = valeEmail(m.horarioOrigem) && jaMandou < TETO_EMAIL_PROCESSO
+    // A MENSAGEM E OS ALERTAS DELA SÃO UMA COISA SÓ (revisão da #34). Com instruções
+    // soltas, uma queda entre o INSERT da mensagem e o das notificações deixava o
+    // `msg_hash` gravado e o alerta não — e a rodada seguinte nunca o recriava.
+    //
+    // `emTransacao` abre transação por mensagem quando `banco` é um Pool — é o caso do
+    // laço de credenciais e dos portais públicos sem lease (BLL, BNC, Licitanet, PCP),
+    // que o `transacaoPublica` repassa como pool puro. Quando `banco` já é o client da
+    // transação do lease (Compras.gov.br), a atomicidade é a dela, e não há BEGIN
+    // aninhado. Contadores ficam FORA: numa repetição, dentro seriam contados duas vezes.
+    const gravada = await emTransacao(banco, async (db) => {
+      const { rows: ins } = await db.query(
+        `INSERT INTO radar_mensagens
+           (msg_hash, titular_id, processo_id, conector_id, cnpj, licitacao_id, autor, texto, anexos, horario_origem, raw, categorias, prioridade, lote)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14)
+         ON CONFLICT (msg_hash) DO NOTHING
+         RETURNING id`,
+        [hash, titularId, proc.id, conectorId, cnpj, m.licitacaoId, m.autor, m.texto,
+         JSON.stringify(m.anexos ?? []), m.horarioOrigem, JSON.stringify(m.raw ?? {}), cats, prioridade, m.lote ?? null],
       )
-      emails++
-    }
-    await banco.query(
-      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
-       VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
-      [`nm:${msgId}:app`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
-    )
-    await banco.query(
-      `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
-       VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
-      [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
-    )
+      if (!ins.length) return false // já existia (dedup) — e, com a transação, JÁ COM os alertas
+      const msgId = ins[0].id
+      if (querEmail) {
+        await db.query(
+          `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link)
+           VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'email',$6,$7) ON CONFLICT (id) DO NOTHING`,
+          [`nm:${msgId}:email`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+        )
+      }
+      await db.query(
+        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status)
+         VALUES ($1,$2,'nova_mensagem',$3,$4,$5,'in_app',$6,$7,'entregue') ON CONFLICT (id) DO NOTHING`,
+        [`nm:${msgId}:app`, titularId, msgId, proc.id, destinatario, assunto, proc.link_portal],
+      )
+      await db.query(
+        `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+         VALUES ($1,'captura','radar_mensagens',$2,$3::jsonb)`,
+        [titularId, String(msgId), JSON.stringify({ categorias: cats, prioridade })],
+      )
+      return true
+    })
+    if (!gravada) continue
+    novas++
+    if (querEmail) { porProcesso.set(proc.id, jaMandou + 1); emails++ }
+    else if (valeEmail(m.horarioOrigem)) contidas++
   }
   return { total, novas, emails, contidas }
 }
