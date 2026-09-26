@@ -7,6 +7,12 @@ function msgHash({ conectorId, licitacaoId, autor, texto, horarioOrigem }) {
   return crypto.createHash('sha256').update(partes.join(SEP)).digest('hex')
 }
 
+/** O hash gravado: o da mensagem, amarrado à empresa e ao processo dela. Era a fórmula
+ *  só do Compras.gov.br; agora vale para todos (ver gravarMensagens). */
+export function hashDaEmpresa(titularId, processoId, baseHash) {
+  return crypto.createHash('sha256').update(JSON.stringify([titularId, processoId, baseHash])).digest('hex')
+}
+
 // ── classificação (espelha src/lib/radar/regras.ts) ──────────────────────────
 const PADROES = [
   ['convocacao', /convoca[çc]?[ãa]?o?|convocad|comparec/i],
@@ -113,10 +119,23 @@ export async function gravarMensagens(banco, ctx, mensagens, { dry = false } = {
     const cats = classificar(m.texto, cnpj, regras)
     const prioridade = prioridadeDe(cats)
     const baseHash = msgHash({ conectorId, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem })
-    const hash = conectorId === 'comprasgov'
-      ? crypto.createHash('sha256').update(JSON.stringify([titularId, proc.id, baseHash])).digest('hex') : baseHash
+    // A EMPRESA ENTRA NA IDENTIDADE DA MENSAGEM, EM TODO PORTAL. `msg_hash` é UNIQUE no
+    // banco inteiro, e fora do Compras.gov.br o hash era só portal+pregão+autor+texto+hora:
+    // duas empresas no mesmo pregão (o nº do PNCP é o mesmo para as duas) davam o mesmo
+    // hash, a primeira gravava e a segunda caía no ON CONFLICT DO NOTHING — sem mensagem
+    // e sem alerta, com a tela dizendo "sem novidades" (requisito 4.2).
+    const hash = hashDaEmpresa(titularId, proc.id, baseHash)
     total++
     if (dry) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
+    // O que já foi gravado com o hash ANTIGO (só portal+pregão) é desta empresa se a linha
+    // é dela. Sem esta checagem, a troca do hash regravaria como nova cada mensagem já
+    // capturada e mandaria de novo os alertas dela. Sem migração de dados: a regra vale
+    // igual antes e depois, e rodar duas vezes não muda nada.
+    if (conectorId !== 'comprasgov') {
+      const { rows: antiga } = await banco.query(
+        'SELECT 1 FROM radar_mensagens WHERE msg_hash = $1 AND titular_id = $2 LIMIT 1', [baseHash, titularId])
+      if (antiga.length) continue
+    }
     const assunto = proc.titulo || m.licitacaoId
     // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
     const jaMandou = porProcesso.get(proc.id) ?? 0

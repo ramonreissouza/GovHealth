@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_radar_proc_participando
 -- Mensagens normalizadas (modelo único) + dedup por hash + conteúdo bruto (raw).
 CREATE TABLE IF NOT EXISTS radar_mensagens (
   id             BIGSERIAL PRIMARY KEY,
-  msg_hash       TEXT NOT NULL,            -- sha256(conector|licitacao|autor|texto|horario)
+  msg_hash       TEXT NOT NULL,            -- sha256([titular, processo, sha256(conector|licitacao|autor|texto|horario)]); ver hashDaEmpresa
   titular_id     TEXT NOT NULL,
   processo_id    TEXT NOT NULL REFERENCES radar_processos(id),
   conector_id    TEXT NOT NULL,
