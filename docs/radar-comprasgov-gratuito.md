@@ -36,7 +36,7 @@ Após essas correções, nove testes unitários passaram, incluindo regressões 
 ## Ativar o piloto
 
 1. Manter `RADAR_COMPRASGOV_ENABLED=0` (variável que habilita exclusivamente o serviço pago).
-2. Abrir Radar → Conectar portal → Compras.gov.br e cadastrar uma compra real pelo link público.
+2. Abrir Radar → Adicionar pregão fora do perfil e colar o link público de uma compra real (o "Conectar portal" saiu em 25/09/2026).
 3. Preparar o ambiente local:
 
 ```sh

@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   // aqui (ver modoComprasgov) — recusar é melhor que aceitar e não monitorar.
   if (modoComprasgov() !== 'api') {
     return NextResponse.json({
-      error: 'O Radar está lendo o Compras.gov.br pelo painel público. Cadastre a compra colando o link público de acompanhamento em "Adicionar processo".',
+      error: 'O Radar está lendo o Compras.gov.br pelo painel público. Cadastre a compra colando o link público de acompanhamento em "Adicionar pregão fora do perfil", no Radar.',
       modo: 'publico',
     }, { status: 409 })
   }

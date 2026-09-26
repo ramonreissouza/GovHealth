@@ -100,7 +100,7 @@ export async function saudeComprasgov(titularId: string) {
   const status = completo ? 'ok' : !configurado || !ativos.length || ativos.every((c) => c.status === 'pendente') ? 'nunca_verificado' : 'falha'
   const detalhe = !configurado ? 'Integração oficial aguardando ativação do serviço.' : !ativos.length ? 'Cadastre uma compra para iniciar a leitura pela integração oficial.' :
     completo ? `Integração oficial: chat e diligências verificados para ${ativos.length / 2} compra(s).` :
-      `Integração oficial: ${recentes.length}/${ativos.length} canais com leitura recente. Há leitura pendente, falha ou coletor atrasado. Consulte as compras em Conectar portal.`
+      `Integração oficial: ${recentes.length}/${ativos.length} canais com leitura recente. Há leitura pendente, falha ou coletor atrasado.`
   return {
     credencial_id: null, conector_id: 'comprasgov', cnpj: null, status,
     verificado_em: datas.length === ativos.length ? datas[0] : null,

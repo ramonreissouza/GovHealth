@@ -127,7 +127,7 @@ function Linha({ s, agoraMs }: { s: SaudeItem; agoraMs: number }) {
   )
 }
 
-export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]; agoraMs: number }) {
+export default function SaudeConectores({ saude, agoraMs, carregando = false, falhou = false }: { saude: SaudeItem[]; agoraMs: number; carregando?: boolean; falhou?: boolean }) {
   const [abertos, setAbertos] = useState<Set<string>>(new Set())
 
   const grupos = useMemo(() => {
@@ -153,10 +153,17 @@ export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]
       .sort((a, b) => GRAVIDADE[b.cor] - GRAVIDADE[a.cor] || a.conectorId.localeCompare(b.conectorId))
   }, [saude, agoraMs])
 
+  // Dizia "Nenhum conector configurado. Conecte um portal…", e na prática aparecia só
+  // enquanto a página carregava (a inbox sempre manda o Compras.gov.br): mandava a pessoa
+  // configurar algo que não existe, no segundo em que ela chegava à tela.
   if (saude.length === 0) {
     return (
       <div className="bg-bg2 border border-subtle rounded-xl p-4 text-[12px] text-muted">
-        Nenhum conector configurado. Conecte um portal para o Radar começar a monitorar os chats.
+        {falhou
+          ? 'Não foi possível consultar a saúde dos portais agora. A tela tenta de novo sozinha em até 2 minutos.'
+          : carregando
+            ? 'Consultando a saúde dos portais…'
+            : 'Nenhum portal verificado ainda. Os portais públicos são lidos sem login, a cada passada do coletor.'}
       </div>
     )
   }

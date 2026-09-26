@@ -23,23 +23,19 @@ import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
-  Radar, AlertTriangle, ExternalLink, X, Check, Plus, Loader2, Bell,
+  Radar, AlertTriangle, ExternalLink, X, Plus, Bell,
   Search, Star, Archive, ArchiveRestore, CheckCheck, MessageSquare, Paperclip,
   Inbox as InboxIcon, MoreVertical, RefreshCw, Info, BellOff, Settings, Gavel,
 } from 'lucide-react'
-import { CONECTORES, conectorDisponivel, conectorPublico } from '@/lib/radar/conectores'
+import { LEITORES } from '@/lib/radar/conectores'
 import { destacar, temChave } from '@/lib/radar/destaque'
-import { chatSoNoPortal, portalSoVisualizacao, situacaoLeitura } from '@/lib/radar/chat-externo.mjs'
+import { chatSoNoPortal, situacaoLeitura } from '@/lib/radar/chat-externo.mjs'
 import { nomePortal } from '@/lib/portais'
 import { CONFIG_PADRAO, type ConfigRadar } from '@/lib/radar/config'
 import SaudeConectores, { type SaudeItem } from './components/SaudeConectores'
+import AdicionarPregao from './components/AdicionarPregao'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { Paginacao } from '@/components/ui/Paginacao'
-
-// Conectores que algum coletor LÊ. É daqui que a tela decide, pregão a pregão, se pode
-// dizer "monitoramento ativo" (ver situacaoLeitura em lib/radar/chat-externo.mjs). O
-// Compras.gov.br fica de fora: ele tem regra própria, por cadastro e saúde.
-const LEITORES = CONECTORES.filter((c) => c.disponivel && c.modoPublico && c.id !== 'comprasgov').map((c) => c.id)
 
 const CATEGORIAS = ['convocacao', 'negociacao', 'proposta_ajustada', 'habilitacao', 'diligencia', 'recurso', 'prazo', 'status_processo', 'resultado_lote', 'cnpj']
 
@@ -57,7 +53,8 @@ interface ProcessoApi {
   participando: boolean
   linkPortal: string | null; atualizadoEm: string
   orgao: string | null; municipio: string | null; modalidade: string | null
-  prazo: string | null; abertura: string | null; situacao: 'aberta' | 'encerrada'; meu: boolean
+  /** null = sem par no PNCP (adicionado por link): a situação é desconhecida. */
+  prazo: string | null; abertura: string | null; situacao: 'aberta' | 'encerrada' | null; meu: boolean
   /** Portal REAL da sessão (Licitanet/BNC/BLL/…), derivado do PNCP. */
   portal: string
   /** URL do portal de origem, quando o PNCP informou. */
@@ -69,8 +66,6 @@ interface Inbox {
   chaves: string[]
   kpis: { naoLidas: number; processosAtivos: number; conectores: number }
   saude: SaudeItem[]
-  /** O que o ambiente consegue fazer (cofre de credenciais / login hospedado). */
-  capacidades?: { cofre: boolean; hosted: boolean }
   /** Recorte do Setup da Empresa aplicado pelo servidor nesta resposta. */
   setupFiltro?: { aplicado: boolean; ufs: string[]; categorias: string[] }
   atualizadoEm: string
@@ -205,6 +200,18 @@ function selo(id: string) {
   }
 }
 
+// O nº de controle do PNCP: "02451938000153-1-000190/2026".
+const NUMERO_PNCP = /^\d{14}-\d-\d{6}\/\d{4}$/
+/**
+ * O que o cartão mostra no lugar do nº do processo. Pregão adicionado à mão sem par no
+ * PNCP não tem esse número, e o id interno (`bll:link:…`, `comprasgov:publico:…`) não diz
+ * nada a quem lê; o objeto e o portal aparecem nas linhas de baixo.
+ */
+function numeroExibido(p: { licitacaoId: string; origem: string }): string {
+  if (NUMERO_PNCP.test(p.licitacaoId) || p.origem !== 'manual') return p.licitacaoId || '—'
+  return 'Adicionado manualmente'
+}
+
 // Papel do autor (Pregoeiro × Fornecedor × Sistema) para rotular a fala.
 function papelAutor(autor: string | null): 'pregoeiro' | 'fornecedor' | 'sistema' | 'outro' {
   const a = (autor ?? '').toLowerCase()
@@ -248,6 +255,8 @@ const FILTRO_LABEL: Record<Filtro, string> = {
 
 export default function RadarPage() {
   const [data, setData] = useState<Inbox | null>(null)
+  /** A última leitura da caixa falhou (rede ou erro do servidor). */
+  const [falhaInbox, setFalhaInbox] = useState(false)
   const [config, setConfig] = useState<ConfigRadar>(CONFIG_PADRAO)
   const [loading, setLoading] = useState(true)
   const [atualizando, setAtualizando] = useState(false)
@@ -257,7 +266,7 @@ export default function RadarPage() {
   const [selId, setSelId] = useState<string | null>(null)
   /** Pregão do Compras.gov.br em que a pessoa trocou o chat oficial pelas capturadas. */
   const [capturadasDe, setCapturadasDe] = useState<string | null>(null)
-  const [conectar, setConectar] = useState(false)
+  const [adicionar, setAdicionar] = useState(false)
   const [flags, setFlags] = useState<Flags>({})
   const [detalhes, setDetalhes] = useState<Processo | null>(null)
   const [lote, setLote] = useState('')
@@ -290,9 +299,11 @@ export default function RadarPage() {
     try {
       const sem = semSetupAgora ?? semSetupRef.current
       const r = await fetch(`/api/radar/inbox${sem ? '?setup=0' : ''}`)
+      if (!r.ok) throw new Error(String(r.status))
       const d: Inbox = await r.json()
       setData(d)
-    } catch { /* mantém o que já está na tela */ } finally {
+      setFalhaInbox(false)
+    } catch { setFalhaInbox(true) /* mantém o que já está na tela */ } finally {
       emVoo.current = false
       setLoading(false); setAtualizando(false)
     }
@@ -410,9 +421,20 @@ export default function RadarPage() {
   //    pregoeiro escrever, aparece aqui" é promessa que a instalação não cumpre.
   const semConectorOk = !!data && !data.saude.some((s) => s.status === 'ok')
   const capturaNuncaLigou = semConectorOk && data.mensagens.length === 0
-  // Ambiente sem cofre/hosted → o login do gov.br não tem como concluir. Quando a API
-  // é antiga e não manda o campo, assume que dá (não esconde botão que funciona).
-  const capacidades = data?.capacidades ?? { cofre: true, hosted: true }
+
+  // Pregão recém-adicionado: recarrega e abre. Espera a leitura em voo terminar, porque
+  // `carregar` descarta a chamada que chega durante outra (a do polling), e o pregão novo
+  // só apareceria no tick seguinte, dois minutos depois. Os filtros saem do caminho: quem
+  // acabou de adicionar quer ver o que adicionou.
+  async function aoAdicionar(id: string) {
+    for (let i = 0; i < 40 && emVoo.current; i++) await new Promise((r) => setTimeout(r, 250))
+    setFiltro('todos'); setBusca(''); setCategoria(''); setPortalFiltro('')
+    // "Arquivado" é marca deste navegador e esconde o pregão de "todos": colar o link de
+    // um arquivado é pedir para vê-lo de novo.
+    if (flags[id]?.arquivado) setFlag(id, { arquivado: false })
+    setSelId(id)
+    await carregar(true)
+  }
 
   // ATENÇÃO à lista de dependências: `portalFiltro` estava FALTANDO aqui, e era esse
   // o "filtro de portal que demora para aplicar". O React re-renderizava ao escolher o
@@ -530,18 +552,21 @@ export default function RadarPage() {
                 className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong hover:border-subtle transition-colors">
                 <Settings size={14} /> Configurações gerais
               </Link>
-              <button onClick={() => setConectar(true)} className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md bg-accent text-black font-semibold hover:bg-accent2 transition-colors">
-                <Plus size={14} /> Conectar portal
+              {/* Era "Conectar portal", em destaque. Nenhum portal lido pede login e o
+                  Compras.gov.br não tem o que conectar: sobrou só acompanhar um pregão fora
+                  do perfil, que é exceção e por isso não é o botão principal da tela. */}
+              <button onClick={() => setAdicionar(true)}
+                className="flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong hover:border-subtle transition-colors">
+                <Plus size={14} /> Adicionar pregão fora do perfil
               </button>
             </div>
           </div>
 
           {/* REQUISITO 4.2 — banner de incerteza: nenhum portal foi lido com sucesso.
-              Mandava "concluir o login do Compras.gov.br em Conectar portal", e desde
-              25/09/2026 o Conectar portal responde, com razão, que não há nada a
-              conectar ali (o portal recusa navegador automatizado; o chat dele abre
-              dentro do pregão). A saída agora é a verdadeira: os portais públicos são
-              lidos sem login, na próxima passada do coletor. */}
+              Mandava "concluir o login do Compras.gov.br em Conectar portal", e não há
+              login a concluir (o portal recusa navegador automatizado; o chat dele abre
+              dentro do pregão), nem, desde 25/09/2026, um "Conectar portal". A saída é a
+              verdadeira: os portais públicos são lidos sem login, na próxima passada. */}
           {semConectorOk ? (
             <div className="mb-4 flex items-start gap-2 bg-amber/10 border border-amber/30 rounded-lg px-4 py-3">
               <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
@@ -586,7 +611,7 @@ export default function RadarPage() {
               componente para o porquê. */}
           <div className="mb-4">
             <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">Saúde dos conectores</div>
-            <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} />
+            <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} carregando={!data && !falhaInbox} falhou={!data && falhaInbox} />
           </div>
 
           {loading ? (
@@ -689,7 +714,7 @@ export default function RadarPage() {
                           {p.prioridadeAlta && <span title="Prioridade alta"><AlertTriangle size={11} className="text-red flex-shrink-0" /></span>}
                           {imp && <Star size={11} className="text-amber fill-amber flex-shrink-0" />}
                           <span className={clsx('text-[12px] font-mono-custom truncate flex-1', p.naoLidas > 0 ? 'text-strong font-semibold' : 'text-muted')}>
-                            {p.licitacaoId || '—'}
+                            {numeroExibido(p)}
                           </span>
                           <span className="text-[9.5px] font-mono-custom text-faint flex-shrink-0">
                             {p.ultima ? carimbo(p.ultima) : dataCurta(p.prazo)}
@@ -752,14 +777,16 @@ export default function RadarPage() {
                     <div className="px-4 py-3 border-b border-subtle flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <h2 className="font-heading font-bold text-[14px] text-strong font-mono-custom truncate">{selecionado.licitacaoId || '—'}</h2>
+                          <h2 className="font-heading font-bold text-[14px] text-strong font-mono-custom truncate">{numeroExibido(selecionado)}</h2>
                           <span className={clsx('text-[8.5px] font-mono-custom uppercase tracking-wide border px-1.5 py-0.5 rounded flex-shrink-0', selo(selecionado.portal).cls)}>
                             {selo(selecionado.portal).label}
                           </span>
+                          {selecionado.situacao && (
                           <span className={clsx('text-[8.5px] font-mono-custom uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0',
                             selecionado.situacao === 'encerrada' ? 'bg-bg4 text-faint' : 'bg-emerald-500/15 text-emerald-300')}>
                             {selecionado.situacao === 'encerrada' ? 'encerrada' : 'aberta'}
                           </span>
+                          )}
                         </div>
                         <p className="text-[11.5px] text-muted mt-1 truncate">Órgão: {selecionado.orgao || '—'}</p>
                         <p className="text-[11px] text-faint mt-0.5 truncate">
@@ -1012,7 +1039,7 @@ export default function RadarPage() {
           )}
         </main>
 
-        {conectar && <ConectarModal capacidades={capacidades} saude={(data?.saude ?? []) as SaudeItem[]} onClose={() => setConectar(false)} onSaved={() => { setConectar(false); void carregar() }} />}
+        {adicionar && <AdicionarPregao onClose={() => setAdicionar(false)} onAdicionado={(id) => { void aoAdicionar(id) }} />}
         {detalhes && <DetalhesModal processo={detalhes} onClose={() => setDetalhes(null)} />}
       </div>
     </div>
@@ -1156,16 +1183,18 @@ function DetalhesModal({ processo, onClose }: { processo: Processo; onClose: () 
               <p className="text-[12.5px] text-strong">Prazo: {prazoLongo(processo.prazo)}</p>
             </Campo2>
             <Campo2 label="Situação">
+              {processo.situacao ? (
               <span className={clsx('inline-block text-[10px] font-mono-custom uppercase tracking-wide px-2 py-1 rounded',
                 processo.situacao === 'encerrada' ? 'bg-bg4 text-faint' : 'bg-emerald-500/15 text-emerald-300')}>
                 {processo.situacao === 'encerrada' ? 'encerrada' : 'aberta'}
               </span>
+              ) : <p className="text-[12.5px] text-strong">—</p>}
             </Campo2>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <Campo2 label="Nº do processo (PNCP)">
-              <p className="text-[12.5px] text-strong font-mono-custom break-all">{processo.licitacaoId || '—'}</p>
+              <p className="text-[12.5px] text-strong font-mono-custom break-all">{NUMERO_PNCP.test(processo.licitacaoId) || processo.origem !== 'manual' ? processo.licitacaoId || '—' : '—'}</p>
             </Campo2>
             <Campo2 label="Portal">
               <span className={clsx('inline-block text-[10px] font-mono-custom uppercase tracking-wide border px-2 py-1 rounded', selo(processo.portal).cls)}>
@@ -1221,353 +1250,5 @@ function Kpi({ label, valor, destaque }: { label: string; valor: string; destaqu
       <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">{label}</div>
       <div className={clsx('font-heading font-bold text-[22px] leading-none', destaque ? 'text-accent' : 'text-strong')}>{valor}</div>
     </div>
-  )
-}
-
-type Fase = 'form' | 'live' | 'conectando' | 'ok' | 'erro'
-
-function ConectarModal({ capacidades, saude, onClose, onSaved }: {
-  capacidades: { cofre: boolean; hosted: boolean }; saude: SaudeItem[]; onClose: () => void; onSaved: () => void
-}) {
-  const [conectorId, setConectorId] = useState('comprasgov')
-  const [cnpj, setCnpj] = useState('')
-  const [login, setLogin] = useState('')
-  const [salvando, setSalvando] = useState(false)
-  const [erro, setErro] = useState<string | null>(null)
-  const [fase, setFase] = useState<Fase>('form')
-  const [demorou, setDemorou] = useState(false)
-  const [embedUrl, setEmbedUrl] = useState<string | null>(null)
-  const [capturando, setCapturando] = useState(false)
-  // Modo público (PCP): monitora pela página pública, sem login. Campos próprios.
-  const [pubObjeto, setPubObjeto] = useState('')
-  const [pubUf, setPubUf] = useState('')
-  const [pubLink, setPubLink] = useState('')
-  const publico = conectorPublico(conectorId)
-  // Compras.gov.br sem leitura: não há o que conectar nem cadastrar. O formulário de
-  // link levava a uma compra que o coletor nunca consegue ler (captcha), e o cliente
-  // ficava esperando uma captura que não vem. Ver lib/radar/chat-externo.mjs.
-  const soVisualiza = portalSoVisualizacao(conectorId, saude)
-  const nomeSel = CONECTORES.find((c) => c.id === conectorId)?.nome ?? conectorId
-  const credId = useRef<string | null>(null)
-  const poll = useRef<ReturnType<typeof setInterval> | null>(null)
-  const t0 = useRef<number>(0)
-
-  const pararPoll = () => { if (poll.current) { clearInterval(poll.current); poll.current = null } }
-  useEffect(() => () => pararPoll(), [])
-
-  async function criarCred(): Promise<string | null> {
-    if (credId.current) return credId.current
-    const r = await fetch('/api/radar/credenciais', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conectorId, cnpj, login }),
-    })
-    const j = await r.json()
-    if (!r.ok) { setErro(j.instrucoes || j.error || 'Falha ao registrar'); return null }
-    credId.current = j.id
-    return j.id
-  }
-
-  // Abre o gov.br no navegador HOSPEDADO (live view no iframe). Se o hosted não
-  // estiver configurado (503), cai no fluxo local (fila + serviço de conexão).
-  async function iniciarHosted(id: string): Promise<'live' | 'fallback' | 'erro'> {
-    const r = await fetch('/api/radar/conexao', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ credencialId: id, acao: 'iniciar' }),
-    })
-    if (r.status === 503) return 'fallback'
-    const j = await r.json()
-    if (r.ok && j.embedUrl) { setEmbedUrl(j.embedUrl); return 'live' }
-    // 409 = navegador ocupado por outro fornecedor. Não é erro de ninguém e tem
-    // solução (esperar), então o `detalhe` — que diz quanto falta — vale mais que o
-    // `error`, que é só a etiqueta técnica.
-    setErro(j.detalhe || j.error || 'Falha ao abrir o gov.br'); return 'erro'
-  }
-
-  async function concluirLogin() {
-    if (!credId.current) return
-    setCapturando(true); setErro(null)
-    try {
-      const r = await fetch('/api/radar/conexao', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credencialId: credId.current, acao: 'capturar' }),
-      })
-      const j = await r.json()
-      if (j.conexao === 'conectado') { setFase('ok'); setTimeout(onSaved, 1200) }
-      else if (j.aviso) setErro('Conclua o login no gov.br dentro da janela antes de confirmar.')
-      else setErro(j.error || j.detalhe || 'Não foi possível capturar a sessão.')
-    } catch { setErro('Falha de rede') } finally { setCapturando(false) }
-  }
-
-  async function cancelarLive() {
-    if (credId.current) { void fetch('/api/radar/conexao', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credencialId: credId.current, acao: 'cancelar' }) }) }
-    setEmbedUrl(null); setFase('form')
-  }
-
-  function iniciarPoll() {
-    t0.current = Date.now()
-    setDemorou(false)
-    pararPoll()
-    poll.current = setInterval(async () => {
-      try {
-        const r = await fetch('/api/radar/credenciais')
-        const j = await r.json()
-        const c = (j.credenciais ?? []).find((x: { id: string }) => x.id === credId.current)
-        if (!c) return
-        if (c.conexao?.status === 'conectado') { pararPoll(); setFase('ok'); setTimeout(onSaved, 1200) }
-        else if (c.conexao?.status === 'erro') { pararPoll(); setErro(c.conexao?.detalhe || 'Não foi possível concluir o login.'); setFase('erro') }
-        else if (Date.now() - t0.current > 360_000) {
-          // Timeout de segurança: nunca ficar "Abrindo…" para sempre.
-          pararPoll(); setErro('Não recebemos a confirmação do login a tempo. Verifique se a janela do gov.br abriu e tente de novo.'); setFase('erro')
-        } else if (Date.now() - t0.current > 90_000) setDemorou(true)
-      } catch { /* rede: tenta no próximo tick */ }
-    }, 2500)
-  }
-
-  // PCP público: adiciona o processo (objeto + UF + link opcional). Sem login: o
-  // worker resolve a URL pública (ou usa o link colado) e lê o andamento.
-  async function adicionarPublico() {
-    if (!pubObjeto.trim()) { setErro('Informe o objeto/título da licitação.'); return }
-    setSalvando(true); setErro(null)
-    try {
-      const r = await fetch('/api/radar/processos', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conectorId, titulo: pubObjeto.trim(), uf: pubUf.trim(), linkPortal: pubLink.trim() || undefined }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) { setErro(j.error || 'Falha ao adicionar'); return }
-      setFase('ok'); setTimeout(onSaved, 1200)
-    } catch { setErro('Falha de rede') } finally { setSalvando(false) }
-  }
-
-  async function conectar() {
-    setSalvando(true); setErro(null)
-    try {
-      const id = await criarCred()
-      if (!id) { setSalvando(false); return }
-      // Preferência: navegador HOSPEDADO (login dentro da tela).
-      const res = await iniciarHosted(id)
-      if (res === 'live') { setFase('live'); setSalvando(false); return }
-      if (res === 'erro') { setSalvando(false); return }
-      // Fallback (hosted não configurado): fluxo local via serviço de conexão.
-      const rc = await fetch(`/api/radar/credenciais/${id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao: 'conectar' }),
-      })
-      if (!rc.ok) { const j = await rc.json(); setErro(j.error || 'Falha ao iniciar a conexão'); setSalvando(false); return }
-      setFase('conectando'); iniciarPoll()
-    } catch { setErro('Falha de rede') } finally { setSalvando(false) }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => { pararPoll(); onClose() }}>
-      <div className="absolute inset-0 bg-black/50" />
-      <div onClick={(e) => e.stopPropagation()} className={clsx('relative bg-bg2 border border-subtle rounded-2xl w-full p-6', fase === 'live' ? 'max-w-[820px]' : 'max-w-[440px]')}>
-        <div className="flex items-center justify-between mb-1"><h3 className="font-heading font-bold text-[16px] text-strong">Conectar portal</h3><button onClick={() => { pararPoll(); onClose() }} className="text-faint hover:text-strong"><X size={18} /></button></div>
-
-        {fase === 'live' ? (
-          <div className="mt-2">
-            <p className="text-[12px] text-muted mb-3">
-              Faça o login na página oficial do <strong className="text-strong">gov.br</strong> abaixo (CPF, senha, 2FA).
-              Ao concluir, clique em <strong className="text-strong">&ldquo;Já concluí o login&rdquo;</strong>. A senha é digitada no gov.br — nós guardamos só a sessão cifrada.
-            </p>
-            <div className="rounded-lg border border-subtle overflow-hidden bg-black/20">
-              {embedUrl && (
-                <iframe
-                  src={embedUrl}
-                  title="Login gov.br"
-                  /* 600px é o mínimo que a documentação do steel recomenda para o live
-                     view ser usável; com 440 a tela de login do gov.br fica espremida e
-                     o botão de entrar pode cair fora da área visível. */
-                  className="w-full h-[620px] block"
-                  allow="clipboard-read; clipboard-write"
-                  sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
-                />
-              )}
-            </div>
-            {erro && <p className="text-[12px] text-amber mt-3">{erro}</p>}
-            <div className="flex justify-between items-center mt-4">
-              <button onClick={cancelarLive} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
-              <button onClick={concluirLogin} disabled={capturando} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
-                {capturando && <Loader2 size={13} className="animate-spin" />} Já concluí o login
-              </button>
-            </div>
-          </div>
-        ) : fase === 'ok' ? (
-          <div className="mt-4 text-center py-4">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/15 flex items-center justify-center mx-auto mb-3"><Check size={24} className="text-emerald-400" /></div>
-            <p className="text-[14px] font-semibold text-strong">{publico ? 'Processo adicionado' : 'Conectado ao gov.br'}</p>
-            <p className="text-[12px] text-muted mt-1">{publico
-              ? 'Sem login: o Radar vai buscar a página pública do processo e trazer o andamento (convocação, habilitação, recurso, prazo, homologação).'
-              : 'A sessão foi capturada com segurança. O Radar já vai monitorar o chat dos seus processos.'}</p>
-          </div>
-        ) : fase === 'conectando' ? (
-          <div className="mt-4 text-center py-4">
-            <Loader2 size={28} className="text-accent animate-spin mx-auto mb-3" />
-            <p className="text-[14px] font-semibold text-strong">Abrindo o gov.br…</p>
-            <p className="text-[12px] text-muted mt-1 max-w-[320px] mx-auto">
-              Conclua o login na janela do <strong className="text-strong">gov.br</strong> (CPF, senha, 2FA). Assim que entrar,
-              esta tela confirma a conexão automaticamente.
-            </p>
-            {demorou && <p className="text-[11px] text-amber mt-3">Está demorando — confirme que a janela do gov.br abriu e que o login foi concluído.</p>}
-            <button onClick={() => { pararPoll(); setFase('form') }} className="text-[11px] text-faint hover:text-strong mt-4">Cancelar</button>
-          </div>
-        ) : (
-          <>
-            {/* Catálogo de portais (fonte: lib/radar/conectores). */}
-            <div className="mb-4 mt-1">
-              <span className="text-[11px] text-faint">Portal</span>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                {CONECTORES.map((c) => {
-                  const ativo = conectorId === c.id
-
-                  // O SELO SÓ PODE DIZER UMA COISA — E TEM DE SER A QUE O CLIENTE ESTÁ
-                  // PERGUNTANDO.
-                  //
-                  // Dizia "sem login", que descreve o PORTAL (ele não exige senha). Só que
-                  // o cliente lê como ESTADO DELE — "não estou logado", "não conectei" — e
-                  // lê isso a poucos centímetros de um cartão verde dizendo Verificado. Duas
-                  // afirmações opostas sobre o mesmo portal, na mesma tela: ele acredita na
-                  // pior. Pior ainda no PCP, BLL, BNC, Licitanet e AMM, onde não existe login
-                  // nenhum a fazer — o cliente ficava procurando um botão que não devia
-                  // existir.
-                  //
-                  // Agora: se o portal já está sendo lido, o selo diz isso, com a cor do
-                  // cartão de saúde. A capacidade ("não pede senha") continua dita, mas na
-                  // descrição, que é onde se descreve o portal.
-                  const saudeDo = saude.filter((s) => s.conectorId === c.id)
-                  const monitorando = saudeDo.some((s) => s.status === 'ok')
-                  // "Rever" pedia uma ação que não existe: no portal que o Radar só mostra
-                  // não há sessão a refazer nem link a corrigir.
-                  const soVisual = portalSoVisualizacao(c.id, saude)
-                  const precisaRever = saudeDo.length > 0 && !monitorando && !soVisual
-                  const selo = 'text-[8px] font-mono-custom uppercase tracking-wide px-1 py-0.5 rounded flex-shrink-0'
-
-                  return (
-                    <button key={c.id} type="button" onClick={() => setConectorId(c.id)}
-                      className={clsx('text-left rounded-lg border px-3 py-2 transition-colors',
-                        ativo ? 'border-accent bg-accent/10' : 'border-subtle2 bg-bg3 hover:border-subtle')}>
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-[12px] font-semibold text-strong">{c.nome}</span>
-                        {monitorando
-                          ? <span className={clsx(selo, 'bg-emerald-500/15 text-emerald-400')}>monitorando</span>
-                          : soVisual
-                            ? <span className={clsx(selo, 'bg-bg4 text-faint')}>só visualização</span>
-                          : precisaRever
-                            ? <span className={clsx(selo, 'bg-amber/15 text-amber')}>rever</span>
-                            : c.modoPublico
-                              ? <span className={clsx(selo, 'bg-accent/20 text-accent')}>não pede senha</span>
-                              : !c.disponivel && <span className={clsx(selo, 'bg-bg4 text-faint')}>em breve</span>}
-                      </div>
-                      <div className="text-[10px] text-muted mt-0.5 leading-snug">{c.descricao}</div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {soVisualiza ? (
-              <div className="bg-bg3 border border-subtle2 rounded-lg px-3 py-3 text-[12px] text-muted leading-snug space-y-2">
-                <p>
-                  <strong className="text-strong">Não há nada para conectar no Compras.gov.br.</strong>{' '}
-                  Os pregões dele que a seleção automática encontra pelo seu perfil aparecem na lista, e o{' '}
-                  <strong className="text-strong">chat oficial abre dentro do pregão</strong>, aqui no Radar, quando temos o
-                  link público de acompanhamento da compra. É a página do governo, aberta pelo seu navegador; se ela pedir
-                  captcha, você resolve ali mesmo.
-                </p>
-                <p className="text-[11px] text-faint">
-                  O que o Radar não faz neste portal: ler as mensagens sozinho e avisar por e-mail. O Compras.gov.br exige
-                  captcha e recusa navegador automatizado, e contornar isso seria burlar a proteção do portal.
-                </p>
-              </div>
-            ) : publico ? (
-              <>
-                {/* Os dois portais públicos chegam ao processo por caminhos diferentes, e
-                    dizer o caminho errado faz o cliente preencher o campo errado: o PCP
-                    precisa ser PROCURADO (o PNCP não publica o endereço da página), o
-                    BLL/BNC vêm com o link pronto no próprio PNCP. */}
-                <p className="text-[12px] text-muted mb-4">
-                  O {nomeSel} publica o <strong className="text-strong">andamento de cada processo</strong> numa página pública —
-                  monitoramos <strong className="text-strong">sem login</strong>.{' '}
-                  {conectorId === 'comprasgov'
-                    ? <>O Compras.gov.br está em piloto. Cole o link de acompanhamento da compra. O portal pode exigir CAPTCHA mesmo sem login; nesse caso, a coleta precisa de intervenção no modo assistido.</>
-                    : conectorId === 'pcp'
-                    ? <>Informe o objeto e a UF; nós achamos o processo automaticamente. Se não acharmos com segurança, cole o link do processo no portal.</>
-                    : <>As licitações deste portal já entram sozinhas pelo seu perfil, com o link do processo que o próprio PNCP publica. Use este formulário só para acompanhar um processo <strong className="text-strong">fora do perfil</strong> — aí precisamos do link da página dele.</>}
-                </p>
-                <div className="space-y-3">
-                  <Campo label="Objeto / título da licitação" value={pubObjeto} onChange={setPubObjeto} placeholder="ex.: aquisição de medicamentos para a farmácia básica" />
-                  <Campo label="UF (opcional, ajuda a achar)" value={pubUf} onChange={(v) => setPubUf(v.toUpperCase().slice(0, 2))} placeholder="ex.: SP" />
-                  <Campo
-                    label={conectorId === 'pcp' ? 'Link do processo no PCP (opcional — fallback)' : `Link do processo no ${CURTO[conectorId] ?? nomeSel} (obrigatório)`}
-                    value={pubLink} onChange={setPubLink}
-                    placeholder={conectorId === 'pcp' ? 'cole aqui se souber a URL exata do processo' : 'cole a URL da página do processo no portal'} />
-                </div>
-                <p className="text-[11px] text-faint mt-3 leading-snug">
-                  {conectorId === 'comprasgov'
-                    ? <>Cadastrar o link não confirma a conexão. A saúde do conector indicará a primeira leitura, bloqueios ou histórico parcial. Somente mensagens públicas são cobertas; mantenha o acompanhamento oficial enquanto o piloto não confirmar a captura.</>
-                    : <>A sala <strong>ao vivo</strong> (lances em tempo real) usa a sua própria sessão do portal e entra numa próxima etapa — o andamento público já avisa convocação, habilitação, recurso, prazo e homologação.</>}
-                </p>
-              </>
-            ) : conectorDisponivel(conectorId) && !capacidades.cofre ? (
-              /* Sem RADAR_CRED_KEY no ambiente, POST /api/radar/credenciais devolve 503:
-                 o formulário só levaria a um erro. Diz a verdade em vez de pedir dados. */
-              <div className="bg-amber/10 border border-amber/30 rounded-lg px-3 py-2.5 text-[12px] text-amber leading-snug">
-                A conexão por <strong>login do gov.br</strong> está desligada neste ambiente: o cofre que guarda a
-                sessão cifrada (<span className="font-mono-custom">RADAR_CRED_KEY</span>) não está configurado, e sem
-                ele não temos onde guardar a sua sessão com segurança. O{' '}
-                <strong>Portal de Compras Públicas</strong>, o <strong>BLL</strong> e o <strong>BNC</strong> monitoram{' '}
-                <strong>sem login</strong> e já funcionam — selecione um deles acima.
-              </div>
-            ) : conectorDisponivel(conectorId) ? (
-              <>
-                <p className="text-[12px] text-muted mb-4">
-                  O login é feito na <strong className="text-strong">página oficial do gov.br</strong> — não digitamos nem
-                  guardamos a sua senha aqui. Guardamos só a <strong className="text-strong">sessão (cookies) cifrada</strong>,
-                  usada para ler o chat dos seus processos. Você pode desconectar quando quiser.
-                </p>
-                <div className="space-y-3">
-                  <Campo label="CNPJ do fornecedor" value={cnpj} onChange={setCnpj} placeholder="00.000.000/0000-00" />
-                  <Campo label="CPF ou login gov.br (identificação)" value={login} onChange={setLogin} placeholder="para identificar a conexão — a senha fica no gov.br" />
-                </div>
-              </>
-            ) : (
-              <div className="bg-amber/10 border border-amber/30 rounded-lg px-3 py-2.5 text-[12px] text-amber leading-snug">
-                Este portal já está no modelo de dados e na seleção por perfil — a captura de chat entra na{' '}
-                <strong>próxima etapa</strong>, quando calibrarmos o login e os seletores dele. Por ora, use o{' '}
-                <strong>Compras.gov.br</strong> ou os portais <strong>sem login</strong> (PCP, BLL e BNC).
-              </div>
-            )}
-
-            {erro && <p className="text-[12px] text-red mt-3">{erro}</p>}
-            <div className="flex justify-end gap-2 mt-5">
-              {soVisualiza ? (
-                <button onClick={() => { pararPoll(); onClose() }} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold">
-                  Entendi
-                </button>
-              ) : (
-                <button onClick={() => { pararPoll(); onClose() }} className="text-[12px] px-3 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">Cancelar</button>
-              )}
-              {soVisualiza ? null : publico ? (
-                <button onClick={adicionarPublico} disabled={salvando || !pubObjeto.trim() || (conectorId !== 'pcp' && !pubLink.trim())} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
-                  {salvando && <Loader2 size={13} className="animate-spin" />} Monitorar sem login
-                </button>
-              ) : (
-                <button onClick={conectar} disabled={!conectorDisponivel(conectorId) || !capacidades.cofre || salvando || !cnpj || !login} className="flex items-center gap-1.5 text-[12px] px-4 py-2 rounded-md bg-accent text-black font-semibold disabled:opacity-50">
-                  {salvando && <Loader2 size={13} className="animate-spin" />} Continuar para o gov.br
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function Campo({ label, value, onChange, placeholder, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
-  return (
-    <label className="block">
-      <span className="text-[11px] text-faint">{label}</span>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="mt-1 w-full text-[13px] bg-bg3 border border-subtle rounded-md px-3 py-2 text-strong focus:border-accent outline-none" />
-    </label>
   )
 }

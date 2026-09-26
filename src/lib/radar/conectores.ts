@@ -201,6 +201,14 @@ export const CONECTORES: Conector[] = [
 
 const POR_ID = new Map(CONECTORES.map((c) => [c.id, c]))
 
+/**
+ * Conectores que algum coletor LÊ. É daqui que a tela decide, pregão a pregão, se pode
+ * dizer "monitoramento ativo" (situacaoLeitura em chat-externo.mjs), e que o "Adicionar
+ * pregão" decide se aceita o link (lerLink em link-processo.mjs). O Compras.gov.br fica de
+ * fora: tem regra própria, por cadastro e saúde.
+ */
+export const LEITORES = CONECTORES.filter((c) => c.disponivel && c.modoPublico && c.id !== 'comprasgov').map((c) => c.id)
+
 /** Nome amigável de um conector pelo id (fallback: o próprio id). */
 export function nomeConector(id: string): string {
   return POR_ID.get(id)?.nome ?? id

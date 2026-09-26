@@ -150,12 +150,12 @@ export async function GET(req: NextRequest) {
     user_id: string; origem: string; link_portal: string | null; atualizado_em: string
     orgao: string | null; municipio: string | null; modalidade: string | null
     objeto: string | null; prazo: string | null; abertura: string | null; encerrada: boolean
-    link_externo: string | null; fonte: string | null
+    link_externo: string | null; fonte: string | null; no_pncp: string | null
   }>(
     `SELECT p.id, p.conector_id, p.cnpj, p.licitacao_id, p.titulo, p.uf, p.valor,
             p.prioridade, p.mutado, p.participando, p.user_id, p.origem, p.link_portal, p.atualizado_em,
             c.razao_social_orgao AS orgao, c.municipio, c.modalidade_nome AS modalidade,
-            c.objeto_compra AS objeto, c.link_externo, c.fonte,
+            c.objeto_compra AS objeto, c.link_externo, c.fonte, c.numero_controle_pncp AS no_pncp,
             c.data_encerramento_proposta AS prazo, c.data_abertura_proposta AS abertura,
             EXISTS (SELECT 1 FROM resultados r WHERE r.numero_controle_pncp = p.licitacao_id) AS encerrada
        FROM radar_processos p
@@ -176,7 +176,12 @@ export async function GET(req: NextRequest) {
       --
       -- O card orfao existe para o processo REMOVIDO da selecao, cuja conversa nao pode
       -- sumir. Processo vivo com conversa nunca deveria cair nele.
+      --
+      -- O PREGÃO ADICIONADO À MÃO TAMBÉM ENTRA SEMPRE. A seleção regrava atualizado_em de
+      -- milhares de linhas do perfil a cada passada e nunca toca no manual, que em minutos
+      -- caía para depois da posição 500 e sumia da lista que a pessoa acabou de montar.
       ORDER BY EXISTS (SELECT 1 FROM radar_mensagens mm WHERE mm.processo_id = p.id) DESC,
+               (p.origem = 'manual') DESC,
                p.atualizado_em DESC
       LIMIT 500`,
     paramsProc,
@@ -225,7 +230,9 @@ export async function GET(req: NextRequest) {
       linkPortal: p.link_portal, atualizadoEm: p.atualizado_em,
       orgao: p.orgao, municipio: p.municipio, modalidade: p.modalidade,
       prazo: p.prazo, abertura: p.abertura,
-      situacao: p.encerrada ? 'encerrada' : 'aberta',
+      // Sem par no PNCP (pregão adicionado por link), a situação é desconhecida: "aberta"
+      // seria só a ausência de resultado numa tabela onde ele nunca vai aparecer.
+      situacao: p.no_pncp == null ? null : p.encerrada ? 'encerrada' : 'aberta',
       // PORTAL REAL onde a sessão roda, derivado do que o PNCP entregou. Distinto de
       // `conectorId`, que é quem CAPTURA o chat: o selo deixa de dizer Compras.gov
       // para um pregão que na verdade acontece na Licitanet/BNC/BLL.
