@@ -8,12 +8,14 @@ function bancoFalso() {
   const mensagens = new Map() // msg_hash → { titular_id, processo_id }
   const notificacoes = []
   let id = 0
+  let consultasLegado = 0
   return {
     mensagens, notificacoes,
+    get consultasLegado() { return consultasLegado },
     async query(sql, p = []) {
-      if (sql.startsWith('SELECT 1 FROM radar_mensagens')) {
-        const m = mensagens.get(p[0])
-        return { rows: m && m.titular_id === p[1] ? [{ '?column?': 1 }] : [] }
+      if (sql.startsWith('SELECT msg_hash FROM radar_mensagens')) {
+        consultasLegado++
+        return { rows: p[1].filter((h) => mensagens.get(h)?.titular_id === p[0]).map((msg_hash) => ({ msg_hash })) }
       }
       if (sql.includes('INSERT INTO radar_mensagens')) {
         if (mensagens.has(p[0])) return { rows: [] }
@@ -29,9 +31,9 @@ function bancoFalso() {
 const PNCP = '07954480000179-1-022924/2026'
 const agora = new Date().toISOString()
 const msg = { licitacaoId: PNCP, autor: 'Pregoeiro', texto: 'Convocação para envio da proposta ajustada', horarioOrigem: agora }
-const ctx = (titularId) => ({
+const ctx = (titularId, procId = `licitanet:${titularId}:${PNCP}`) => ({
   titularId, conectorId: 'licitanet', cnpj: '', regras: [], destinatario: `${titularId}@x`,
-  mapa: new Map([[PNCP, { id: `licitanet:${titularId}:${PNCP}`, titulo: 'Luvas', link_portal: 'https://licitanet.com.br/sessao/1' }]]),
+  mapa: new Map([[PNCP, { id: procId, titulo: 'Luvas', link_portal: 'https://licitanet.com.br/sessao/1' }]]),
 })
 
 test('duas empresas no mesmo pregão recebem, as duas, a mensagem e o alerta', async () => {
@@ -64,7 +66,23 @@ test('mensagem gravada com o hash ANTIGO não volta como nova (nem manda alerta 
   assert.equal(b.novas, 1)
 })
 
-test('o hash do Compras.gov.br não mudou (já amarrava a empresa)', () => {
-  const h = hashDaEmpresa('t', 'p', 'base')
+test('duas linhas da MESMA empresa para o mesmo pregão não regravam a mensagem', async () => {
+  // A seleção e o "Acompanhar no Radar" podem gerar dois processos do mesmo pregão; o
+  // mapa do coletor fica com um ou outro conforme a passada.
+  const banco = bancoFalso()
+  await gravarMensagens(banco, ctx('empresa-a', 'processo-da-selecao'), [msg])
+  const outra = await gravarMensagens(banco, ctx('empresa-a', 'processo-manual'), [msg])
+  assert.equal(outra.novas, 0)
+})
+
+test('o hash antigo é conferido numa consulta só por passada, não uma por mensagem', async () => {
+  const banco = bancoFalso()
+  const log = Array.from({ length: 50 }, (_, i) => ({ ...msg, texto: `aviso ${i}` }))
+  await gravarMensagens(banco, ctx('empresa-a'), log)
+  assert.equal(banco.consultasLegado, 1)
+})
+
+test('o hash do Compras.gov.br não mudou (já amarrava a empresa e o processo)', () => {
+  const h = hashDaEmpresa('comprasgov', 't', 'p', 'base')
   assert.equal(h, crypto.createHash('sha256').update(JSON.stringify(['t', 'p', 'base'])).digest('hex'))
 })
