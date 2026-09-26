@@ -614,7 +614,20 @@ export default function RadarPage() {
             <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} carregando={!data && !falhaInbox} falhou={!data && falhaInbox} />
           </div>
 
-          {loading && !data ? (
+          {/* Falhou a ATUALIZAÇÃO, com dados antigos na tela: sem este aviso a caixa
+              seguia dizendo "sem novidades" com a leitura de horas atrás (revisão da #42). */}
+          {falhaInbox && data && !loading && (
+            <div className="mb-3 flex items-center gap-2 bg-amber/10 border border-amber/30 rounded-lg px-3 py-2 text-[12px] text-amber">
+              <AlertTriangle size={14} className="flex-shrink-0" />
+              <span className="flex-1">Não foi possível atualizar agora. Mostrando os pregões da última leitura.</span>
+              <button onClick={() => void carregar()} className="underline hover:no-underline flex-shrink-0">Tentar agora</button>
+            </div>
+          )}
+
+          {/* `loading` só liga na carga que troca o conteúdo (primeira, troca de setup,
+              "Tentar agora"); o polling usa o modo silencioso. Com `loading && !data`, a
+              troca de setup deixava a lista do recorte anterior sob o rótulo novo. */}
+          {loading ? (
             <div className="space-y-2">
               <p className="text-[12px] text-muted">Carregando os pregões monitorados…</p>
               {[1, 2, 3, 4].map((i) => <div key={i} className="h-12 bg-bg2 border border-subtle rounded-lg animate-pulse" />)}
