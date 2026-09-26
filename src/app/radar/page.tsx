@@ -614,9 +614,25 @@ export default function RadarPage() {
             <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} carregando={!data && !falhaInbox} falhou={!data && falhaInbox} />
           </div>
 
-          {loading ? (
-            <div className="space-y-2">{[1, 2, 3, 4].map((i) => <div key={i} className="h-12 bg-bg2 border border-subtle rounded-lg animate-pulse" />)}</div>
-          ) : !data || processos.length === 0 ? (
+          {loading && !data ? (
+            <div className="space-y-2">
+              <p className="text-[12px] text-muted">Carregando os pregões monitorados…</p>
+              {[1, 2, 3, 4].map((i) => <div key={i} className="h-12 bg-bg2 border border-subtle rounded-lg animate-pulse" />)}
+            </div>
+          ) : !data ? (
+            // A leitura FALHOU. Dizia "Nenhum pregão monitorado ainda", que é outra coisa:
+            // quem tem centenas de pregões lia que não tinha nenhum (requisito 4.2).
+            <div className="bg-bg2 border border-subtle rounded-2xl p-10 text-center">
+              <AlertTriangle size={28} className="text-amber mx-auto mb-3" />
+              <p className="text-[14px] text-strong mb-1">Não foi possível carregar os pregões agora</p>
+              <p className="text-[12px] text-muted max-w-[460px] mx-auto mb-4">
+                A tela tenta de novo sozinha a cada 2 minutos. Se continuar, avise o suporte.
+              </p>
+              <button onClick={() => void carregar()} className="text-[12px] px-4 py-2 rounded-md border border-subtle2 text-muted hover:text-strong">
+                Tentar agora
+              </button>
+            </div>
+          ) : processos.length === 0 ? (
             <div className="bg-bg2 border border-subtle rounded-2xl p-10 text-center">
               <Bell size={28} className="text-faint mx-auto mb-3" />
               <p className="text-[14px] text-strong mb-1">Nenhum pregão monitorado ainda</p>
