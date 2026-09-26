@@ -7,6 +7,22 @@ function msgHash({ conectorId, licitacaoId, autor, texto, horarioOrigem }) {
   return crypto.createHash('sha256').update(partes.join(SEP)).digest('hex')
 }
 
+/**
+ * O `msg_hash` GRAVADO. É a ÚNICA fórmula do repositório (src/lib/radar/hash.ts, que
+ * tinha a antiga, saiu).
+ *
+ * Fora do Compras.gov.br: mensagem + EMPRESA, sem o processo. O processo não entra
+ * porque uma empresa pode ter duas linhas para o mesmo pregão (a da seleção e a do
+ * "Acompanhar no Radar", com CNPJ vazio), e o mapa do coletor fica com uma ou outra
+ * conforme a ordem da passada: com o processo no hash, o histórico seria regravado a
+ * cada troca (revisão da #43). No Compras.gov.br fica a fórmula que ele já usava, com
+ * o processo, para bater com o que está gravado.
+ */
+export function hashDaEmpresa(conectorId, titularId, processoId, baseHash) {
+  const partes = conectorId === 'comprasgov' ? [titularId, processoId, baseHash] : [titularId, baseHash]
+  return crypto.createHash('sha256').update(JSON.stringify(partes)).digest('hex')
+}
+
 // ── classificação (espelha src/lib/radar/regras.ts) ──────────────────────────
 const PADROES = [
   ['convocacao', /convoca[çc]?[ãa]?o?|convocad|comparec/i],
@@ -104,6 +120,18 @@ function classificarSoPadroes(texto) {
 export async function gravarMensagens(banco, ctx, mensagens, { dry = false } = {}) {
   const { titularId, conectorId, cnpj, mapa, regras, destinatario } = ctx
   let total = 0, novas = 0, emails = 0, contidas = 0
+  // O HASH ANTIGO (só portal+pregão), UMA CONSULTA POR PASSADA. A mensagem gravada antes
+  // desta regra, por ESTA empresa, não pode voltar como nova: a troca do hash regravaria
+  // o histórico e reenviaria os alertas. Sem migração de dados, e rodar duas vezes não
+  // muda nada. Em lote porque o portal devolve o log inteiro a cada leitura (centenas de
+  // mensagens), e uma consulta por mensagem aproximava a passada do limite do agendador.
+  const legado = new Set()
+  if (!dry && conectorId !== 'comprasgov' && mensagens.length) {
+    const bases = mensagens.map((m) => msgHash({ conectorId, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem }))
+    const { rows } = await banco.query(
+      'SELECT msg_hash FROM radar_mensagens WHERE titular_id = $1 AND msg_hash = ANY($2::text[])', [titularId, bases])
+    for (const r of rows) legado.add(r.msg_hash)
+  }
   // Cópia ordenada: quem decide o que vira e-mail é a atenção que a mensagem merece,
   // não a ordem em que o portal devolveu.
   const porProcesso = new Map()
@@ -113,10 +141,15 @@ export async function gravarMensagens(banco, ctx, mensagens, { dry = false } = {
     const cats = classificar(m.texto, cnpj, regras)
     const prioridade = prioridadeDe(cats)
     const baseHash = msgHash({ conectorId, licitacaoId: m.licitacaoId, autor: m.autor, texto: m.texto, horarioOrigem: m.horarioOrigem })
-    const hash = conectorId === 'comprasgov'
-      ? crypto.createHash('sha256').update(JSON.stringify([titularId, proc.id, baseHash])).digest('hex') : baseHash
+    // A EMPRESA ENTRA NA IDENTIDADE DA MENSAGEM, EM TODO PORTAL. `msg_hash` é UNIQUE no
+    // banco inteiro, e fora do Compras.gov.br o hash era só portal+pregão+autor+texto+hora:
+    // duas empresas no mesmo pregão (o nº do PNCP é o mesmo para as duas) davam o mesmo
+    // hash, a primeira gravava e a segunda caía no ON CONFLICT DO NOTHING — sem mensagem
+    // e sem alerta, com a tela dizendo "sem novidades" (requisito 4.2).
+    const hash = hashDaEmpresa(conectorId, titularId, proc.id, baseHash)
     total++
     if (dry) { console.log(`    [dry] ${prioridade} [${cats.join(',') || '—'}] ${m.texto.slice(0, 70)}`); continue }
+    if (legado.has(baseHash)) continue // já gravada com o hash antigo, para esta empresa
     const assunto = proc.titulo || m.licitacaoId
     // e-mail (só o que é recente) + in-app (tudo; a caixa é o histórico do processo).
     const jaMandou = porProcesso.get(proc.id) ?? 0
