@@ -38,6 +38,20 @@ test('só aceita a rota pública e normaliza URL de item para compra', () => {
   for (const url of [`${base}?compra=x`, `${base}?compra=20105708900122025`, base.replace('https:', 'http:'), `${base.replace('.gov.br', '.gov.br.evil.test')}?compra=${chave}`, `https://localhost/${chave}`, `${base.replace('/public/', '/seguro/')}?compra=${chave}`]) assert.equal(compraPublica(url), null)
 })
 
+test('a landing do PNCP (destino=acompanhamento-compra) vira a rota canônica', () => {
+  const landing = 'https://cnetmobile.estaleiro.serpro.gov.br/comprasnet-web/public/landing'
+  assert.deepEqual(compraPublica(`${landing}?destino=acompanhamento-compra&compra=${chave}`), { chave, url: `${base}?compra=${chave}` })
+  assert.equal(compraPublica(`${landing}/?compra=${chave}&destino=acompanhamento-compra`)?.url, `${base}?compra=${chave}`)
+  for (const url of [
+    `${landing}?compra=${chave}`, // sem destino
+    `${landing}?destino=outra-coisa&compra=${chave}`,
+    `${landing}?destino=acompanhamento-compra&compra=x`,
+    `${landing.replace('https:', 'http:')}?destino=acompanhamento-compra&compra=${chave}`,
+    `${landing.replace('.gov.br', '.gov.br.evil.test')}?destino=acompanhamento-compra&compra=${chave}`,
+    `${landing}/extra?destino=acompanhamento-compra&compra=${chave}`,
+  ]) assert.equal(compraPublica(url), null, url)
+})
+
 test('horário de Brasília, grupo e precisão da origem são preservados', () => {
   assert.equal(horarioPublico(linha.horario), '2025-12-16T20:01:00.000Z')
   assert.throws(() => horarioPublico('31/02/2025 17:01'))

@@ -16,6 +16,9 @@ import { clsx } from 'clsx'
 import { Download, Radar, ExternalLink, Check, Loader2 } from 'lucide-react'
 import type { Licitacao } from '@/lib/types'
 import { resolverPortal, nomePortal, ePortalDeDisputa } from '@/lib/portais'
+import { CONECTORES } from '@/lib/radar/conectores'
+import { portalSoVisualizacao } from '@/lib/radar/chat-externo.mjs'
+import { lerLinkDoRadar } from '@/lib/radar/adicionar-pregao'
 
 /** Página do edital no PNCP (onde ficam os arquivos p/ download). */
 function paginaEditalPncp(lic: Licitacao): string | null {
@@ -47,15 +50,45 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
   const eDisputa = ePortalDeDisputa(portal)
   const pagEdital = paginaEditalPncp(lic)
 
+  // O RÓTULO DIZ O QUE ACONTECE DEPOIS DO CLIQUE (requisito 4.2). Dizia "Monitorando o
+  // chat" para qualquer licitação, e só alguns portais são lidos. O Compras.gov.br recusa
+  // navegador automatizado: o Radar só MOSTRA o chat oficial dentro do pregão (ver
+  // lib/radar/chat-externo.mjs). Esta tela não carrega a saúde dos conectores; sem ela,
+  // `portalSoVisualizacao` responde "só visualização", porque não saber que lê não é ler.
+  //
+  // O conector sai do LINK, pela mesma regra que a rota aplica (lerLinkDoRadar, a do
+  // coletor). Era `link.includes(dominio)`: "https://licitanet.com.br/" (sem /sessao/N)
+  // habilitava o botão, a rota gravava sem link e a tela dizia "Monitorando o chat" num
+  // pregão que o coletor descarta. O PCP é a exceção: sem link, o coletor acha a página
+  // pelo objeto e pela UF.
+  const link = lic.linkSistemaOrigem ?? ''
+  const lidoLink = link ? lerLinkDoRadar(link) : null
+  const conectorId = !eDisputa ? null
+    : lidoLink?.tipo === 'portal' ? lidoLink.conectorId
+    : portal === 'pcp' ? 'pcp' : null
+  const conector = conectorId ? CONECTORES.find((c) => c.disponivel && c.id === conectorId) : undefined
+  // O botão só existe quando o cadastro TEM como dar certo: a pessoa não vê "Tente de
+  // novo" num clique que nunca ia passar.
+  const cadastravel = !!conector
+  const leitura = !conector || portalSoVisualizacao(conector.id, []) ? 'nenhuma' : conector.leitura
+  const rotulo = leitura === 'chat'
+    ? { antes: 'Ativar monitoramento de chat', depois: 'Monitorando o chat' }
+    : leitura === 'dossie'
+      ? { antes: 'Ativar monitoramento', depois: 'Monitorando o andamento' }
+      : { antes: 'Acompanhar no Radar', depois: 'No Radar · chat oficial, sem alerta' }
+  const dica = leitura === 'nenhuma'
+    ? 'O pregão entra na sua lista do Radar e o chat oficial abre lá dentro. O Radar não lê as mensagens nem avisa sobre elas: o Compras.gov.br exige captcha e recusa navegador automatizado.'
+    : undefined
+
   async function ativarMonitoramento() {
     setMonitor('enviando'); setErro(null)
     try {
       const r = await fetch('/api/radar/processos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Só existe conector de chat para portal de disputa. Mandar 'geosiap'
-          // ou 'orgao-proprio' aqui criaria processo com conector inexistente.
-          conectorId: eDisputa ? portal : 'comprasgov',
+          // O id do CONECTOR, não o do portal (ver `conector` acima). O botão só
+          // aparece com conector achado, então aqui ele sempre existe.
+          conectorId: conector?.id ?? portal,
           licitacaoId: lic.numeroControlePNCP,
           titulo: (lic.objetoCompra ?? '').slice(0, 240),
           uf: uf ?? lic.orgaoEntidade?.uf ?? '',
@@ -63,10 +96,12 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
         }),
       })
       const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j.error || 'falha')
+      if (!r.ok) throw new Error(j.error || '')
       setMonitor('ok')
-    } catch {
-      setMonitor('erro'); setErro('Não foi possível ativar. Tente de novo.')
+    } catch (e) {
+      // A rota explica o motivo ("cole o link público…", integração oficial ligada…);
+      // "Tente de novo" só quando não há motivo, como numa falha de rede.
+      setMonitor('erro'); setErro((e instanceof Error && e.message) || 'Não foi possível ativar. Tente de novo.')
     }
   }
 
@@ -82,14 +117,27 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
           </a>
         )}
 
-        <button onClick={ativarMonitoramento} disabled={monitor === 'enviando' || monitor === 'ok'}
+        {!cadastravel ? (
+          // Sem leitor, ou Compras.gov.br sem o link de acompanhamento: diz por que não há
+          // botão, em vez de oferecer um clique que a rota recusa.
+          <span className="text-[10.5px] text-faint"
+            title={portal === 'comprasgov'
+              ? 'Sem o link público de acompanhamento desta compra, o chat oficial não abre no Radar.'
+              : lidoLink?.tipo === 'erro' ? lidoLink.mensagem : 'Nenhum coletor do Radar lê este portal.'}>
+            {portal === 'comprasgov' ? 'Radar: sem link público desta compra' : 'Radar: sem leitura deste link'}
+          </span>
+        ) : (
+        <button onClick={ativarMonitoramento} disabled={monitor === 'enviando' || monitor === 'ok'} title={dica}
           className={clsx(btn, monitor === 'ok'
-            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+            // Verde só quando há leitura de verdade: "No Radar, sem alerta" em verde
+            // voltaria a parecer proteção.
+            ? leitura === 'nenhuma' ? 'border-subtle2 bg-bg3 text-muted' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
             : 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20')}>
           {monitor === 'enviando' ? <Loader2 size={12} className="animate-spin" />
             : monitor === 'ok' ? <Check size={12} /> : <Radar size={12} />}
-          {monitor === 'ok' ? 'Monitorando o chat' : 'Ativar monitoramento de chat'}
+          {monitor === 'ok' ? rotulo.depois : rotulo.antes}
         </button>
+        )}
 
         {/* O NOME DO PORTAL vem no rótulo do botão, não num modal. Saber que a
             disputa é no Licitanet e não no Compras.gov muda o que o fornecedor

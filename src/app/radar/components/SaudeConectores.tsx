@@ -17,7 +17,14 @@
 // 19–85 min (medido), então o estado NORMAL caía fora da janela de 30 min e pintava
 // de âmbar. Ver JANELA_FRESCO_MIN em lib/radar/saude.ts para os números.
 //
-// A regra agora tem três níveis, e só o último ocupa espaço:
+// TERCEIRA PASSADA, 26/09/2026: A FAIXA DE SELOS SAIU. Cinza ("aguardando a próxima
+// passada") e verde lado a lado liam, para o cliente, como "metade quebrada", e ele não
+// tem o que fazer com nenhum dos dois. Ficou uma frase com os portais acompanhados (o
+// Compras.gov.br entre eles, como os demais: o chat oficial abre, e isso é o que ele
+// oferece) e, só quando há falha REAL, a linha âmbar com o portal e o motivo. O requisito
+// 4.2 continua valendo onde importa: portal que recusou ou calou há horas aparece sempre.
+//
+// A régua anterior, para quem for mexer (continua valendo para a linha de atenção):
 //   · verde  — verificado há pouco; cabe num selo.
 //   · cinza  — OK, mas já faz um tempo. É informação, não chamado: o selo mostra o
 //              relógio e pronto. Ninguém precisa fazer nada.
@@ -29,11 +36,10 @@
 // do grupo — quatro contas boas e uma expirada não podem pintar de verde, ou o
 // agrupamento viraria exatamente a falsa sensação de segurança que o 4.2 proíbe.
 
-import { useMemo, useState } from 'react'
 import { clsx } from 'clsx'
-import { ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, ChevronDown } from 'lucide-react'
+import { ShieldCheck, ShieldAlert, ShieldQuestion, Loader2 } from 'lucide-react'
 import { rotuloSaude, tempoDesde, confiavelAgora, quebrado, parado, precisaAtencao } from '@/lib/radar/saude'
-import { nomeConector } from '@/lib/radar/conectores'
+import { CONECTORES, nomeConector } from '@/lib/radar/conectores'
 import type { StatusSaude } from '@/lib/radar/types'
 
 export interface SaudeItem {
@@ -54,10 +60,6 @@ const COR_CLS: Record<string, string> = {
   vermelho: 'bg-red/15 text-red border-red/30',
   cinza: 'bg-bg4 text-faint border-subtle2',
 }
-
-// Quanto mais alto, mais grave. O grupo herda o MAIOR — é o que impede um portal com
-// uma conta quebrada de aparecer verde só porque as outras quatro estão boas.
-const GRAVIDADE: Record<string, number> = { verde: 0, cinza: 1, amarelo: 2, vermelho: 3 }
 
 /** A chave de lista: `credencialId` é null no monitor público, e null repetido colide. */
 const chaveDe = (s: SaudeItem) => `${s.conectorId}:${s.credencialId ?? 'publico'}`
@@ -87,11 +89,14 @@ function tituloDe(s: SaudeItem, agoraMs: number): string {
   if (parado(s, agoraMs)) return 'Sem verificar há horas — o coletor pode estar parado'
   if (confiavelAgora(s, agoraMs)) return 'Verificado'
   if (s.status === 'nunca_verificado') return 'Aguardando primeira verificação'
+  // Não é "aguardando": não existe passada a esperar para este portal.
+  if (s.status === 'nao_monitorado') return rotuloSaude(s.status).titulo
   return 'Aguardando a próxima passada'
 }
 
 /** A linha do relógio: até quando a gente olhou, sem prometer o que não leu. */
 function linhaEstado(s: SaudeItem, agoraMs: number) {
+  if (s.status === 'nao_monitorado') return 'o Radar não lê este portal'
   if (confiavelAgora(s, agoraMs)) return `verificado ${tempoDesde(s.verificadoEm, agoraMs)} · sem novidades até então`
   if (s.verificadoEm) return `última verificação OK ${tempoDesde(s.verificadoEm, agoraMs)}`
   return `tentativa ${tempoDesde(s.tentadoEm, agoraMs)}`
@@ -124,108 +129,42 @@ function Linha({ s, agoraMs }: { s: SaudeItem; agoraMs: number }) {
   )
 }
 
-export default function SaudeConectores({ saude, agoraMs }: { saude: SaudeItem[]; agoraMs: number }) {
-  const [abertos, setAbertos] = useState<Set<string>>(new Set())
-
-  const grupos = useMemo(() => {
-    const porPortal = new Map<string, SaudeItem[]>()
-    for (const s of saude) {
-      const lista = porPortal.get(s.conectorId)
-      if (lista) lista.push(s)
-      else porPortal.set(s.conectorId, [s])
-    }
-    return [...porPortal.entries()]
-      .map(([conectorId, itens]) => {
-        const atencao = itens.filter((s) => precisaAtencao(s, agoraMs))
-        const cor = itens.reduce(
-          (pior, s) => (GRAVIDADE[corDe(s, agoraMs)] > GRAVIDADE[pior] ? corDe(s, agoraMs) : pior),
-          'verde',
-        )
-        // O relógio do grupo é o do item MENOS recente: dizer "há 3 min" porque uma
-        // das contas acabou de rodar esconderia a que está parada há um dia.
-        const maisAntigo = itens.reduce((a, s) =>
-          new Date(s.verificadoEm ?? 0).getTime() < new Date(a.verificadoEm ?? 0).getTime() ? s : a)
-        return { conectorId, itens, atencao, cor, maisAntigo }
-      })
-      .sort((a, b) => GRAVIDADE[b.cor] - GRAVIDADE[a.cor] || a.conectorId.localeCompare(b.conectorId))
-  }, [saude, agoraMs])
-
+export default function SaudeConectores({ saude, agoraMs, carregando = false, falhou = false }: { saude: SaudeItem[]; agoraMs: number; carregando?: boolean; falhou?: boolean }) {
+  // Dizia "Nenhum conector configurado. Conecte um portal…", e na prática aparecia só
+  // enquanto a página carregava (a inbox sempre manda o Compras.gov.br): mandava a pessoa
+  // configurar algo que não existe, no segundo em que ela chegava à tela.
   if (saude.length === 0) {
     return (
-      <div className="bg-bg2 border border-subtle rounded-xl p-4 text-[12px] text-muted">
-        Nenhum conector configurado. Conecte um portal para o Radar começar a monitorar os chats.
-      </div>
+      <p className="text-[12px] text-muted">
+        {falhou
+          ? 'Não foi possível consultar os portais agora. A tela tenta de novo sozinha em até 2 minutos.'
+          : carregando
+            ? 'Consultando os portais…'
+            : 'Nenhum portal verificado ainda. Os portais públicos são lidos sem login, a cada passada do coletor.'}
+      </p>
     )
   }
 
-  const pedemAtencao = grupos.flatMap((g) => g.atencao)
-  const verificados = grupos.filter((g) => g.itens.every((s) => confiavelAgora(s, agoraMs))).length
+  // Na ordem do catálogo, com nome curto ("BLL", não "BLL — Bolsa de Licitações e Leilões").
+  const presentes = new Set(saude.map((s) => s.conectorId))
+  const nomes = CONECTORES.filter((c) => presentes.has(c.id)).map((c) => c.nome.split(' — ')[0])
+  const pedemAtencao = saude.filter((s) => precisaAtencao(s, agoraMs))
+  // "Nenhum problema na última verificação" exige que ALGUMA verificação tenha
+  // acontecido: num tenant novo (tudo `nunca_verificado`) a frase seria falsa (4.2).
+  const algumVerificado = saude.some((s) => confiavelAgora(s, agoraMs))
 
   return (
     <div className="space-y-1.5">
-      {/* A faixa: um selo por portal, tudo numa linha só. */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {grupos.map((g) => {
-          const aberto = abertos.has(g.conectorId)
-          return (
-            <button
-              key={g.conectorId}
-              type="button"
-              onClick={() =>
-                setAbertos((atual) => {
-                  const novo = new Set(atual)
-                  if (novo.has(g.conectorId)) novo.delete(g.conectorId)
-                  else novo.add(g.conectorId)
-                  return novo
-                })
-              }
-              aria-expanded={aberto}
-              title={`${nomeConector(g.conectorId)} — ${linhaEstado(g.maisAntigo, agoraMs)}`}
-              className={clsx(
-                'inline-flex items-center gap-1.5 rounded-full border pl-2 pr-1.5 py-1 text-[11px] transition-opacity hover:opacity-80',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
-                COR_CLS[g.cor],
-              )}
-            >
-              <IconeEstado cor={g.cor} size={12} />
-              <span className="font-semibold">{nomeConector(g.conectorId)}</span>
-              {/* A contagem só aparece quando há mais de uma conta — senão é ruído. */}
-              {g.itens.length > 1 && <span className="opacity-70">×{g.itens.length}</span>}
-              <span className="opacity-70">{tempoDesde(g.maisAntigo.verificadoEm, agoraMs)}</span>
-              <ChevronDown size={11} className={clsx('opacity-60 transition-transform', aberto && 'rotate-180')} />
-            </button>
-          )
-        })}
-        {/* O contador é o sinal de topo — quando algo precisa de ação ele deixa de
-            contabilizar e passa a chamar, sem custar um pixel a mais de altura. */}
-        {pedemAtencao.length > 0 ? (
-          <span className="text-[10.5px] text-amber font-semibold ml-1">
-            {pedemAtencao.length} precisa{pedemAtencao.length === 1 ? '' : 'm'} de atenção
-          </span>
-        ) : (
-          <span className="text-[10.5px] text-faint ml-1">
-            {verificados} de {grupos.length} verificado{grupos.length === 1 ? '' : 's'}
+      <p className="text-[12px] text-muted">
+        Portais acompanhados: {nomes.join(', ')}.{' '}
+        {pedemAtencao.length === 0 && (
+          <span className="text-faint">
+            {algumVerificado ? 'Nenhum problema na última verificação.' : 'Aguardando a primeira verificação.'}
           </span>
         )}
-      </div>
-
-      {/* Só quem PRECISA DE AÇÃO abre sozinho. Envelhecer não entra aqui: o selo já
-          mostra o relógio, e quem quiser o detalhe clica. */}
-      {pedemAtencao.length > 0 && (
-        <div className="space-y-1.5">
-          {pedemAtencao.map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
-        </div>
-      )}
-
-      {/* E o detalhe do resto, só para quem pediu. */}
-      {abertos.size > 0 && (
-        <div className="space-y-1.5">
-          {grupos
-            .filter((g) => abertos.has(g.conectorId))
-            .flatMap((g) => g.itens.filter((s) => !precisaAtencao(s, agoraMs)))
-            .map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
-        </div>
-      )}
+      </p>
+      {/* Só a falha REAL ocupa espaço: portal que recusou, erro, ou calado há horas. */}
+      {pedemAtencao.map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
     </div>
   )
 }
