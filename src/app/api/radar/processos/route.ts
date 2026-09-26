@@ -12,6 +12,7 @@ import { modoComprasgov } from '@/lib/radar/comprasgov'
 import { candidatosNoPncp } from '@/lib/radar/link-processo.mjs'
 import { conectorDoPortal, lerLinkDoRadar, nomeCurto } from '@/lib/radar/adicionar-pregao'
 import { resolverPortal, nomePortal } from '@/lib/portais'
+import { rateLimit } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 
@@ -45,11 +46,18 @@ export async function PATCH(req: NextRequest) {
   if (body.status) { params.push(body.status); sets.push(`status = $${params.length}`) }
   if (body.linkPortal !== undefined) {
     // O coletor abre este link. Conferido contra o conector da PRÓPRIA linha (ver linkSeguro).
-    const dona = await queryOne<{ conector_id: string }>(
-      `SELECT conector_id FROM radar_processos WHERE id = $1 AND titular_id = $2`, [body.id, t.titularId])
+    const dona = await queryOne<{ conector_id: string; licitacao_id: string }>(
+      `SELECT conector_id, licitacao_id FROM radar_processos WHERE id = $1 AND titular_id = $2`, [body.id, t.titularId])
     if (!dona) return NextResponse.json({ error: 'não encontrado' }, { status: 404 })
-    const link = dona.conector_id === 'comprasgov' ? compraPublica(body.linkPortal ?? '')?.url ?? null : linkSeguro(dona.conector_id, body.linkPortal)
+    const compra = dona.conector_id === 'comprasgov' ? compraPublica(body.linkPortal ?? '') : null
+    const link = dona.conector_id === 'comprasgov' ? compra?.url ?? null : linkSeguro(dona.conector_id, body.linkPortal)
     if (body.linkPortal && !link) return NextResponse.json({ error: 'Este link não é a página de um pregão que o Radar lê neste portal.' }, { status: 400 })
+    // O link de OUTRA compra numa linha `comprasgov:publico:<chave>` misturaria as duas:
+    // o quadro e o coletor abririam B, e as mensagens entrariam como A.
+    const PREFIXO = 'comprasgov:publico:'
+    if (compra && dona.licitacao_id.startsWith(PREFIXO) && compra.chave !== dona.licitacao_id.slice(PREFIXO.length)) {
+      return NextResponse.json({ error: 'Este link é de outra compra. Para acompanhá-la, use "Adicionar pregão fora do perfil".' }, { status: 400 })
+    }
     params.push(link); sets.push(`link_portal = $${params.length}`)
   }
   // `participando_em` anda junto com a marca, na MESMA instrucao: uma coluna de data
@@ -112,6 +120,13 @@ export async function POST(req: NextRequest) {
   if (typeof body.link === 'string') return adicionarPorLink(t, body.link)
   const cnpj = (body.cnpj ?? '').replace(/\D+/g, '')
   const conectorId = body.conectorId ?? 'comprasgov'
+  // Link recusado responde 400, como no PATCH e no "Adicionar pregão". Gravar sem link e
+  // responder ok deixava "Monitorando o chat" em verde num pregão que o coletor descarta.
+  // O PCP é a exceção: sem link, o coletor acha a página pelo objeto e pela UF.
+  const linkOk = conectorId === 'comprasgov' ? null : linkSeguro(conectorId, body.linkPortal)
+  if (body.linkPortal && conectorId !== 'comprasgov' && conectorId !== 'pcp' && !linkOk) {
+    return NextResponse.json({ error: 'Este link não é a página de um pregão que o Radar lê neste portal.' }, { status: 400 })
+  }
   const uf = (body.uf ?? '').trim().toUpperCase().slice(0, 2) || null
   // Em portal PÚBLICO, a licitação é o próprio objeto/título — não exige nº de controle
   // (quem adiciona à mão nem sempre tem o número em mãos). Era 'pcp' escrito na regra, e
@@ -137,7 +152,7 @@ export async function POST(req: NextRequest) {
        uf = COALESCE(EXCLUDED.uf, radar_processos.uf),
        link_portal = COALESCE(EXCLUDED.link_portal, radar_processos.link_portal),
        atualizado_em = now()`,
-    [id, t.titularId, t.userId, conectorId, cnpj, licitacaoId, body.titulo ?? null, uf, compra?.url ?? linkSeguro(conectorId, body.linkPortal)],
+    [id, t.titularId, t.userId, conectorId, cnpj, licitacaoId, body.titulo ?? null, uf, compra?.url ?? linkOk],
   )
   return NextResponse.json({ ok: true })
 }
@@ -178,6 +193,11 @@ function linkSeguro(conectorId: string, link: string | null | undefined): string
  * isso mudar.
  */
 async function adicionarPorLink(t: { titularId: string; userId: string }, texto: string) {
+  // A busca por link varre `contratacoes` (sem índice até rodar
+  // scripts/radar/migrate-link-externo-idx.mjs). O teto por titular impede que uma conta
+  // dispare dezenas em paralelo e prenda o pool do banco de todo mundo.
+  const rl = await rateLimit(`radar-link:${t.titularId}`, 20, 60_000)
+  if (!rl.ok) return NextResponse.json({ error: 'Muitas tentativas seguidas. Espere um minuto e tente de novo.' }, { status: 429 })
   const lido = lerLinkDoRadar(texto)
   if (lido.tipo === 'vazio') return NextResponse.json({ error: 'Cole o link do pregão.' }, { status: 400 })
   if (lido.tipo === 'erro') return NextResponse.json({ error: lido.mensagem, motivo: lido.motivo }, { status: 400 })
@@ -268,9 +288,12 @@ async function adicionarPorLink(t: { titularId: string; userId: string }, texto:
         AND (licitacao_id = ANY($3) OR link_portal = ANY($4))
       ORDER BY (licitacao_id = ANY($3)) DESC, (status = 'ativo' AND NOT mutado) DESC, atualizado_em DESC
       LIMIT 1`,
+    // No Compras.gov.br só vale a linha `comprasgov:publico:<chave>`: a da seleção (nº do
+    // PNCP) o UPDATE não renomeia, e sem o prefixo ela nunca conta como lida
+    // (situacaoLeitura, coleta assistida). Fica como está, e esta é outra linha.
     [t.titularId, conectorId,
-      [c?.numero_controle_pncp, chaveCompra ? `comprasgov:publico:${chaveCompra}` : null].filter(Boolean),
-      [...new Set(linksConhecidos)]],
+      chaveCompra ? [`comprasgov:publico:${chaveCompra}`] : [c?.numero_controle_pncp].filter(Boolean),
+      chaveCompra ? [] : [...new Set(linksConhecidos)]],
   )
   if (antes) {
     // `origem` vira 'manual' mesmo numa linha que a seleção criou: é isso que a mantém na

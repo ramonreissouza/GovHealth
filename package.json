@@ -33,6 +33,7 @@
     "radar:comprasgov:publico:teste": "node --test scripts/radar/comprasgov-publico.teste.mjs",
     "radar:chat-externo:teste": "node --test scripts/radar/chat-externo.teste.mjs",
     "radar:link-processo:teste": "node --test scripts/radar/link-processo.teste.mjs",
+    "radar:link-idx:migrate": "node scripts/radar/migrate-link-externo-idx.mjs",
     "radar:ciclo:teste": "node --test scripts/radar/ciclo-cobertura.teste.mjs",
     "trgm:migrate": "node scripts/migrate-trgm.mjs",
     "checkpoint:migrate": "node scripts/migrate-checkpoint-pendentes.mjs",

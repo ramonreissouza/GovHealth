@@ -46,12 +46,16 @@ export function portalSoVisualizacao(conectorId, saude) {
  * @param {Iterable<string>} leitores ids de conector que algum coletor lê (catálogo
  *   `CONECTORES` disponível, sem o `comprasgov`); vem de fora para este módulo continuar
  *   testável em Node puro, sem importar TypeScript.
+ * @param {string} prefixoLido o `licitacao_id` que o coletor do modo em uso lê. Era
+ *   `comprasgov:`, largo demais: as linhas do modo API (`comprasgov:producao:`) contariam
+ *   como lidas pela saúde do modo público. O padrão é o modo público; quem liga o modo
+ *   API passa `'comprasgov:producao:'`.
  * @returns {'lido' | 'so_no_portal' | 'sem_leitor'}
  */
-export function situacaoLeitura(processo, saude, leitores = []) {
+export function situacaoLeitura(processo, saude, leitores = [], prefixoLido = 'comprasgov:publico:') {
   const naoLido = processo.portal === 'comprasgov' ? 'so_no_portal' : 'sem_leitor'
   if (processo.conectorId === 'comprasgov') {
-    const doColetor = (processo.licitacaoId ?? '').startsWith('comprasgov:')
+    const doColetor = (processo.licitacaoId ?? '').startsWith(prefixoLido)
     return doColetor && !portalSoVisualizacao('comprasgov', saude) ? 'lido' : naoLido
   }
   return new Set(leitores).has(processo.conectorId ?? '') ? 'lido' : naoLido

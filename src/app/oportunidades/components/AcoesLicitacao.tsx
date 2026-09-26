@@ -18,7 +18,7 @@ import type { Licitacao } from '@/lib/types'
 import { resolverPortal, nomePortal, ePortalDeDisputa } from '@/lib/portais'
 import { CONECTORES } from '@/lib/radar/conectores'
 import { portalSoVisualizacao } from '@/lib/radar/chat-externo.mjs'
-import { compraPublica } from '@/lib/radar/comprasgov-publico.mjs'
+import { lerLinkDoRadar } from '@/lib/radar/adicionar-pregao'
 
 /** Página do edital no PNCP (onde ficam os arquivos p/ download). */
 function paginaEditalPncp(lic: Licitacao): string | null {
@@ -56,18 +56,20 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
   // lib/radar/chat-externo.mjs). Esta tela não carrega a saúde dos conectores; sem ela,
   // `portalSoVisualizacao` responde "só visualização", porque não saber que lê não é ler.
   //
-  // O conector é achado pelo id OU pelo domínio do link: o catálogo de portais e o de
-  // conectores nem sempre usam o mesmo id (o Compras RS é `celic-rs` num e `egovrs` no
-  // outro), e exigir id igual rotulava como "sem leitura" um portal que o Radar lê.
+  // O conector sai do LINK, pela mesma regra que a rota aplica (lerLinkDoRadar, a do
+  // coletor). Era `link.includes(dominio)`: "https://licitanet.com.br/" (sem /sessao/N)
+  // habilitava o botão, a rota gravava sem link e a tela dizia "Monitorando o chat" num
+  // pregão que o coletor descarta. O PCP é a exceção: sem link, o coletor acha a página
+  // pelo objeto e pela UF.
   const link = lic.linkSistemaOrigem ?? ''
-  const conector = eDisputa
-    ? CONECTORES.find((c) => c.disponivel && (c.id === portal || (!!c.dominio && link.includes(c.dominio))))
-    : undefined
-  // O botão só existe quando o cadastro TEM como dar certo. Antes, portal sem conector
-  // ia como `comprasgov` e a rota respondia 400 ("cole o link público") sempre; e o
-  // Compras.gov.br sem o link de acompanhamento também. A pessoa via "Tente de novo"
-  // num clique que nunca ia passar.
-  const cadastravel = !!conector && (conector.id !== 'comprasgov' || !!compraPublica(link))
+  const lidoLink = link ? lerLinkDoRadar(link) : null
+  const conectorId = !eDisputa ? null
+    : lidoLink?.tipo === 'portal' ? lidoLink.conectorId
+    : portal === 'pcp' ? 'pcp' : null
+  const conector = conectorId ? CONECTORES.find((c) => c.disponivel && c.id === conectorId) : undefined
+  // O botão só existe quando o cadastro TEM como dar certo: a pessoa não vê "Tente de
+  // novo" num clique que nunca ia passar.
+  const cadastravel = !!conector
   const leitura = !conector || portalSoVisualizacao(conector.id, []) ? 'nenhuma' : conector.leitura
   const rotulo = leitura === 'chat'
     ? { antes: 'Ativar monitoramento de chat', depois: 'Monitorando o chat' }
@@ -121,8 +123,8 @@ export default function AcoesLicitacao({ lic, uf }: { lic: Licitacao; uf?: strin
           <span className="text-[10.5px] text-faint"
             title={portal === 'comprasgov'
               ? 'Sem o link público de acompanhamento desta compra, o chat oficial não abre no Radar.'
-              : 'Nenhum coletor do Radar lê este portal.'}>
-            {portal === 'comprasgov' ? 'Radar: sem link público desta compra' : 'Radar: portal sem leitura'}
+              : lidoLink?.tipo === 'erro' ? lidoLink.mensagem : 'Nenhum coletor do Radar lê este portal.'}>
+            {portal === 'comprasgov' ? 'Radar: sem link público desta compra' : 'Radar: sem leitura deste link'}
           </span>
         ) : (
         <button onClick={ativarMonitoramento} disabled={monitor === 'enviando' || monitor === 'ok'} title={dica}

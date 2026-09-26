@@ -149,12 +149,19 @@ export default function SaudeConectores({ saude, agoraMs, carregando = false, fa
   const presentes = new Set(saude.map((s) => s.conectorId))
   const nomes = CONECTORES.filter((c) => presentes.has(c.id)).map((c) => c.nome.split(' — ')[0])
   const pedemAtencao = saude.filter((s) => precisaAtencao(s, agoraMs))
+  // "Nenhum problema na última verificação" exige que ALGUMA verificação tenha
+  // acontecido: num tenant novo (tudo `nunca_verificado`) a frase seria falsa (4.2).
+  const algumVerificado = saude.some((s) => confiavelAgora(s, agoraMs))
 
   return (
     <div className="space-y-1.5">
       <p className="text-[12px] text-muted">
         Portais acompanhados: {nomes.join(', ')}.{' '}
-        {pedemAtencao.length === 0 && <span className="text-faint">Nenhum problema na última verificação.</span>}
+        {pedemAtencao.length === 0 && (
+          <span className="text-faint">
+            {algumVerificado ? 'Nenhum problema na última verificação.' : 'Aguardando a primeira verificação.'}
+          </span>
+        )}
       </p>
       {/* Só a falha REAL ocupa espaço: portal que recusou, erro, ou calado há horas. */}
       {pedemAtencao.map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}

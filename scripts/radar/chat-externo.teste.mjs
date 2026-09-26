@@ -62,6 +62,14 @@ test('cadastro do próprio coletor (comprasgov:<modo>:<chave>) com saúde ok: li
   assert.equal(situacaoLeitura(doColetor, semLeitura, LEITORES), 'so_no_portal')
 })
 
+test('linha do modo API não conta como lida pela saúde do modo público (e vice-versa)', () => {
+  const api = auto({ licitacaoId: 'comprasgov:producao:94300105002432026', linkPortal: oficial })
+  assert.equal(situacaoLeitura(api, lendo, LEITORES), 'so_no_portal')
+  assert.equal(situacaoLeitura(api, lendo, LEITORES, 'comprasgov:producao:'), 'lido')
+  const pub = auto({ licitacaoId: 'comprasgov:publico:94300105002432026', linkPortal: oficial })
+  assert.equal(situacaoLeitura(pub, lendo, LEITORES, 'comprasgov:producao:'), 'so_no_portal')
+})
+
 test('conector comprasgov com sessão em OUTRO portal: sem leitor, e não vira quadro', () => {
   const p = auto({ portal: 'licitanet', linkOrigem: oficial })
   assert.equal(situacaoLeitura(p, semLeitura, LEITORES), 'sem_leitor')
