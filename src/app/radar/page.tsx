@@ -610,7 +610,7 @@ export default function RadarPage() {
           {/* Saúde dos conectores — uma faixa, não uma grade. Ver o cabeçalho do
               componente para o porquê. */}
           <div className="mb-4">
-            <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">Saúde dos conectores</div>
+            <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">Portais</div>
             <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} carregando={!data && !falhaInbox} falhou={!data && falhaInbox} />
           </div>
 
@@ -622,7 +622,7 @@ export default function RadarPage() {
               <p className="text-[14px] text-strong mb-1">Nenhum pregão monitorado ainda</p>
               <p className="text-[12px] text-muted max-w-[460px] mx-auto">
                 Assim que a seleção automática achar licitações do seu perfil, elas aparecem aqui —
-                e as mensagens do chat entram conforme o conector captura. Verifique a saúde dos conectores acima.
+                e as mensagens do chat entram conforme o conector captura. Falhas de leitura aparecem em Portais, acima.
               </p>
             </div>
           ) : (
@@ -988,7 +988,7 @@ export default function RadarPage() {
                                 : semLeitor
                                   ? 'O Radar não lê o chat deste portal. Acompanhe pelo local da disputa.'
                                   : capturaNuncaLigou
-                                    ? 'Este chat ainda não foi lido: nenhum portal foi verificado com sucesso até agora. Veja a saúde dos conectores acima.'
+                                    ? 'Este chat ainda não foi lido: nenhum portal foi verificado com sucesso até agora. Veja Portais, acima.'
                                     : 'O monitoramento está ativo — assim que o pregoeiro escrever no chat, aparece aqui.'}
                             </p>
                           </div>
@@ -1032,7 +1032,7 @@ export default function RadarPage() {
           {data && (
             <p className="text-[10px] text-faint mt-3">
               Os pregões são selecionados automaticamente pelo seu perfil (UFs, categorias, termos e portfólio) — ajuste em Perfil &amp; Preferências.
-              A captura de chat depende de um conector ativo: &quot;sem novidades&quot; só é confiável quando o conector está verde acima.
+              A captura de chat depende de um conector ativo: &quot;sem novidades&quot; só é confiável quando não há aviso de falha em Portais, acima.
               Palavras-chave e notificações ficam em <Link href="/radar/configuracoes" className="text-accent hover:underline">Configurações gerais</Link>.
               Marcações de <strong>Importante</strong> e <strong>Arquivado</strong> ficam neste navegador.
             </p>
