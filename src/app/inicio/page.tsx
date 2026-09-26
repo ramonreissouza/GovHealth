@@ -103,7 +103,7 @@ export default async function InicioPage() {
           <div className="max-w-[1080px] mx-auto px-6 pt-16 pb-16 grid lg:grid-cols-[1fr_1.05fr] gap-12 items-center">
             <div>
               <div className="reveal inline-flex items-center gap-1.5 text-[11px] font-mono-custom text-strong glass rounded-full px-3 py-1.5 mb-6" style={{ '--d': '0s' } as React.CSSProperties}>
-                <ShieldCheck size={12} className="text-teal" /> Fontes 100% oficiais · metodologia pública
+                <ShieldCheck size={12} className="text-teal" /> Fontes 100% oficiais · metodologia pública e auditável
               </div>
               {/* Três verbos = as três formas de perder dinheiro vendendo para a
                   saúde pública: não achar, achar e perder no detalhe, ganhar e não
