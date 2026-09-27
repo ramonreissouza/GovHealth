@@ -8,7 +8,9 @@ import { buscarContratosPorUG, buscarContratosPorFornecedor, calcularContratosSt
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
 export const runtime = 'nodejs'
-export const maxDuration = 30
+// 30s não cobria nem duas páginas lentas do PNCP; a lib agora pagina com orçamento
+// próprio e devolve parcial antes disso estourar.
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
@@ -27,13 +29,18 @@ export async function GET(req: NextRequest) {
   if (cached) return NextResponse.json(cached)
 
   try {
-    const contratos = ug
-      ? await buscarContratosPorUG(ug)
+    // Por UG o universo é a própria resposta; por CNPJ o PNCP declara um total que
+    // pode ser maior que o que coube nas páginas lidas — e isso vai para a tela.
+    const res = ug
+      ? { contratos: await buscarContratosPorUG(ug), totalNoPncp: 0, truncado: false }
       : await buscarContratosPorFornecedor(cnpj!)
+    const contratos = res.contratos
 
     const payload = {
       contratos,
       stats: calcularContratosStats(contratos),
+      truncado: res.truncado,
+      totalNaFonte: res.totalNoPncp || contratos.length,
       fonte: ug ? 'Contratos.gov.br (Comprasnet)' : 'PNCP — Portal Nacional de Contratações Públicas',
       atualizadoEm: new Date().toISOString(),
     }

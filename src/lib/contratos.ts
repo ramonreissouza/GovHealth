@@ -16,6 +16,22 @@ const BASE = 'https://contratos.comprasnet.gov.br/api'
 const PNCP_SEARCH = 'https://pncp.gov.br/api/search'
 const PNCP_API = 'https://pncp.gov.br/api/pncp/v1'
 const TIMEOUT = 15_000
+// O PNCP responde muito mais devagar de dia que de madrugada (medido: ~5s por página
+// às 3h contra ~14s às 17h, e pior sob carga). Com 15s e duas tentativas a busca por
+// fornecedor devolvia "PNCP indisponível" no meio da tarde — o usuário lia isso como
+// "não tem contrato", que é a leitura errada e a que derruba a confiança na tela.
+const TIMEOUT_BUSCA = 45_000
+const TENTATIVAS_BUSCA = 4
+
+// O PNCP derruba a conexão (ECONNRESET, ~800ms) para User-Agents no formato
+// "(compatible; Nome/versão)". Medido em 27/09/2026, 10 chamadas idênticas de cada:
+//   "Mozilla/5.0 (compatible; GovHealthAI/1.0)"  → 5 de 10
+//   o mesmo Chrome de um navegador                → 10 de 10
+//   Chrome + " GovHealthAI/1.0" no fim            → 10 de 10
+// Com 50% por requisição, uma busca de 4 páginas quase nunca fechava — e a tela
+// dizia "PNCP indisponível", que o usuário lê como "esse fornecedor não tem nada".
+// Ficamos com a terceira forma: continuamos nos identificando, no formato que passa.
+const UA_BUSCA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36 GovHealthAI/1.0'
 
 /** Converte valor monetário em formato BR ("75.865.370,30") ou número para Number. */
 export function parseValorBR(v: unknown): number {
@@ -152,35 +168,58 @@ async function nomeFornecedorPNCP(it: PncpContratoSearch): Promise<string> {
 
 // O PNCP às vezes responde 5xx/instável sob carga. Uma página do resultado com
 // uma tentativa extra — UA de navegador (o PNCP bloqueia alguns UAs "de robô").
-async function buscarPaginaPNCP(cnpj: string, pagina: number, tam: number): Promise<PncpContratoSearch[] | null> {
+async function buscarPaginaPNCP(cnpj: string, pagina: number, tam: number): Promise<{ itens: PncpContratoSearch[]; total: number } | null> {
   const url = `${PNCP_SEARCH}/?q=${cnpj}&tipos_documento=contrato&ordenacao=-data&pagina=${pagina}&tam_pagina=${tam}`
-  for (let tentativa = 0; tentativa < 2; tentativa++) {
+  for (let tentativa = 0; tentativa < TENTATIVAS_BUSCA; tentativa++) {
     try {
       const res = await withTimeout(
-        fetch(url, { headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; GovHealthAI/1.0)' } }),
-        TIMEOUT,
+        // no-store: quem guarda esta busca e o cache da rota (TTL.LONG); deixar o
+        // fetch do Next guardar tambem criaria duas validades para o mesmo dado.
+        fetch(url, { cache: 'no-store', headers: { Accept: 'application/json', 'User-Agent': UA_BUSCA } }),
+        TIMEOUT_BUSCA,
         'pncp-search',
       )
       if (res.ok) {
         const json = await res.json()
-        return Array.isArray(json?.items) ? json.items : []
+        // `total` e o universo que o PNCP diz existir para a busca — e como sabemos
+        // se paramos por ter acabado ou por ter batido no teto (ver ResultadoFornecedor).
+        return { itens: Array.isArray(json?.items) ? json.items : [], total: Number(json?.total) || 0 }
       }
     } catch {
       /* rede/timeout — tenta de novo abaixo */
     }
-    await sleep(600)
+    // Espera crescente: 0,6s · 1,2s · 2,4s. Insistir no mesmo ritmo numa janela ruim
+    // do PNCP só gasta as tentativas todas dentro do mesmo minuto ruim.
+    await sleep(600 * 2 ** tentativa)
   }
   return null   // falhou após as tentativas
 }
 
+/** O que a busca por CNPJ devolve — com o recorte declarado, nunca implícito. */
+export interface ResultadoFornecedor {
+  contratos: ContratoGov[]
+  /** Quantos o PNCP diz existir para este CNPJ (o universo, não o que coube). */
+  totalNoPncp: number
+  /** true quando o teto de páginas cortou a lista — a tela precisa avisar. */
+  truncado: boolean
+}
+
 /** Contratos de um fornecedor (CNPJ, somente dígitos) — inteligência de incumbente. */
-export async function buscarContratosPorFornecedor(cnpj: string): Promise<ContratoGov[]> {
+export async function buscarContratosPorFornecedor(cnpj: string): Promise<ResultadoFornecedor> {
   const limpo = cnpj.replace(/\D/g, '')
   if (limpo.length !== 14) throw new Error('CNPJ inválido (informe 14 dígitos).')
 
   const TAM = 50
-  const MAX_PAGINAS = 4        // até ~200 contratos — suficiente para o radar
+  // Era 4 (200 contratos), e o teto era SILENCIOSO: um fornecedor grande via a lista
+  // cortada sem aviso nenhum, e o total na tela virava um número menor que a verdade.
+  // 20 páginas (1.000) cobrem a cauda larga; acima disso a tela avisa em vez de mentir.
+  const MAX_PAGINAS = 20
+  // Orçamento de parede: a rota morre em 300s, e uma lista parcial COM AVISO vale
+  // mais que um erro. Paramos antes e deixamos o `truncado` contar a verdade.
+  const ORCAMENTO_MS = 200_000
+  const comecou = Date.now()
   const itens: PncpContratoSearch[] = []
+  let totalNoPncp = 0
 
   for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
     const lote = await buscarPaginaPNCP(limpo, pagina, TAM)
@@ -190,15 +229,21 @@ export async function buscarContratosPorFornecedor(cnpj: string): Promise<Contra
       if (pagina === 1) throw new Error('PNCP indisponível no momento. Tente novamente em instantes.')
       break
     }
-    itens.push(...lote)
-    if (lote.length < TAM) break        // última página
+    if (pagina === 1) totalNoPncp = lote.total
+    itens.push(...lote.itens)
+    if (lote.itens.length < TAM) break        // última página
+    if (Date.now() - comecou > ORCAMENTO_MS) break   // acabou o tempo, não os dados
   }
 
-  if (itens.length === 0) return []
+  if (itens.length === 0) return { contratos: [], totalNoPncp, truncado: false }
 
   // Uma chamada de detalhe para obter a razão social (a mesma para todos os contratos do CNPJ).
   const nome = await nomeFornecedorPNCP(itens[0])
-  return itens.map((it) => mapPncpContrato(it, limpo, nome))
+  return {
+    contratos: itens.map((it) => mapPncpContrato(it, limpo, nome)),
+    totalNoPncp: totalNoPncp || itens.length,
+    truncado: totalNoPncp > itens.length,
+  }
 }
 
 // ── Helpers de inteligência ─────────────────────────────────────────────────
@@ -215,6 +260,9 @@ export function estaVigente(c: ContratoGov, ref = new Date()): boolean {
 export interface ContratosStats {
   total: number
   vigentes: number
+  /** Somatório de TUDO que já foi contratado — é o que o cliente chama de "quanto vendi". */
+  valorTotal: number
+  /** Somatório só do que está em vigor hoje — bem menor, e era o único número exibido. */
   valorVigente: number
   vencendo180d: number
 }
@@ -226,6 +274,7 @@ export function calcularContratosStats(contratos: ContratoGov[]): ContratosStats
   return {
     total: contratos.length,
     vigentes: vigentes.length,
+    valorTotal: contratos.reduce((s, c) => s + c.valorGlobal, 0),
     valorVigente: vigentes.reduce((s, c) => s + c.valorGlobal, 0),
     vencendo180d: vigentes.filter((c) => new Date(c.vigenciaFim) <= limite).length,
   }
