@@ -444,6 +444,8 @@ export default async function InicioPage() {
           </div>
           <div className="flex items-center gap-5 text-[12.5px]">
             <Link href="/metodologia" className="text-muted hover:text-accent">Metodologia</Link>
+            <Link href="/termos" className="text-muted hover:text-accent">Termos de Uso</Link>
+            <Link href="/privacidade" className="text-muted hover:text-accent">Privacidade</Link>
             <Link href="/login" className="text-muted hover:text-accent">Entrar</Link>
             <a href="mailto:contato@techealth.com.br" className="text-muted hover:text-accent">Contato</a>
           </div>

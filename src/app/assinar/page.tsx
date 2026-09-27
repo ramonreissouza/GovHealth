@@ -316,6 +316,7 @@ function Checkout() {
                     {metodo === 'pix' ? 'Já fiz o Pix — enviar comprovante' : metodo === 'cartao' ? 'Pagar com cartão' : 'Enviar solicitação'} · {formatarPreco(plano.preco)}/{plano.ciclo}
                   </button>
                   <p className="text-[10.5px] text-faint text-center mt-2 flex items-center justify-center gap-1"><ShieldCheck size={11} /> Cartão processado pelo Stripe (PCI-DSS) — não armazenamos dados de cartão. Emitimos nota fiscal.</p>
+                  <p className="text-[10.5px] text-faint text-center mt-2">Ao continuar você concorda com os <Link href="/termos" className="text-accent hover:underline">Termos de Uso</Link> e a <Link href="/privacidade" className="text-accent hover:underline">Política de Privacidade</Link>.</p>
                 </>
               )}
             </div>

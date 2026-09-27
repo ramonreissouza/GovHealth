@@ -17,7 +17,7 @@ import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
 import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 
-const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/privacidade', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
+const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/privacidade', '/termos', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
 
 function ehPublica(pathname: string): boolean {
   return ROTAS_PUBLICAS.some((p) => pathname === p || pathname.startsWith(`${p}/`))

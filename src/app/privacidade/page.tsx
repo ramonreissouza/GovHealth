@@ -3,9 +3,10 @@
 // finalidades + base legal (Art. 7 LGPD), compartilhamento, direitos do titular (Art. 18),
 // retenção, segurança e cookies.
 //
-// ⚠️ PREENCHER com os dados reais antes de divulgar externamente: razão social + CNPJ do
-//    controlador e nome/e-mail do Encarregado (DPO). Enquanto estiverem como placeholder, o
-//    documento é um RASCUNHO — não substitui validação jurídica.
+// Os dados do controlador vêm de src/lib/empresa-legal.ts — mesma fonte dos Termos de Uso,
+// porque dois documentos legais que se contradizem sobre quem é a empresa são pior que um.
+//
+// ⚠️ Este texto não substitui validação jurídica.
 
 import Link from 'next/link'
 import Image from 'next/image'
@@ -17,13 +18,9 @@ export const metadata: Metadata = {
     'Como a GovHealth AI trata dados pessoais: dados coletados, finalidades e base legal (LGPD), compartilhamento, direitos do titular e segurança.',
 }
 
-// ── Dados do controlador / encarregado — PREENCHER com os valores reais ──────────
-const CONTROLADOR_NOME = 'GovHealth AI'
-const CONTROLADOR_RAZAO_SOCIAL = '[preencher: razão social]'
-const CONTROLADOR_CNPJ = '[preencher: CNPJ]'
-const DPO_NOME = '[preencher: nome do Encarregado]'
-const DPO_EMAIL = 'privacidade@govhealth.ai'
-const ATUALIZADO_EM = '2 de agosto de 2026'
+import { CONTROLADOR_NOME, CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE, DPO_NOME, DPO_EMAIL } from '@/lib/empresa-legal'
+
+const ATUALIZADO_EM = '27 de setembro de 2026'
 
 interface Secao { titulo: string; conteudo: React.ReactNode }
 
@@ -33,7 +30,7 @@ const SECOES: Secao[] = [
     conteudo: (
       <p>
         O tratamento dos dados pessoais descritos nesta política é realizado por{' '}
-        <strong className="text-strong">{CONTROLADOR_RAZAO_SOCIAL}</strong> (CNPJ {CONTROLADOR_CNPJ}),
+        <strong className="text-strong">{CONTROLADOR_RAZAO_SOCIAL}</strong> (CNPJ {CONTROLADOR_CNPJ}, {CONTROLADOR_SEDE}),
         operadora da plataforma {CONTROLADOR_NOME} (&ldquo;Plataforma&rdquo;), na qualidade de{' '}
         <strong className="text-strong">controladora</strong>, nos termos da Lei nº 13.709/2018 (LGPD).
       </p>
@@ -43,7 +40,9 @@ const SECOES: Secao[] = [
     titulo: '2. Encarregado (DPO)',
     conteudo: (
       <p>
-        Nosso Encarregado pelo Tratamento de Dados Pessoais é {DPO_NOME}. Para exercer seus direitos
+        {DPO_NOME
+          ? <>Nosso Encarregado pelo Tratamento de Dados Pessoais é <strong className="text-strong">{DPO_NOME}</strong>. Para exercer seus direitos</>
+          : <>O canal do Encarregado pelo Tratamento de Dados Pessoais é o e-mail abaixo. Para exercer seus direitos</>}
         ou esclarecer dúvidas sobre privacidade, contate{' '}
         <a href={`mailto:${DPO_EMAIL}`} className="text-accent hover:underline font-mono-custom">{DPO_EMAIL}</a>.
       </p>
