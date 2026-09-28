@@ -932,19 +932,10 @@ export default function RadarPage() {
                           </a>
                         </div>
                         <div className="relative flex-1 min-h-[420px] bg-white">
-                          {/* `key`: trocar de pregão recarrega o quadro em vez de reaproveitar
-                              a página anterior. `sandbox` sem `allow-top-navigation`: a
-                              página do governo não consegue tirar a pessoa do Radar; com
-                              `allow-same-origin` ela mantém a PRÓPRIA origem (cookies e o
-                              captcha dela), o que só é seguro porque essa origem não é a
-                              nossa — nunca embutir aqui conteúdo servido pelo próprio app. */}
-                          <iframe
-                            key={soNoPortal.link}
-                            src={soNoPortal.link}
-                            title={`Chat oficial do Compras.gov.br — ${selecionado.licitacaoId}`}
-                            className="absolute inset-0 w-full h-full border-0"
-                            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-                          />
+                          {/* `key`: trocar de pregão recarrega o quadro (e o "carregando") em
+                              vez de reaproveitar a página anterior. */}
+                          <QuadroOficial key={soNoPortal.link} link={soNoPortal.link}
+                            titulo={`Chat oficial do Compras.gov.br — ${selecionado.licitacaoId}`} />
                         </div>
                       </div>
                     )}
@@ -1072,6 +1063,52 @@ export default function RadarPage() {
         {detalhes && <DetalhesModal processo={detalhes} onClose={() => setDetalhes(null)} />}
       </div>
     </div>
+  )
+}
+
+/**
+ * O quadro com a página oficial do Compras.gov.br, com o estado de carga à vista.
+ *
+ * Ficava em branco enquanto o portal carregava, e o portal às vezes demora muito: medido
+ * em 28/09/2026, o script principal dele levou mais de 18 s para baixar, e a pessoa ficou
+ * um minuto olhando um quadro vazio sem saber se era o Radar. O `load` do iframe só sai
+ * depois dos scripts da página, então é um sinal honesto de "já dá para usar".
+ */
+function QuadroOficial({ link, titulo }: { link: string; titulo: string }) {
+  const [carregado, setCarregado] = useState(false)
+  const [demorou, setDemorou] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setDemorou(true), 15_000)
+    return () => clearTimeout(t)
+  }, [])
+  return (
+    <>
+      {/* `sandbox` sem `allow-top-navigation`: a página do governo não consegue tirar a
+          pessoa do Radar; com `allow-same-origin` ela mantém a PRÓPRIA origem (cookies e
+          o captcha dela), o que só é seguro porque essa origem não é a nossa — nunca
+          embutir aqui conteúdo servido pelo próprio app. */}
+      <iframe
+        src={link}
+        title={titulo}
+        onLoad={() => setCarregado(true)}
+        className="absolute inset-0 w-full h-full border-0"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+      />
+      {!carregado && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/90 text-center p-6 pointer-events-none">
+          <div className="max-w-[360px]">
+            <RefreshCw size={20} className="animate-spin text-slate-400 mx-auto mb-2" />
+            <p className="text-[13px] text-slate-700 font-semibold">Carregando a página oficial do Compras.gov.br…</p>
+            {demorou && (
+              <p className="text-[12px] text-slate-500 mt-2 leading-snug">
+                O site do Compras.gov.br está demorando para responder, e isso não depende do Radar.
+                Aguarde mais um pouco ou use &quot;Abrir em outra aba&quot;, acima.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
