@@ -1,0 +1,97 @@
+{{- if .Values.mineracao.enabled }}
+{{/* As minerações que rodavam no Agendador do Windows (ETL do PNCP, cobertura,
+     backfill de itens, pipeline da noite, CAPAG, Radar de Chat), uma CronJob
+     por tarefa. A agenda mora em `mineracao.jobs` do values.yaml.
+
+     A PISTA DO PNCP. Os jobs do PNCP se revezam por uma trava de arquivo
+     (scripts/pncp-lock.mjs e pncp-prioridade.mjs): um dono por vez, e quem é
+     mais urgente passa na frente. Cada CronJob é um pod, então a trava precisa
+     de um volume que todos os pods do nó enxerguem (o PVC abaixo) e de uma
+     identidade que não seja só o PID: o módulo grava PID + hostname (o nome do
+     pod) e, para dono de outro pod, confia na batida periódica em vez de
+     perguntar pelo PID. É o `PNCP_PISTA_DIR`. */}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mineracao-pista
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{/* RWO basta: o nó é um só, e ReadWriteOnce é por NÓ, não por pod. Classe
+       dinâmica de propósito (ao contrário do banco): são alguns KB de trava que
+       podem sumir sem perda, e o PV nasce pelo provisionador do k3s, não pela
+       ServiceAccount do Jenkins, que só LÊ PV. */}}
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.mineracao.pista.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.mineracao.pista.storage }}
+{{- range $nome, $job := .Values.mineracao.jobs }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mineracao-{{ $nome }}
+  labels: { app: mineracao, job: {{ $nome }} }
+spec:
+  schedule: {{ $job.agenda | quote }}
+  {{/* Horário de Brasília, como no Windows (que estava no fuso da Europa). */}}
+  timeZone: {{ $.Values.mineracao.timeZone }}
+  {{/* O `MultipleInstances = IgnoreNew` do Windows: se a execução anterior
+       ainda roda, a nova não começa. */}}
+  concurrencyPolicy: Forbid
+  {{/* Se o controlador perdeu o horário (nó reiniciando), ainda roda até 1 h
+       depois; passou disso, espera o próximo. */}}
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  suspend: {{ $job.suspenso | default false }}
+  jobTemplate:
+    spec:
+      {{/* Sem retentativa: os scripts retomam do checkpoint na próxima rodada,
+           e repetir na hora só dobra a carga no PNCP. */}}
+      backoffLimit: 0
+      {{/* O ExecutionTimeLimit do Windows. Ao estourar, o pod recebe SIGTERM
+           (os scripts soltam a trava do PNCP) e SIGKILL depois da graça. */}}
+      activeDeadlineSeconds: {{ $job.tetoSegundos }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels: { app: mineracao, job: {{ $nome }} }
+        spec:
+          restartPolicy: Never
+          priorityClassName: {{ $.Values.mineracao.priorityClassName }}
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 120
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          initContainers:
+{{ include "govhealth.waitForDb" $ | indent 12 }}
+          containers:
+            - name: {{ $nome }}
+              image: '{{ $.Values.mineracao.image }}:{{ $.Values.image.tag }}'
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              command: {{ toJson $job.comando }}
+              envFrom:
+                - secretRef: { name: {{ $.Values.existingSecret }} }
+              env:
+                - { name: TZ, value: {{ $.Values.mineracao.timeZone }} }
+                - { name: PNCP_PISTA_DIR, value: /pista }
+                {{- range $k, $v := $job.env }}
+                - { name: {{ $k }}, value: {{ $v | quote }} }
+                {{- end }}
+              volumeMounts:
+                - { name: pista, mountPath: /pista }
+                {{/* O Chromium do Radar precisa de /dev/shm maior que os 64 MB
+                     padrão do container. */}}
+                - { name: shm, mountPath: /dev/shm }
+              resources: {{ toYaml ($job.resources | default $.Values.mineracao.resources) | nindent 16 }}
+          volumes:
+            - name: pista
+              persistentVolumeClaim: { claimName: mineracao-pista }
+            - name: shm
+              emptyDir: { medium: Memory, sizeLimit: 256Mi }
+{{- end }}
+{{- end }}

@@ -62,3 +62,84 @@ worker:
   resources:
     requests: {cpu: 50m, memory: 192Mi}
     limits: {cpu: '1', memory: 1Gi}
+
+# As minerações que rodavam no Agendador do Windows, uma CronJob cada
+# (templates/mineracao.yaml). Gravam no Service `db`, pelo `DATABASE_URL` do Secret.
+mineracao:
+  # Desligado até: 1) o banco ter sido restaurado e conferido; 2) as tarefas
+  # "GovHealth *" do Windows estarem desativadas. As duas pontas juntas disputam o
+  # PNCP (cada máquina só enxerga a própria trava da pista).
+  enabled: false
+  # Alvo `mineracao` do deploy/app/Dockerfile, importado no containerd como as
+  # outras duas. Usa a mesma `image.tag`.
+  image: govhealth.local/mineracao
+  timeZone: America/Sao_Paulo
+  # Mesma classe do app e do worker: a quota do namespace é por PriorityClass.
+  priorityClassName: govhealth-prod
+  pista:
+    storageClassName: local-path
+    storage: 64Mi
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {cpu: '1', memory: 768Mi}
+  # Horários de Brasília. No Windows as tarefas estavam no fuso da Europa (5 h à
+  # frente), por isso nenhum horário bate com o do Agendador. `tetoSegundos` é o
+  # ExecutionTimeLimit que cada tarefa tinha lá. `suspenso: true` pausa uma só.
+  jobs:
+    # A cada 3 dias às 22:00 (era 03:00 na Europa). `*/3` no dia do mês recomeça no
+    # dia 1: na virada do mês o intervalo pode ser de 1 ou 2 dias. Aceitável.
+    etl-refresh:
+      agenda: '0 22 */3 * *'
+      tetoSegundos: 64800   # 18 h
+      comando: [node, scripts/etl-refresh-loop.mjs]
+    # A cada 2 dias à 00:00 (era 05:00 na Europa). Janela curta: o que saiu esta semana.
+    etl-refresh-2dias:
+      agenda: '0 0 */2 * *'
+      tetoSegundos: 28800   # 8 h
+      comando: [node, scripts/etl-refresh-loop.mjs]
+      env:
+        ETL_DONO: etl-refresh-2dias
+        ETL_DIAS: '5'
+        ETL_PASSADAS: '3'
+        ETL_ORCAMENTO_MIN: '120'
+    # Guarda da recência, três vezes por dia (eram 12:00, 18:00 e 01:00 na Europa).
+    sync-cobertura:
+      agenda: '0 7,13,20 * * *'
+      tetoSegundos: 7200    # 2 h
+      comando: [node, scripts/sync-cobertura.mjs]
+    # Itens de licitações >= R$ 1 mi, às 06:00 (era 11:00). Fim da fila da pista.
+    backfill-itens:
+      agenda: '0 6 * * *'
+      tetoSegundos: 43200   # 12 h
+      comando: [node, scripts/backfill-itens.mjs, '--min=1000000', '--orcamento=600', '--espera-max=45']
+    # Portais das abertas -> valores -> portais do histórico. No Windows subia no
+    # logon e ia até acabar; aqui roda toda noite, sem se sobrepor a si mesmo.
+    pipeline-noite:
+      agenda: '0 1 * * *'
+      tetoSegundos: 72000   # 20 h
+      comando: [node, scripts/pipeline-noite.mjs]
+    # CAPAG (Tesouro): sábado 23:30 (era domingo 04:30 na Europa).
+    capag:
+      agenda: '30 23 * * 6'
+      tetoSegundos: 3600    # 1 h
+      comando: [node, scripts/ingest-capag.mjs]
+    # Radar de Chat, passada completa a cada 2 h das 07:00 às 21:00. No Windows era a
+    # mesma janela no relógio da Europa (madrugada no Brasil); aqui, horário de pregão.
+    radar:
+      agenda: '0 7-21/2 * * *'
+      tetoSegundos: 10800   # 3 h
+      comando: [node, scripts/radar/run.mjs]
+      resources:
+        requests: {cpu: 100m, memory: 512Mi}
+        limits: {cpu: '1', memory: 1536Mi}
+    # Pregões com sessão entre ontem e amanhã, a cada 20 min. O teto de 19 min garante
+    # que uma passada não empurra a seguinte.
+    radar-urgente:
+      agenda: '5-59/20 * * * *'
+      tetoSegundos: 1140    # 19 min
+      comando: [node, scripts/radar/run.mjs, '--urgentes']
+      resources:
+        requests: {cpu: 100m, memory: 512Mi}
+        limits: {cpu: '1', memory: 1536Mi}
+  # Fora daqui, de propósito: "GovHealth Licitacoes-e" (scripts/licite). Aquele
+  # coletor resolve o CAPTCHA do portal por OCR, e isso não vai para o servidor.

@@ -245,5 +245,8 @@ services:
       RADAR_PUBLICO_INTERVAL_SECONDS: ${RADAR_PUBLICO_INTERVAL_SECONDS:-300}
       TZ: America/Sao_Paulo
 
+  # As minerações (ETL do PNCP, CAPAG, Radar) NÃO rodam por este compose: no k3s
+  # cada uma é uma CronJob — ver deploy/helm/govhealth/templates/mineracao.yaml.
+
 volumes:
   pgdata:

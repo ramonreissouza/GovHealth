@@ -118,3 +118,25 @@ COPY src/lib/radar ./src/lib/radar
 COPY db/schema-radar-publico.sql ./db/schema-radar-publico.sql
 USER node
 CMD ["node", "scripts/radar/serve-comprasgov-publico.mjs"]
+
+# ── mineração (ETL do PNCP, CAPAG, Radar) ────────────────────────────────────
+# O que antes eram tarefas do Agendador do Windows. No k3s, cada uma é uma
+# CronJob (deploy/helm/govhealth/templates/mineracao.yaml) que usa esta imagem e
+# diz o comando; a agenda mora no values.yaml, não aqui.
+#
+# Herda o Chromium do estágio acima (o Radar precisa) e leva `scripts/` inteiro,
+# `src/` e `db/`: os scripts encadeiam uns aos outros por caminho
+# (spawn 'scripts/etl-refresh.mjs', …).
+FROM radar-comprasgov-publico AS mineracao
+USER root
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node src ./src
+COPY --chown=node:node db ./db
+COPY --chown=node:node tsconfig.json ./
+# A trava da pista do PNCP vai para PNCP_PISTA_DIR (volume da CronJob); o cwd
+# ainda recebe o backup do `limpar-ruido --aplicar`.
+RUN chown node:node /app
+USER node
+# Sem comando padrão de propósito: rodar a imagem "pelada" não pode começar uma
+# varredura do PNCP que ninguém agendou.
+CMD ["node", "-e", "console.error('imagem da mineração: o comando vem da CronJob (values.yaml, mineracao.jobs)'); process.exit(64)"]
