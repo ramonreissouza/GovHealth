@@ -17,7 +17,7 @@ import type { ContratoGov } from '@/lib/types'
 
 type Modo = 'ug' | 'cnpj'
 
-interface Stats { total: number; vigentes: number; valorVigente: number; vencendo180d: number }
+interface Stats { total: number; vigentes: number; valorTotal: number; valorVigente: number; vencendo180d: number }
 
 function formatCNPJ(s: string) {
   const d = (s || '').replace(/\D/g, '')
@@ -34,6 +34,10 @@ export default function ContratosPage() {
   const [contratos, setContratos] = useState<ContratoGov[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [fonte, setFonte] = useState<string>('')
+  // Quantos existem na fonte e se a lista veio cortada — o cliente precisa saber que
+  // está olhando um recorte antes de somar a cabeça dele com o número da tela.
+  const [totalNaFonte, setTotalNaFonte] = useState(0)
+  const [truncado, setTruncado] = useState(false)
   const { ordem, alternar } = useOrdenacao<'objeto' | 'vigencia' | 'valor'>()
   // Filtro por ano de VENCIMENTO (não de assinatura): a tela existe para achar a
   // janela de venda, e ela abre quando o contrato do concorrente termina.
@@ -43,7 +47,7 @@ export default function ContratosPage() {
   const buscar = useCallback(async () => {
     const q = valor.trim()
     if (!q) return
-    setLoading(true); setSearched(true); setErro(null); setContratos([]); setStats(null)
+    setLoading(true); setSearched(true); setErro(null); setContratos([]); setStats(null); setTruncado(false); setTotalNaFonte(0)
     try {
       const param = modo === 'ug' ? `ug=${encodeURIComponent(q)}` : `cnpj=${encodeURIComponent(q)}`
       const res = await fetch(`/api/contratos?${param}`)
@@ -52,6 +56,8 @@ export default function ContratosPage() {
       setContratos(data.contratos ?? [])
       setStats(data.stats ?? null)
       setFonte(data.fonte ?? '')
+      setTotalNaFonte(Number(data.totalNaFonte) || 0)
+      setTruncado(Boolean(data.truncado))
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao consultar o Contratos.gov.br.')
     } finally {
@@ -152,12 +158,22 @@ export default function ContratosPage() {
                   <span className="text-faint font-mono-custom text-[11px]">{formatCNPJ(contratos[0].fornecedorCnpj)}</span>
                 </div>
               )}
+              {truncado && (
+                <div className="flex items-start gap-2 bg-amber/10 border border-amber/30 rounded-lg px-4 py-3 mb-4 text-[12px] text-amber max-w-[680px]">
+                  <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                  <span>
+                    A fonte tem <strong>{totalNaFonte}</strong> contratos para este CNPJ e esta tela carregou os{' '}
+                    <strong>{contratos.length}</strong> mais recentes. Os totais abaixo se referem ao que foi carregado.
+                  </span>
+                </div>
+              )}
               {stats && (
-                <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
                   {[
                     { l: 'Contratos', v: String(stats.total), s: 'no total' },
+                    { l: 'Valor total', v: formatBRL(stats.valorTotal), s: 'histórico contratado' },
                     { l: 'Vigentes', v: String(stats.vigentes), s: 'em vigor' },
-                    { l: 'Valor vigente', v: formatBRL(stats.valorVigente), s: 'somatório' },
+                    { l: 'Valor vigente', v: formatBRL(stats.valorVigente), s: 'só o que está em vigor' },
                     { l: 'Vencendo ≤180d', v: String(stats.vencendo180d), s: 'janela de venda', warn: stats.vencendo180d > 0 },
                   ].map((k) => (
                     <div key={k.l} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">

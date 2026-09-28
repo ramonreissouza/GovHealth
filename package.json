@@ -18,6 +18,7 @@
     "admin:seed": "node scripts/seed-admin.mjs",
     "admin:set-password": "node scripts/set-master-password.mjs",
     "stripe:migrate": "node scripts/migrate-stripe.mjs",
+    "aceite:migrate": "node scripts/migrate-aceite-termos.mjs",
     "stripe:setup": "node scripts/stripe-setup.mjs",
     "trial:migrate": "node scripts/migrate-trial.mjs",
     "equipe:migrate": "node scripts/migrate-equipe.mjs",

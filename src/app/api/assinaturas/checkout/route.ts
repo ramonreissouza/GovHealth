@@ -6,8 +6,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { criarAssinatura, marcarCheckoutIniciado } from '@/lib/assinaturas'
+import { criarAssinatura, marcarCheckoutIniciado, registrarAceite, ipDaRequisicao, erroDeAceite } from '@/lib/assinaturas'
 import { planoPorId } from '@/lib/planos'
+import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
 import { getStripe, stripeConfigurado, lineItemDoPlano, appUrl } from '@/lib/stripe'
 
 export const runtime = 'nodejs'
@@ -21,6 +22,9 @@ const Schema = z.object({
   telefone: z.string().max(40).optional(),
   endereco: z.string().max(240).optional(),
   plano: z.enum(['essencial', 'pro']),
+  // Mesma regra de /api/assinaturas: aceite só da versão vigente.
+  termosVersao: z.literal(TERMOS_VERSAO, { errorMap: () => ({ message: 'Os Termos de Uso foram atualizados. Recarregue a página e confira o aceite.' }) }),
+  privacidadeVersao: z.literal(PRIVACIDADE_VERSAO, { errorMap: () => ({ message: 'A Política de Privacidade foi atualizada. Recarregue a página e confira o aceite.' }) }),
 })
 
 export async function POST(req: NextRequest) {
@@ -29,7 +33,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Pagamento por cartão indisponível no momento. Tente PIX/Boleto.' }, { status: 503 })
     }
     const parsed = Schema.safeParse(await req.json().catch(() => ({})))
-    if (!parsed.success) return NextResponse.json({ error: 'Dados inválidos', detalhes: parsed.error.flatten() }, { status: 400 })
+    if (!parsed.success) return NextResponse.json({ error: erroDeAceite(parsed.error) ?? 'Dados inválidos', detalhes: parsed.error.flatten() }, { status: 400 })
     const d = parsed.data
     const plano = planoPorId(d.plano)!
 
@@ -39,6 +43,7 @@ export async function POST(req: NextRequest) {
       cpf_cnpj: d.cpfCnpj, telefone: d.telefone, endereco: d.endereco,
       plano: d.plano, metodo: 'cartao', valor: plano.preco,
     })
+    await registrarAceite(assinaturaId, { termosVersao: d.termosVersao, privacidadeVersao: d.privacidadeVersao, ip: ipDaRequisicao(req.headers) })
 
     // 2) cria a sessão de checkout EMBUTIDO (assinatura recorrente). Com ui_mode
     //    'embedded' usamos return_url (não success_url/cancel_url).
@@ -54,7 +59,7 @@ export async function POST(req: NextRequest) {
       allow_promotion_codes: true,
       billing_address_collection: 'auto',
       client_reference_id: String(assinaturaId),
-      metadata: { assinatura_id: String(assinaturaId), plano: d.plano, email: d.email, nome: d.nome ?? '' },
+      metadata: { assinatura_id: String(assinaturaId), plano: d.plano, email: d.email, nome: d.nome ?? '', termos_versao: d.termosVersao, privacidade_versao: d.privacidadeVersao },
       subscription_data: {
         metadata: { assinatura_id: String(assinaturaId), plano: d.plano, email: d.email },
       },

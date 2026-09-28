@@ -24,6 +24,43 @@ export async function criarAssinatura(d: {
   return r[0]?.id
 }
 
+/**
+ * Grava o ACEITE dos Termos e da Privacidade na assinatura: versão de cada documento, o
+ * instante (do servidor, não do navegador) e o IP de quem aceitou. É a evidência de qual
+ * texto acompanhou a contratação (revisão da #45; colunas em migrate-aceite-termos.mjs).
+ *
+ * Em separado do INSERT de propósito: se o código novo subir antes da migration (a
+ * Vercel publica no push, o deploy aplica o schema), a coluna ainda não existe (42703).
+ * Aí o erro fica no log, bem visível, e o pagamento NÃO é barrado — perder o cliente por
+ * uma coluna que chega em minutos seria pior. Qualquer outro erro sobe.
+ */
+export async function registrarAceite(id: number, a: { termosVersao: string; privacidadeVersao: string; ip: string | null }): Promise<void> {
+  try {
+    await query(
+      `UPDATE assinaturas SET termos_versao = $2, privacidade_versao = $3, aceite_em = now(), aceite_ip = $4 WHERE id = $1`,
+      [id, a.termosVersao, a.privacidadeVersao, a.ip],
+    )
+  } catch (e) {
+    if ((e as { code?: string })?.code === '42703') {
+      console.error(`[aceite] migração pendente (npm run aceite:migrate): aceite da assinatura ${id} NÃO gravado`, a)
+      return
+    }
+    throw e
+  }
+}
+
+/** A frase do aceite recusado (versão antiga ou ausente), para a tela mostrar em vez de "Dados inválidos". */
+export function erroDeAceite(err: { issues: { path: PropertyKey[]; message: string }[] }): string | null {
+  const i = err.issues.find((x) => x.path[0] === 'termosVersao' || x.path[0] === 'privacidadeVersao')
+  return i ? i.message : null
+}
+
+/** O IP de quem fez a requisição, do primeiro salto do proxy (nginx/Vercel). */
+export function ipDaRequisicao(headers: Headers): string | null {
+  const xff = headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+  return (xff || headers.get('x-real-ip') || '').slice(0, 64) || null
+}
+
 export async function listarAssinaturas(limit = 100): Promise<Assinatura[]> {
   return query<Assinatura>(
     `SELECT id,nome,email,empresa,instituicao,cpf_cnpj,telefone,endereco,plano,ciclo,metodo,
