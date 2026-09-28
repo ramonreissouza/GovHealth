@@ -13,6 +13,7 @@ import { ExportButton } from '@/components/ui/ExportButton'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { Paginacao } from '@/components/ui/Paginacao'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
+import { Carregando } from '@/components/ui/Carregando'
 import { CATEGORIA_LABEL as CAT_LABEL, CATEGORIA_COLOR as CAT_COLOR, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
@@ -324,7 +325,7 @@ export default function AnalisePage() {
               {/* Table */}
               <div className="bg-bg2 border border-subtle rounded-xl overflow-hidden">
                 {loading ? (
-                  <div className="p-10 text-center text-faint text-[13px]">Carregando dados 2023–2025…</div>
+                  <Carregando texto="Carregando licitações 2023–2025…" />
                 ) : filtered.length === 0 ? (
                   <div className="p-10 text-center text-faint text-[13px]">Nenhum resultado com os filtros aplicados.</div>
                 ) : (
@@ -397,7 +398,7 @@ export default function AnalisePage() {
                                     )}
                                   </div>
                                   {itensLoading && expandedId === l.id ? (
-                                    <div className="text-[11px] text-faint py-2">Carregando itens…</div>
+                                    <Carregando compacto texto="Carregando itens…" className="py-2" />
                                   ) : itens.length === 0 ? (
                                     <div className="text-[11px] text-faint py-2">
                                       Itens não disponíveis no PNCP para esta licitação.

@@ -6,12 +6,13 @@ import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { ExternalLink, Loader2, Calendar, Clock, CheckCircle2, AlertCircle, XCircle, MapPin, ChevronRight } from 'lucide-react'
+import { ExternalLink, Calendar, Clock, CheckCircle2, AlertCircle, XCircle, MapPin, ChevronRight } from 'lucide-react'
 import type { Oportunidade } from '@/lib/types'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { CATEGORIA_LABEL_CURTO as CATEGORIA_LABEL, TIPO_LABEL } from '@/lib/categorias'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
+import { Carregando } from '@/components/ui/Carregando'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
@@ -273,7 +274,7 @@ export default function TimelinePage() {
               <div key={label} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">
                 <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">{label}</div>
                 <div className={clsx('text-[22px] font-mono-custom font-bold mt-0.5 leading-tight', color)}>
-                  {loading ? '—' : value}
+                  {loading ? <Carregando compacto texto="Carregando…" /> : value}
                 </div>
               </div>
             ))}
@@ -317,9 +318,7 @@ export default function TimelinePage() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 size={22} className="animate-spin text-faint" />
-            </div>
+            <Carregando texto="Carregando licitações…" className="py-20" />
           ) : filtered.length === 0 ? (
             <div className="text-center py-20 text-faint text-[13px]">
               Nenhuma licitação encontrada com o filtro selecionado.

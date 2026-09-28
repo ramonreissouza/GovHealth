@@ -18,6 +18,7 @@ import {
 } from '@/lib/alertas'
 import { alertaDoSetup, getEmpresa, categoriasDoSetup } from '@/lib/empresa'
 import { categoriasMercadoDoSetup } from '@/lib/categoria-mercado'
+import { Carregando } from '@/components/ui/Carregando'
 import { HYDRATED_EVENT } from '@/lib/synced'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import type { Alert } from '@/lib/types'
@@ -425,7 +426,7 @@ export default function AlertasPage() {
         <div className="flex-1 flex flex-col min-w-0">
           <Topbar title="Alertas" />
           <div className="flex-1 flex items-center justify-center">
-            <Loader2 size={22} className="animate-spin text-faint" />
+            <Carregando texto="Carregando alertas…" />
           </div>
         </div>
       </div>
@@ -577,7 +578,10 @@ export default function AlertasPage() {
                 </div>
               </div>
 
-              {notifsFiltradas.length === 0 ? (
+              {/* Feed vazio enquanto a busca não voltou: é carregamento, não "nenhuma notificação". */}
+              {loadingFeed && notifsFiltradas.length === 0 ? (
+                <Carregando texto="Carregando notificações…" className="py-20" />
+              ) : notifsFiltradas.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                   <Bell size={28} className="text-faint mb-3" />
                   <p className="text-[13px] text-muted">{ufFiltro ? `Nenhuma notificação em ${ufFiltro}.` : 'Nenhuma notificação ainda.'}</p>

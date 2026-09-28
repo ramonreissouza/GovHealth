@@ -3,11 +3,11 @@
 
 import { useEffect } from 'react'
 import Link from 'next/link'
-import { clsx } from 'clsx'
 import { ArrowUpRight } from 'lucide-react'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
 import type { OpportunitiesData } from './DashboardView'
+import { Carregando } from '@/components/ui/Carregando'
 
 interface KPIs {
   oportunidadesQuentes: number
@@ -95,9 +95,16 @@ export default function KPICards({ data, loading, tipo }: { data: OpportunitiesD
             </div>
             <ArrowUpRight size={13} className="text-faint opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
-          <div className={clsx('font-heading font-bold text-[28px] text-strong leading-none', loading && 'opacity-30')}>
-            {loading ? '—' : card.format(kpis[card.key])}
-          </div>
+          {/* Carregando na mesma altura do número (28px), para o cartão não pular */}
+          {loading ? (
+            <div className="h-[28px] flex items-center">
+              <Carregando compacto texto="Carregando indicador…" />
+            </div>
+          ) : (
+            <div className="font-heading font-bold text-[28px] text-strong leading-none">
+              {card.format(kpis[card.key])}
+            </div>
+          )}
           <div className="flex items-center gap-2 mt-1.5">
             <span className="text-[11px] text-faint">{card.sub}</span>
             {card.deltaUp && (

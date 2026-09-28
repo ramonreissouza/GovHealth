@@ -10,6 +10,7 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import CapagBadge from '@/components/ui/CapagBadge'
 import { produtosQueCasam, type ProdutoPortfolio } from '@/lib/portfolio'
 import type { OpportunitiesData } from './DashboardView'
+import { Carregando } from '@/components/ui/Carregando'
 
 interface Props {
   data: OpportunitiesData | null
@@ -66,20 +67,7 @@ export default function OpportunityList({ data, loading, error, limit = 6, produ
     )
 
   if (loading) {
-    return (
-      <div className="space-y-2">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-3 py-2.5 animate-pulse">
-            <div className="w-9 h-9 rounded-lg bg-bg4" />
-            <div className="flex-1 space-y-1.5">
-              <div className="h-3 bg-bg4 rounded w-3/4" />
-              <div className="h-2.5 bg-bg4 rounded w-1/2" />
-            </div>
-            <div className="w-14 h-3 bg-bg4 rounded" />
-          </div>
-        ))}
-      </div>
-    )
+    return <Carregando texto="Carregando oportunidades prioritárias…" />
   }
 
   if (error) {

@@ -4,6 +4,7 @@
 import dynamic from 'next/dynamic'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
+import { Carregando } from '@/components/ui/Carregando'
 
 const MapaLicitacoes = dynamic(
   () => import('@/components/map/MapaLicitacoes'),
@@ -11,9 +12,7 @@ const MapaLicitacoes = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex-1 flex items-center justify-center">
-        <div className="text-[13px] text-faint font-mono-custom animate-pulse">
-          Carregando mapa…
-        </div>
+        <Carregando texto="Carregando mapa…" />
       </div>
     ),
   }

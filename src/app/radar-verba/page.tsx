@@ -8,7 +8,7 @@ import { useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
-import { Loader2, AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Building2, FileText, ArrowRight, Target } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Plus, Check, Flame, MapPin, X, Building2, FileText, ArrowRight, Target } from 'lucide-react'
 import { formatBRL } from '@/lib/format'
 import { createDeal, dealExists } from '@/lib/crm'
 import { parseValorBR, type EmendaDetalhe, type NaturezaVerba } from '@/lib/emendas'
@@ -19,6 +19,7 @@ import { getTerritorio } from '@/lib/territorio'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import TerritorioToggle from '@/components/ui/TerritorioToggle'
 import CapagBadge from '@/components/ui/CapagBadge'
+import { Carregando } from '@/components/ui/Carregando'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
 const PORTAL_URL = 'https://portaldatransparencia.gov.br/emendas'
@@ -206,9 +207,7 @@ function RadarVerbaConteudo() {
 
           {/* Conteúdo */}
           {loading ? (
-            <div className="space-y-2">
-              {[1,2,3,4,5].map((i) => <div key={i} className="h-12 bg-bg2 border border-subtle rounded-lg animate-pulse" />)}
-            </div>
+            <Carregando texto="Carregando emendas…" />
           ) : erro ? (
             <div className="bg-bg2 border border-subtle rounded-2xl p-8 text-center">
               <AlertTriangle size={26} className="text-amber mx-auto mb-3" />
@@ -383,7 +382,7 @@ function RadarVerbaConteudo() {
                   </div>
 
                   {detalheLoading ? (
-                    <div className="h-16 bg-bg3 border border-subtle rounded-lg animate-pulse" />
+                    <Carregando compacto texto="Carregando destino da verba…" className="py-3" />
                   ) : detalhe?.resumo ? (
                     <div className="bg-bg3 border border-subtle rounded-lg p-3 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -442,9 +441,7 @@ function RadarVerbaConteudo() {
                   </div>
 
                   {detalheLoading ? (
-                    <div className="flex items-center gap-2 text-[12px] text-faint py-6 justify-center">
-                      <Loader2 size={14} className="animate-spin" /> Carregando empenhos do Portal…
-                    </div>
+                    <Carregando compacto texto="Carregando empenhos do Portal…" className="py-6 w-full justify-center" />
                   ) : !detalhe || detalhe.empenhos.length === 0 ? (
                     <p className="text-[12px] text-muted py-3">
                       Sem empenhos detalhados disponíveis para esta emenda no Portal
@@ -525,7 +522,7 @@ function RadarVerbaConteudo() {
 // useSearchParams (deep-link ?emenda=) exige um Suspense boundary no App Router.
 export default function RadarVerbaPage() {
   return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-bg"><Loader2 size={22} className="animate-spin text-faint" /></div>}>
+    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-bg"><Carregando texto="Carregando Radar de Verba…" /></div>}>
       <RadarVerbaConteudo />
     </Suspense>
   )

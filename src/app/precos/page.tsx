@@ -15,6 +15,7 @@ import type { PrecoPainelItem, EstatisticaPrecos, CatmatMaterial } from '@/lib/t
 import { getProdutos, type ProdutoPortfolio } from '@/lib/portfolio'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { Boxes } from 'lucide-react'
+import { Carregando } from '@/components/ui/Carregando'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ function CatmatPanel({ term }: { term: string }) {
       {open && (
         <div className="mt-2 bg-bg4/50 rounded-lg p-3">
           {loading ? (
-            <div className="text-[11px] text-faint">Buscando códigos…</div>
+            <Carregando compacto texto="Carregando códigos CATMAT…" />
           ) : materiais.length === 0 ? (
             <div className="text-[11px] text-faint">Nenhum material CATMAT encontrado.</div>
           ) : (
@@ -342,8 +343,8 @@ export default function PrecosPage() {
 
           {/* ── Loading ──────────────────────────────────────────────────────── */}
           {loading && (
-            <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">
-              Consultando Compras.gov.br…
+            <div className="bg-bg2 border border-subtle rounded-xl">
+              <Carregando texto="Carregando preços do Compras.gov.br…" />
             </div>
           )}
 

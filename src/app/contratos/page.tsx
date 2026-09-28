@@ -14,6 +14,7 @@ import {
 import { ExportButton } from '@/components/ui/ExportButton'
 import { formatBRL, formatDate, diasRestantes } from '@/lib/format'
 import type { ContratoGov } from '@/lib/types'
+import { Carregando } from '@/components/ui/Carregando'
 
 type Modo = 'ug' | 'cnpj'
 
@@ -142,6 +143,8 @@ export default function ContratosPage() {
               <AlertTriangle size={14} /> {erro}
             </div>
           )}
+
+          {loading && <Carregando texto="Carregando contratos…" />}
 
           {!loading && searched && !erro && (
             <>
