@@ -7,7 +7,7 @@ import { ArrowUpRight } from 'lucide-react'
 import { formatBRLCompact as formatBRL } from '@/lib/format'
 import { publishDataStatus } from '@/lib/data-status'
 import type { OpportunitiesData } from './DashboardView'
-import { Carregando } from '@/components/ui/Carregando'
+import { Carregando, StatusCarregando } from '@/components/ui/Carregando'
 
 interface KPIs {
   oportunidadesQuentes: number
@@ -83,6 +83,8 @@ export default function KPICards({ data, loading, tipo }: { data: OpportunitiesD
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      {/* Um anúncio para os 4 cartões; cada um só mostra as flechas */}
+      {loading && <StatusCarregando texto="Carregando indicadores…" />}
       {CARDS.map((card) => (
         <Link
           key={card.key}
@@ -98,7 +100,7 @@ export default function KPICards({ data, loading, tipo }: { data: OpportunitiesD
           {/* Carregando na mesma altura do número (28px), para o cartão não pular */}
           {loading ? (
             <div className="h-[28px] flex items-center">
-              <Carregando compacto texto="Carregando indicador…" />
+              <Carregando compacto anunciar={false} texto="Carregando indicador…" />
             </div>
           ) : (
             <div className="font-heading font-bold text-[28px] text-strong leading-none">

@@ -18,7 +18,7 @@ import { CATEGORIA_COLOR as CAT_COLOR } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 import { matchesTermo } from '@/lib/text'
 import { publishDataStatus } from '@/lib/data-status'
-import { Carregando } from '@/components/ui/Carregando'
+import { Carregando, StatusCarregando } from '@/components/ui/Carregando'
 
 // ── Types from API response ───────────────────────────────────────────────────
 
@@ -150,7 +150,7 @@ function EstadoCard({
 
       {/* KPIs */}
       {loading ? (
-        <Carregando compacto texto="Carregando números…" />
+        <Carregando compacto anunciar={false} texto="Carregando números…" />
       ) : (
         <div className="space-y-1.5">
           <div className="flex justify-between">
@@ -807,6 +807,8 @@ export default function EstadosPage() {
         />
 
         <main className="flex-1 overflow-y-auto p-6 bg-bg space-y-4">
+          {/* Um anúncio para os 27 cartões; cada um só mostra as flechas */}
+          {resumoLoading && <StatusCarregando texto="Carregando números dos estados…" />}
 
           {selectedUF ? (
             <>

@@ -19,6 +19,7 @@ import {
 import { alertaDoSetup, getEmpresa, categoriasDoSetup } from '@/lib/empresa'
 import { categoriasMercadoDoSetup } from '@/lib/categoria-mercado'
 import { Carregando } from '@/components/ui/Carregando'
+import { faseDoFeed } from '@/lib/alertas-feed.mjs'
 import { HYDRATED_EVENT } from '@/lib/synced'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import type { Alert } from '@/lib/types'
@@ -288,6 +289,7 @@ export default function AlertasPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<AlertaConfig | null>(null)
   const [loadingFeed, setLoadingFeed] = useState(false)
+  const [feedRespondeu, setFeedRespondeu] = useState(false)
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailResult, setEmailResult] = useState<'ok' | 'err' | null>(null)
   const [ufFiltro, setUfFiltro] = useState<string>('')
@@ -387,7 +389,7 @@ export default function AlertasPage() {
       sincronizarNotificacoes([...matched, ...direct])
       setNotifs(getNotificacoes())
     } catch { /* silent */ }
-    finally { setLoadingFeed(false) }
+    finally { setLoadingFeed(false); setFeedRespondeu(true) }
   }, [semSetup, setupFeed])
 
   useEffect(() => {
@@ -578,8 +580,8 @@ export default function AlertasPage() {
                 </div>
               </div>
 
-              {/* Feed vazio enquanto a busca não voltou: é carregamento, não "nenhuma notificação". */}
-              {loadingFeed && notifsFiltradas.length === 0 ? (
+              {/* Feed vazio enquanto a busca não respondeu: é carregamento, não "nenhuma notificação". */}
+              {faseDoFeed({ respondeu: feedRespondeu, carregando: loadingFeed, total: notifsFiltradas.length }) === 'carregando' ? (
                 <Carregando texto="Carregando notificações…" className="py-20" />
               ) : notifsFiltradas.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center">

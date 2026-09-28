@@ -16,6 +16,7 @@ export function Carregando({
   demoraMs = 12_000,
   avisoDemora = 'Está demorando mais que o normal. Continuamos buscando, a base é grande.',
   compacto = false,
+  anunciar = true,
   className,
 }: {
   /** O que está vindo: "Carregando oportunidades…". */
@@ -25,6 +26,12 @@ export function Carregando({
   avisoDemora?: string
   /** Numa linha só, para cartões pequenos e KPIs. */
   compacto?: boolean
+  /**
+   * `role="status"` é uma live region: cada instância é lida pelo leitor de tela. Onde há
+   * várias lado a lado (os 4 KPIs, os 2 gráficos), elas vão com `anunciar={false}` e a
+   * região tem um único <StatusCarregando> (revisão da #49).
+   */
+  anunciar?: boolean
   className?: string
 }) {
   const [demorou, setDemorou] = useState(false)
@@ -33,19 +40,25 @@ export function Carregando({
     return () => clearTimeout(t)
   }, [demoraMs])
 
+  const a11y = anunciar ? { role: 'status' as const } : { 'aria-hidden': true as const }
   if (compacto) {
     return (
-      <span role="status" className={clsx('inline-flex items-center gap-1.5 text-[12px] text-muted', className)}>
+      <span {...a11y} className={clsx('inline-flex items-center gap-1.5 text-[12px] text-muted', className)}>
         <RefreshCw size={13} className="animate-spin text-accent flex-shrink-0" aria-hidden />
         {texto}
       </span>
     )
   }
   return (
-    <div role="status" className={clsx('flex flex-col items-center justify-center text-center py-10 px-6', className)}>
+    <div {...a11y} className={clsx('flex flex-col items-center justify-center text-center py-10 px-6', className)}>
       <RefreshCw size={22} className="animate-spin text-accent mb-2.5" aria-hidden />
       <p className="text-[13px] text-strong font-semibold">{texto}</p>
       {demorou && <p className="text-[12px] text-muted mt-1.5 max-w-[380px] leading-snug">{avisoDemora}</p>}
     </div>
   )
+}
+
+/** O anúncio único de uma região com vários <Carregando anunciar={false}>. Só para leitor de tela. */
+export function StatusCarregando({ texto }: { texto: string }) {
+  return <span role="status" className="sr-only">{texto}</span>
 }

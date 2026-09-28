@@ -274,7 +274,8 @@ export default function TimelinePage() {
               <div key={label} className="bg-bg2 border border-subtle rounded-xl px-4 py-3">
                 <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider">{label}</div>
                 <div className={clsx('text-[22px] font-mono-custom font-bold mt-0.5 leading-tight', color)}>
-                  {loading ? <Carregando compacto texto="Carregando…" /> : value}
+                  {/* Sem anúncio: o "Carregando licitações…" da lista já fala pela tela */}
+                  {loading ? <Carregando compacto anunciar={false} texto="Carregando…" /> : value}
                 </div>
               </div>
             ))}

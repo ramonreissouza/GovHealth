@@ -9,7 +9,7 @@ import {
 import { CATEGORIA_CHART_COLOR as CAT_COLORS, CATEGORIA_LABEL as CAT_LABELS } from '@/lib/categorias'
 import { TOOLTIP_TEMA } from '@/lib/chart-tooltip'
 import type { OpportunitiesData } from './DashboardView'
-import { Carregando } from '@/components/ui/Carregando'
+import { Carregando, StatusCarregando } from '@/components/ui/Carregando'
 
 export default function DashboardCharts({ data, loading }: { data: OpportunitiesData | null; loading: boolean }) {
   // Agregados calculados no servidor sobre o dataset COMPLETO do banco (série de 12
@@ -42,11 +42,12 @@ export default function DashboardCharts({ data, loading }: { data: Opportunities
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <StatusCarregando texto="Carregando gráficos…" />
         <div className="bg-bg2 border border-subtle rounded-xl p-4 h-[220px] flex items-center justify-center">
-          <Carregando texto="Carregando gráfico de licitações por mês…" />
+          <Carregando anunciar={false} texto="Carregando gráfico de licitações por mês…" />
         </div>
         <div className="bg-bg2 border border-subtle rounded-xl p-4 h-[220px] flex items-center justify-center">
-          <Carregando texto="Carregando distribuição por categoria…" />
+          <Carregando anunciar={false} texto="Carregando distribuição por categoria…" />
         </div>
       </div>
     )
