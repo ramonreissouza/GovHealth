@@ -7,7 +7,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import {
-  ExternalLink, Search, CheckCircle2, AlertCircle, RefreshCw,
+  ExternalLink, Search, CheckCircle2, AlertCircle,
   Building2, MapPin, ChevronDown, ChevronUp, Wifi, WifiOff, Package,
   FileSearch, ChevronRight,
 } from 'lucide-react'
@@ -18,6 +18,7 @@ import { CATEGORIA_COLOR as CAT_COLOR } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 import { matchesTermo } from '@/lib/text'
 import { publishDataStatus } from '@/lib/data-status'
+import { Carregando, StatusCarregando } from '@/components/ui/Carregando'
 
 // ── Types from API response ───────────────────────────────────────────────────
 
@@ -149,10 +150,7 @@ function EstadoCard({
 
       {/* KPIs */}
       {loading ? (
-        <div className="flex items-center gap-1.5 text-[11px] text-faint">
-          <RefreshCw size={11} className="animate-spin" />
-          Carregando…
-        </div>
+        <Carregando compacto anunciar={false} texto="Carregando números…" />
       ) : (
         <div className="space-y-1.5">
           <div className="flex justify-between">
@@ -473,9 +471,7 @@ function EstadoDetalhe({ uf, statusFiltro, onStatusChange }: { uf: UFEstadual; s
         </div>
 
         {loading ? (
-          <div className="p-10 text-center text-faint text-[13px]">
-            Buscando licitações de saúde em {portal.nomeEstado}…
-          </div>
+          <Carregando texto={`Carregando licitações de saúde em ${portal.nomeEstado}…`} />
         ) : filtered.length === 0 ? (
           <div className="p-10 text-center text-faint text-[13px]">
             {licitacoes.length === 0
@@ -811,6 +807,8 @@ export default function EstadosPage() {
         />
 
         <main className="flex-1 overflow-y-auto p-6 bg-bg space-y-4">
+          {/* Um anúncio para os 27 cartões; cada um só mostra as flechas */}
+          {resumoLoading && <StatusCarregando texto="Carregando números dos estados…" />}
 
           {selectedUF ? (
             <>

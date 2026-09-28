@@ -14,6 +14,7 @@ import { formatBRL } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { Carregando } from '@/components/ui/Carregando'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { Paginacao } from '@/components/ui/Paginacao'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
@@ -320,7 +321,7 @@ export default function FornecedoresPage() {
                   Maiores vendedores {catsAtivas.size ? `· ${[...catsAtivas].map((c) => CATEGORIA_LABEL[c] ?? c).join(', ')}` : '· todas categorias'}
                 </div>
                 {loading ? (
-                  <div className="p-10 text-center text-faint text-[13px]">Carregando ranking…</div>
+                  <Carregando texto="Carregando fornecedores…" />
                 ) : ranking.length === 0 ? (
                   <div className="p-10 text-center text-faint text-[13px]">
                     {buscaQuery ? `Nenhum fornecedor encontrado para “${buscaQuery}” com os filtros atuais.` : 'Nenhum fornecedor com os filtros atuais.'}
@@ -379,7 +380,7 @@ export default function FornecedoresPage() {
                   </div>
 
                   {detLoading ? (
-                    <div className="text-[12px] text-faint py-4">Carregando composição de vendas…</div>
+                    <Carregando texto="Carregando composição de vendas…" className="py-6" />
                   ) : !det ? (
                     <div className="text-[12px] text-faint py-4">Sem dados para este fornecedor.</div>
                   ) : (

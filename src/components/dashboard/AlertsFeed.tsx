@@ -8,6 +8,7 @@ import { Alert } from '@/lib/types'
 import { clsx } from 'clsx'
 import { formatDistanceToNow } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
+import { Carregando } from '@/components/ui/Carregando'
 
 const TIPO_CONFIG = {
   edital: { label: 'EDITAL', variant: 'tag-green', border: 'border-accent/20' },
@@ -56,13 +57,7 @@ export default function AlertsFeed({ ufs = [], tipo }: { ufs?: string[]; tipo?: 
   }, [ufsKey, tipo])
 
   if (loading) {
-    return (
-      <div className="space-y-2">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-16 bg-bg3 rounded-lg animate-pulse" />
-        ))}
-      </div>
-    )
+    return <Carregando texto="Carregando alertas…" />
   }
 
   return (

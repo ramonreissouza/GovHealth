@@ -14,6 +14,7 @@ import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { Carregando } from '@/components/ui/Carregando'
 import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 
@@ -247,7 +248,7 @@ export default function ConcorrentesPage() {
                   Concorrentes {catAtiva ? `· ${CATEGORIA_LABEL[catAtiva] ?? catAtiva}` : ''} — clique para ver as licitações
                 </div>
                 {loading ? (
-                  <div className="p-10 text-center text-faint text-[13px]">Carregando concorrentes…</div>
+                  <Carregando texto="Carregando concorrentes…" />
                 ) : ranking.length === 0 ? (
                   <div className="p-10 text-center text-faint text-[13px]">
                     {buscaQuery ? `Nenhum concorrente encontrado para “${buscaQuery}” com os filtros atuais.` : 'Nenhum concorrente com os filtros atuais.'}
@@ -311,7 +312,7 @@ export default function ConcorrentesPage() {
                   </div>
 
                   {contratosLoading ? (
-                    <div className="text-[12px] text-faint py-6 text-center">Carregando licitações vencidas…</div>
+                    <Carregando texto="Carregando licitações vencidas…" className="py-6" />
                   ) : !contratos || contratos.contratos.length === 0 ? (
                     <div className="text-[12px] text-faint py-6 text-center">Nenhuma licitação encontrada com os filtros atuais.</div>
                   ) : (

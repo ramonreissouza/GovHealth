@@ -16,6 +16,7 @@ import { TOOLTIP_TEMA } from '@/lib/chart-tooltip'
 import { CATEGORIAS } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { Carregando } from '@/components/ui/Carregando'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
@@ -254,7 +255,11 @@ export default function ConcorrentesEstadoPage() {
             <>
               {/* Top 3 concorrentes — clique = filtrar a tela por essa empresa */}
               <div className="grid grid-cols-3 gap-3 mb-4">
-                {top3.length === 0 && !loading ? (
+                {top3.length === 0 && loading ? (
+                  <div className="col-span-3 bg-bg2 border border-subtle rounded-xl">
+                    <Carregando texto="Carregando concorrentes…" className="py-6" />
+                  </div>
+                ) : top3.length === 0 ? (
                   <div className="col-span-3 bg-bg2 border border-subtle rounded-xl p-6 text-center text-faint text-[13px]">
                     Sem resultados para {escopoLabel}.
                   </div>
@@ -350,7 +355,7 @@ export default function ConcorrentesEstadoPage() {
                     {fornecedorSel ? `Itens fornecidos por ${fornecedorSel.nome}` : 'Porcentagem de itens adquiridos'}
                   </div>
                   {donutData.length === 0 ? (
-                    <div className="h-[360px] flex items-center justify-center text-faint text-[13px]">{loading ? 'Carregando…' : 'Sem dados'}</div>
+                    <div className="h-[360px] flex items-center justify-center text-faint text-[13px]">{loading ? <Carregando texto="Carregando itens adquiridos…" /> : 'Sem dados'}</div>
                   ) : (
                     <ResponsiveContainer width="100%" height={360}>
                       <PieChart>
@@ -370,7 +375,7 @@ export default function ConcorrentesEstadoPage() {
                   </div>
                   <div className="space-y-1 max-h-[440px] overflow-y-auto">
                     {entidades.length === 0 ? (
-                      <div className="text-[11px] text-faint py-2">{loading ? 'Carregando…' : 'Sem entidades'}</div>
+                      loading ? <Carregando compacto texto="Carregando entidades…" className="py-2" /> : <div className="text-[11px] text-faint py-2">Sem entidades</div>
                     ) : entidades.map((e, i) => (
                       <div key={i} className="px-2 py-1.5 rounded-md hover:bg-bg3">
                         <div className="text-[11px] text-strong leading-snug line-clamp-2">{e.entidade ?? '—'}</div>
@@ -391,7 +396,7 @@ export default function ConcorrentesEstadoPage() {
                     <Package size={12} /> Detalhamento por processo · {fornecedorSel.nome}
                   </div>
                   {breakdown.length === 0 ? (
-                    <div className="p-6 text-center text-faint text-[12px]">{loading ? 'Carregando…' : 'Sem detalhamento para este concorrente no escopo atual.'}</div>
+                    loading ? <Carregando texto="Carregando detalhamento…" className="py-6" /> : <div className="p-6 text-center text-faint text-[12px]">Sem detalhamento para este concorrente no escopo atual.</div>
                   ) : (
                     <div className="overflow-x-auto max-h-[520px]">
                       <table className="w-full">

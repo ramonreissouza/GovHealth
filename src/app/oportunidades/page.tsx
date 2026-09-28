@@ -15,6 +15,7 @@ import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
 import { Paginacao } from '@/components/ui/Paginacao'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
+import { Carregando } from '@/components/ui/Carregando'
 // Preço de referência Compras.gov RELIGADO no breakdown por item, agora só onde há
 // PDM do CATMAT casado (ver PrecoRefItem e scripts/casar-pdm.mjs).
 import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
@@ -101,10 +102,7 @@ function ItemsRow({ opp, preloaded }: { opp: Oportunidade; preloaded?: ItemPNCP[
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[11px] text-faint py-1">
-        <Package size={12} className="animate-pulse" />
-        Buscando equipamentos no PNCP…
-      </div>
+      <Carregando compacto texto="Buscando equipamentos no PNCP…" className="py-1" />
     )
   }
 
@@ -752,8 +750,8 @@ function OportunidadesInner() {
               <div className="text-[13px] text-strong">{erroApi}</div>
             </div>
           ) : isLoading ? (
-            <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">
-              Carregando…
+            <div className="bg-bg2 border border-subtle rounded-xl">
+              <Carregando texto="Carregando licitações…" />
             </div>
           ) : visible.length === 0 ? (
             <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">
@@ -1115,7 +1113,7 @@ function OportunidadesInner() {
 
 export default function OportunidadesPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-faint text-[13px]">Carregando…</div>}>
+    <Suspense fallback={<Carregando texto="Carregando licitações…" />}>
       <OportunidadesInner />
     </Suspense>
   )

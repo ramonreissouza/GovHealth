@@ -11,6 +11,7 @@ import { formatBRL, formatDate } from '@/lib/format'
 import { CATEGORIAS, CATEGORIA_LABEL } from '@/lib/categoria-mercado'
 import { publishDataStatus } from '@/lib/data-status'
 import { ExportButton } from '@/components/ui/ExportButton'
+import { Carregando } from '@/components/ui/Carregando'
 import { PageSizeSelector, PAGE_SIZE_PADRAO } from '@/components/ui/PageSizeSelector'
 import type { ExportColumn } from '@/lib/export'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
@@ -239,7 +240,7 @@ export default function VencedoresPage() {
 
           {/* Conteúdo */}
           {loading ? (
-            <div className="bg-bg2 border border-subtle rounded-xl p-10 text-center text-faint text-[13px]">Carregando vencedores…</div>
+            <div className="bg-bg2 border border-subtle rounded-xl"><Carregando texto="Carregando vencedores…" /></div>
           ) : erro ? (
             <div className="bg-bg2 border border-amber/30 rounded-xl p-8 text-center">
               <Database size={28} className="text-amber mx-auto mb-3" />
@@ -389,7 +390,7 @@ function DetalheResultado({ convenio, numeroItem }: { convenio: string; numeroIt
     return () => { vivo = false }
   }, [convenio, numeroItem])
 
-  if (loading) return <div className="text-[12px] text-faint py-2">Carregando detalhes do processo…</div>
+  if (loading) return <Carregando compacto texto="Carregando detalhes do processo…" className="py-2" />
   if (erro) return <div className="text-[12px] text-amber py-2">{erro}</div>
   if (!det) return null
 

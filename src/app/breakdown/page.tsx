@@ -13,6 +13,7 @@ import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import { useSetupCategoriasDefault } from '@/lib/use-setup-categorias'
 import { useSetupFiltro } from '@/lib/use-setup-filtro'
 import { SetupFilterHint } from '@/components/ui/SetupFilterHint'
+import { Carregando } from '@/components/ui/Carregando'
 
 const ANOS = ['todos', '2026', '2025', '2024', '2023']
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
@@ -66,7 +67,7 @@ function RankColumn({
     <div className="bg-bg2 border border-subtle rounded-xl p-3 flex flex-col min-h-0">
       <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-2 flex items-center gap-1.5">{icon} {titulo}</div>
       <div className="space-y-1 overflow-y-auto flex-1 max-h-[520px]">
-        {loading ? <div className="text-[11px] text-faint py-2">Carregando…</div>
+        {loading ? <Carregando compacto texto="Carregando ranking…" className="py-2" />
           : rows.length === 0 ? <div className="text-[11px] text-faint py-2">Sem dados</div>
           : rows.map((r, i) => {
             const nome = r.chave ?? '—'
@@ -256,7 +257,7 @@ export default function BreakdownPage() {
                     {(item || empresa) && <span className="text-accent">· {[item, empresa].filter(Boolean).join(' · ')}</span>}
                   </div>
                   {loading ? (
-                    <div className="text-[11px] text-faint py-3">Carregando…</div>
+                    <Carregando compacto texto="Carregando detalhe das compras…" className="py-3" />
                   ) : (data?.detalhes ?? []).length === 0 ? (
                     <div className="text-[11px] text-faint py-3">Sem detalhes para esta seleção.</div>
                   ) : (
