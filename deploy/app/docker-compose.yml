@@ -245,38 +245,8 @@ services:
       RADAR_PUBLICO_INTERVAL_SECONDS: ${RADAR_PUBLICO_INTERVAL_SECONDS:-300}
       TZ: America/Sao_Paulo
 
-  # As minerações que rodavam no Agendador do Windows (ETL do PNCP, cobertura,
-  # backfill de itens, pipeline da noite, CAPAG, Radar de Chat). Agenda em
-  # scripts/vps/mineracao.crontab, horários de Brasília. Gravam no `db` DESTA VPS.
-  #
-  # Profile próprio: não sobe junto com `app worker`. Ligue só depois de
-  #   1) o `db` estar restaurado e conferido, e
-  #   2) as tarefas "GovHealth *" do Windows estarem DESATIVADAS — as duas pontas
-  #      gravando ao mesmo tempo disputam o PNCP (as travas da pista são por
-  #      arquivo, cada máquina só enxerga as suas).
-  #
-  #   docker compose --profile mineracao build mineracao
-  #   docker compose --profile mineracao up -d mineracao
-  #   docker compose logs -f mineracao
-  #
-  # Sem volume de propósito: as travas da pista (.pncp-ocupado, .pncp-fila/) são por
-  # PID e não podem sobreviver a um contêiner novo.
-  mineracao:
-    profiles: ['mineracao']
-    build:
-      context: ../..
-      dockerfile: deploy/app/Dockerfile
-      target: mineracao
-    restart: unless-stopped
-    init: true               # o Chromium do Radar deixa processos filhos
-    shm_size: '256mb'
-    stop_grace_period: 2m    # tempo para os scripts soltarem a trava do PNCP
-    depends_on:
-      db: { condition: service_healthy }
-    environment:
-      <<: *app-env
-      DATABASE_URL: postgresql://${POSTGRES_USER:-govhealth}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-govhealth}
-      TZ: America/Sao_Paulo
+  # As minerações (ETL do PNCP, CAPAG, Radar) NÃO rodam por este compose: no k3s
+  # cada uma é uma CronJob — ver deploy/helm/govhealth/templates/mineracao.yaml.
 
 volumes:
   pgdata:

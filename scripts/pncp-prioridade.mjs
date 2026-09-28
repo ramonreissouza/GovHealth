@@ -21,7 +21,7 @@
 // ARQUIVO SEPARADO DE PROPÓSITO. O `.pncp-ocupado` é reescrito inteiro pela batida do
 // dono a cada 5 min; qualquer campo que eu somasse lá seria apagado pelo próprio dono
 // — inclusive por um processo que já esteja rodando com a versão anterior do módulo.
-// A fila mora em `.pncp-fila/<pid>.json`, que ninguém reescreve por cima.
+// A fila mora em `.pncp-fila/<host>-<pid>.json`, que ninguém reescreve por cima.
 //
 // MESMA DISCIPLINA DO LOCK: pedido só vale enquanto se prova vivo. Um pedido órfão
 // (processo morto sem faxina) faria o dono ceder a pista para um fantasma, para sempre
@@ -30,9 +30,10 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { estado, pegar, soltar } from './pncp-lock.mjs'
+import { estado, pegar, soltar, PISTA_DIR, HOST, ehMeu, deOutroHost } from './pncp-lock.mjs'
 
-const PASTA = path.join(process.cwd(), '.pncp-fila')
+// Mesma pasta e mesma identidade (PID + host) do lock — ver o cabeçalho de pncp-lock.mjs.
+const PASTA = path.join(PISTA_DIR, '.pncp-fila')
 
 // Menor = mais urgente. A ordem é a resposta para "se os dois quiserem agora, quem
 // atrasa menos o cliente?" — e não "quem é mais importante em abstrato".
@@ -91,6 +92,10 @@ const GRACA_MS = ms('PNCP_FILA_GRACA_MS', 45 * 1000)
 const MIN_TRABALHO_MS = ms('PNCP_FILA_MIN_TRABALHO_MS', 10 * 60 * 1000)
 // A conferência é memorizada por este tanto porque roda dentro de laço de página.
 const MEMO_MS = ms('PNCP_FILA_MEMO_MS', 15 * 1000)
+// Pedido de outro pod não tem PID conferível daqui: vale enquanto é renovado. Quem
+// espera renova a cada POLL_MS (20 s), então 2 min são seis batidas perdidas — um pod
+// morto sai da fila em 2 min, e não faz o dono ceder a pista para um fantasma.
+const FILA_SILENCIO_MS = ms('PNCP_FILA_SILENCIO_MS', 2 * 60 * 1000)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -99,14 +104,23 @@ function pidVivo(pid) {
   try { process.kill(pid, 0); return true } catch (e) { return e?.code === 'EPERM' }
 }
 
-const meuPedido = () => path.join(PASTA, `${process.pid}.json`)
+// O host entra no nome: dois pods com o mesmo PID escreveriam no mesmo arquivo.
+const meuPedido = () => path.join(PASTA, `${HOST}-${process.pid}.json`)
 
-/** Anuncia que quero a pista. Idempotente: chamar de novo só renova o carimbo. */
+/** O pedido ainda se sustenta? No mesmo host, pelo PID; de outro host, pela renovação. */
+function pedidoVivo(p) {
+  if (!deOutroHost(p)) return pidVivo(p.pid)
+  const quietoMs = Date.now() - Date.parse(p.desde ?? 0)
+  return quietoMs >= 0 && quietoMs <= FILA_SILENCIO_MS
+}
+
+/** Anuncia que quero a pista. Idempotente: chamar de novo só renova o carimbo — e é
+ *  essa renovação que prova o pedido vivo para os outros pods. */
 export function entrarNaFila(dono, prioridade = prioridadeDe(dono)) {
   try {
     fs.mkdirSync(PASTA, { recursive: true })
     fs.writeFileSync(meuPedido(), JSON.stringify({
-      pid: process.pid, dono, prioridade, desde: new Date().toISOString(),
+      pid: process.pid, host: HOST, dono, prioridade, desde: new Date().toISOString(),
     }))
   } catch { /* fila é otimização, não correção: sem ela tudo ainda funciona */ }
 }
@@ -125,7 +139,7 @@ export function fila() {
     const alvo = path.join(PASTA, n)
     let p
     try { p = JSON.parse(fs.readFileSync(alvo, 'utf8')) } catch { p = null }
-    if (!p || !pidVivo(p.pid)) {
+    if (!p || !pedidoVivo(p)) {
       try { fs.unlinkSync(alvo) } catch { /* corrida com outro faxineiro: tudo bem */ }
       continue
     }
@@ -166,7 +180,7 @@ export function quemPedePassagem(dono) {
   if (agora - ultimaConferida < MEMO_MS) return ultimaResposta
   ultimaConferida = agora
   const minha = prioridadeDe(dono)
-  ultimaResposta = fila().find((p) => p.pid !== process.pid && (p.prioridade ?? PADRAO) < minha) ?? null
+  ultimaResposta = fila().find((p) => !ehMeu(p) && (p.prioridade ?? PADRAO) < minha) ?? null
   return ultimaResposta
 }
 
@@ -212,6 +226,7 @@ export async function ceder(dono, { log = console.log, tetoMin = 120 } = {}) {
         log('pista retomada.')
         return true
       }
+      entrarNaFila(dono) // renova o carimbo: é o que prova o pedido vivo a outro pod
       await sleep(POLL_MS)
     }
     log(`esperei ${tetoMin}min e a pista segue com "${estado().dono ?? '—'}" — NÃO retomo `
@@ -240,9 +255,10 @@ export async function esperarVez(dono, { esperaMaxMin = 0, log = console.log } =
       // Um aviso por minuto no máximo: o poll é de 20s para a passagem ser rápida,
       // mas encher o log de 3 linhas por minuto não ajuda ninguém a depurar.
       if (Date.now() - inicio > avisos * 60000) {
-        const à_frente = fila().filter((p) => p.pid !== process.pid && (p.prioridade ?? PADRAO) < prioridadeDe(dono)).length
+        const à_frente = fila().filter((p) => !ehMeu(p) && (p.prioridade ?? PADRAO) < prioridadeDe(dono)).length
         log(`pista ocupada por "${estado().dono}"${à_frente ? ` · ${à_frente} na minha frente` : ''} — espera ${++avisos}`)
       }
+      entrarNaFila(dono) // renova o carimbo: é o que prova o pedido vivo a outro pod
       await sleep(POLL_MS)
     }
     trabalhandoDesde = Date.now()

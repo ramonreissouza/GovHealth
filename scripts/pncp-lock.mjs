@@ -18,9 +18,30 @@
 // (apagando) o que não se sustenta.
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
-const ARQUIVO = path.join(process.cwd(), '.pncp-ocupado')
+// ONDE A PISTA MORA E QUEM É "EU" (28/09/2026, k3s).
+// No Windows e no compose, todos os donos da pista rodavam na mesma máquina: o PID
+// bastava para dizer quem é quem e se ainda está vivo. No k3s cada tarefa é um pod
+// (CronJob), e isso quebra as duas coisas: o PID se repete entre pods (quase todo
+// `node` é PID 1 ou 7 no próprio pod), e `kill(pid, 0)` não enxerga processo de outro
+// pod. Por isso:
+//   - a pista mora em `PNCP_PISTA_DIR`, um volume montado em todos os pods do nó
+//     (o padrão continua sendo o cwd, que é o que o Windows e os testes usam);
+//   - o dono é PID + `host` (o hostname, que no k8s é o nome do pod);
+//   - dono de OUTRO host não tem PID conferível: vale enquanto se anuncia, pelo mesmo
+//     teto de silêncio que já pega o dono que morreu sem faxina.
+export const PISTA_DIR = process.env.PNCP_PISTA_DIR || process.cwd()
+export const HOST = os.hostname()
+const ARQUIVO = path.join(PISTA_DIR, '.pncp-ocupado')
+
+/** É o registro deste processo? PID sozinho não diz: outro pod pode ter o mesmo PID.
+ *  Registro sem `host` é da versão anterior, sempre escrito na mesma máquina. */
+export const ehMeu = (info) => info?.pid === process.pid && (info.host ?? HOST) === HOST
+
+/** O registro é de outro host, onde não dá para perguntar pelo PID? */
+export const deOutroHost = (info) => Boolean(info?.host) && info.host !== HOST
 
 // POR QUE O TETO DE IDADE VIROU TETO DE SILÊNCIO
 // A versão anterior expirava o lock por IDADE, e conferia a idade ANTES da vida do
@@ -54,7 +75,7 @@ let batida = null
 /** Escreve o arquivo com a hora ATUAL — é a batida que prova o dono vivo. */
 function anunciar(dono) {
   fs.writeFileSync(ARQUIVO, JSON.stringify({
-    pid: process.pid, dono, desde: new Date().toISOString(), anuncia: true,
+    pid: process.pid, host: HOST, dono, desde: new Date().toISOString(), anuncia: true,
   }))
 }
 
@@ -62,8 +83,9 @@ function anunciar(dono) {
  *  criou, ou alguém chegou antes. Nunca "escrevi por cima sem saber". */
 function criar(dono) {
   try {
+    fs.mkdirSync(PISTA_DIR, { recursive: true })
     fs.writeFileSync(ARQUIVO, JSON.stringify({
-      pid: process.pid, dono, desde: new Date().toISOString(), anuncia: true,
+      pid: process.pid, host: HOST, dono, desde: new Date().toISOString(), anuncia: true,
     }), { flag: 'wx' })
     return true
   } catch (e) {
@@ -105,8 +127,8 @@ export function pegar(dono) {
     // porque perder a pista calado foi exatamente o que custou caro em 06/09.
     try {
       const info = JSON.parse(fs.readFileSync(ARQUIVO, 'utf8'))
-      if (info.pid !== process.pid) {
-        console.warn(`[pista] PERDI a pista para "${info.dono}" (PID ${info.pid}) sem ter soltado.`)
+      if (!ehMeu(info)) {
+        console.warn(`[pista] PERDI a pista para "${info.dono}" (PID ${info.pid}${info.host ? ` em ${info.host}` : ''}) sem ter soltado.`)
         clearInterval(batida); batida = null; return
       }
     } catch { /* sumiu ou ilegível: reanunciar é o certo */ }
@@ -121,7 +143,7 @@ export function pegar(dono) {
  *  e apagou na saída o lock do dono legítimo, abrindo a pista para um terceiro. */
 export function soltar() {
   let meu = true
-  try { meu = JSON.parse(fs.readFileSync(ARQUIVO, 'utf8')).pid === process.pid } catch {
+  try { meu = ehMeu(JSON.parse(fs.readFileSync(ARQUIVO, 'utf8'))) } catch {
     /* sumiu ou ilegível: não há dono a preservar, seguir e apagar é inócuo */
   }
   if (batida) { clearInterval(batida); batida = null }
@@ -151,7 +173,9 @@ export function estado() {
 
   // A VIDA VEM ANTES DA IDADE. Era o contrário, e era por isso que uma tarefa viva de
   // 30h perdia a pista na hora 20.
-  if (!pidVivo(info.pid)) {
+  // Dono em outro pod: o PID dele não existe aqui, e perguntar daria "morto" para um
+  // dono vivo. Sobra a batida, conferida logo abaixo pelo teto de silêncio.
+  if (!deOutroHost(info) && !pidVivo(info.pid)) {
     descartar()
     return { ocupado: false, motivo: `lock órfão (PID ${info.pid} morreu) — descartado` }
   }

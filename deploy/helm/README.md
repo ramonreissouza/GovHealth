@@ -31,8 +31,13 @@ containerd do k3s:
 docker build -f deploy/app/Dockerfile --target runner -t govhealth.local/app:$SHA \
   --build-arg NEXT_PUBLIC_APP_URL=... .
 docker build -f deploy/app/Dockerfile --target worker -t govhealth.local/worker:$SHA .
-for i in app worker; do docker save govhealth.local/$i:$SHA | sudo k3s ctr images import -; done
+docker build -f deploy/app/Dockerfile --target mineracao -t govhealth.local/mineracao:$SHA .
+for i in app worker mineracao; do docker save govhealth.local/$i:$SHA | sudo k3s ctr images import -; done
 ```
+
+A de `mineracao` só é usada com `mineracao.enabled=true`, mas as três precisam
+existir com a mesma tag. Sem a de mineração, as CronJobs sobem e cada execução
+falha com `ErrImagePull`.
 
 O prefixo `govhealth.local` não resolve de propósito. Se a imagem importada
 sumir, o pod falha com `ErrImagePull`, em vez de baixar do Docker Hub uma
@@ -46,6 +51,28 @@ delas exige uma imagem nova, não só um restart.
 `worker.enabled` é booleano e o Deployment usa `strategy: Recreate`. Nunca
 suba duas réplicas: o pg-boss agenda os jobs no boot, e dois workers rodariam
 cada job duas vezes.
+
+## As minerações
+
+O ETL do PNCP, a cobertura, o backfill de itens, o pipeline da noite, a CAPAG
+e o Radar de Chat rodavam no Agendador do Windows. Aqui, cada tarefa é uma
+CronJob (`templates/mineracao.yaml`), com a agenda em `mineracao.jobs` do
+`values.yaml`, em horário de Brasília. O passo a passo para ligar está em
+[`docs/vps-mineracao.md`](../../docs/vps-mineracao.md).
+
+- **`concurrencyPolicy: Forbid`:** uma execução não começa enquanto a anterior
+  da mesma tarefa roda.
+- **`activeDeadlineSeconds`:** o teto de tempo que cada tarefa tinha no
+  Windows. Ao estourar, o pod recebe SIGTERM e solta a trava do PNCP.
+- **A pista do PNCP:** as tarefas do PNCP se revezam por uma trava de arquivo.
+  Ela mora no PVC `mineracao-pista`, montado em todos os pods
+  (`PNCP_PISTA_DIR=/pista`). Como o PID se repete entre pods, o dono é
+  identificado por PID + nome do pod. Um dono de outro pod vale enquanto se
+  anuncia (a cada 5 min; 30 min de silêncio o descartam).
+
+A permissão do Jenkins no namespace precisa incluir `batch/cronjobs`. Se ela
+não incluir, o `helm upgrade` com `mineracao.enabled=true` falha. Isso fica no
+repositório `infra`.
 
 ## Migrations
 
