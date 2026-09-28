@@ -1,0 +1,42 @@
+# scripts/vps/mineracao.crontab — as minerações que rodavam no Agendador do Windows.
+#
+# Lido pelo supercronic do serviço `mineracao` (deploy/app/docker-compose.yml), com
+# TZ=America/Sao_Paulo: os horários abaixo são de Brasília. No Windows eles estavam no
+# fuso do PC (Europa, 5 h à frente), por isso nenhum número bate com a tarefa antiga.
+#
+# Por que aqui, e não no worker (pg-boss): estes scripts são .mjs de horas, com Playwright
+# e com a trava de arquivo do PNCP (.pncp-ocupado / .pncp-fila, por PID). A trava só
+# funciona se todos os donos da pista rodarem no MESMO sistema de arquivos e no MESMO
+# espaço de PIDs — um contêiner só, este.
+#
+# Instância única: o supercronic não inicia uma linha enquanto a execução anterior dela
+# ainda roda (sem `-overlapping`). É o MultipleInstances=IgnoreNew do Windows.
+#
+# `timeout` substitui o ExecutionTimeLimit do Windows, com os mesmos tetos. SIGTERM
+# primeiro (os scripts soltam a trava do PNCP ao sair), SIGKILL 2 min depois.
+#
+# Fora daqui, de propósito: "GovHealth Licitacoes-e" (scripts/licite). Aquele coletor
+# resolve o CAPTCHA do portal por OCR, e isso não vai para um servidor automatizado.
+
+# ── PNCP: janela recente e buracos ───────────────────────────────────────────
+# ETL Refresh — era 03:00 na Europa.
+0 22 * * *    timeout -k 2m 18h node scripts/etl-refresh-loop.mjs
+# Refresh 2 Dias — era 05:00 na Europa.
+0 0 * * *     ETL_DONO=etl-refresh-2dias ETL_DIAS=5 ETL_PASSADAS=3 ETL_ORCAMENTO_MIN=120 timeout -k 2m 8h node scripts/etl-refresh-loop.mjs
+# Sync Cobertura — eram 12:00, 18:00 e 01:00 na Europa.
+0 7,13,20 * * * timeout -k 2m 2h node scripts/sync-cobertura.mjs
+# Backfill de itens (>= R$ 1 mi) — era 11:00 na Europa. Fica no fim da fila da pista.
+0 6 * * *     timeout -k 2m 12h node scripts/backfill-itens.mjs --min=1000000 --orcamento=600 --espera-max=45
+# Pipeline Noite (portais das abertas -> valores -> portais do histórico). No Windows
+# subia no logon e ia até acabar; aqui roda toda noite, sem se sobrepor a si mesmo.
+0 1 * * *     timeout -k 2m 20h node scripts/pipeline-noite.mjs
+
+# ── Outras fontes ────────────────────────────────────────────────────────────
+# CAPAG (Tesouro) — era domingo 04:30 na Europa = sábado 23:30 em Brasília.
+30 23 * * 6   timeout -k 2m 1h node scripts/ingest-capag.mjs
+
+# ── Radar de Chat (páginas públicas, Playwright) ─────────────────────────────
+# Passada completa a cada 2 h.
+0 */2 * * *   timeout -k 1m 3h node scripts/radar/run.mjs
+# Pregões urgentes a cada 20 min; o teto de 19 min garante que uma não empurra a outra.
+5-59/20 * * * * timeout -k 30s 19m node scripts/radar/run.mjs --urgentes

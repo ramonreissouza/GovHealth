@@ -118,3 +118,33 @@ COPY src/lib/radar ./src/lib/radar
 COPY db/schema-radar-publico.sql ./db/schema-radar-publico.sql
 USER node
 CMD ["node", "scripts/radar/serve-comprasgov-publico.mjs"]
+
+# ── mineração (ETL do PNCP, CAPAG, Radar) no cron do contêiner ────────────────
+# O que antes eram tarefas do Agendador do Windows. Herda o Chromium do estágio
+# acima (o Radar precisa) e leva `scripts/` inteiro, `src/` e `db/`: os scripts
+# encadeiam uns aos outros por caminho (spawn 'scripts/etl-refresh.mjs', …).
+# O agendador é o supercronic (cron feito para contêiner: lê o ambiente do
+# processo, loga em stdout, não sobrepõe execuções). Binário fixado por sha256.
+FROM radar-comprasgov-publico AS mineracao
+USER root
+ARG TARGETARCH
+ARG SUPERCRONIC_VERSION=v0.2.49
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) SHA=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1 ;; \
+      arm64) SHA=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5 ;; \
+      *) echo "arquitetura sem supercronic fixado: ${TARGETARCH}"; exit 1 ;; \
+    esac; \
+    apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*; \
+    curl -fsSL -o /usr/local/bin/supercronic \
+      "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH:-amd64}"; \
+    echo "${SHA}  /usr/local/bin/supercronic" | sha256sum -c -; \
+    chmod +x /usr/local/bin/supercronic
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node src ./src
+COPY --chown=node:node db ./db
+COPY --chown=node:node tsconfig.json ./
+# As travas da pista do PNCP (.pncp-ocupado, .pncp-fila/) são escritas no cwd.
+RUN chown node:node /app
+USER node
+CMD ["supercronic", "-passthrough-logs", "scripts/vps/mineracao.crontab"]
