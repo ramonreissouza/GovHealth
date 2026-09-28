@@ -16,6 +16,11 @@ import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe
 import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock, Copy, Mail, LogOut, Building2, Radar } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco, orcamentoHref } from '@/lib/planos'
 import { PIX, CONTATO_EMAIL } from '@/lib/pix'
+import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
+
+// As versões que ESTA página mostra e a pessoa aceita. O servidor recusa se não forem as
+// vigentes (página aberta antes de o texto mudar).
+const VERSOES_ACEITAS = { termosVersao: TERMOS_VERSAO, privacidadeVersao: PRIVACIDADE_VERSAO }
 
 type Metodo = 'pix' | 'cartao' | 'boleto'
 
@@ -31,7 +36,7 @@ function CartaoCheckout({ dados, planoId }: { dados: DadosCobranca; planoId: str
   const fetchClientSecret = useCallback(async () => {
     const res = await fetch('/api/assinaturas/checkout', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...dados, plano: planoId }),
+      body: JSON.stringify({ ...dados, plano: planoId, ...VERSOES_ACEITAS }),
     })
     const d = await res.json().catch(() => ({}))
     if (!res.ok || !d.clientSecret) throw new Error(d.error ?? 'Não foi possível iniciar o pagamento.')
@@ -82,6 +87,9 @@ function Checkout() {
   const [f, setF] = useState({ nome: '', email: '', empresa: '', instituicao: '', cpfCnpj: '', telefone: '', endereco: '' })
   const [metodo, setMetodo] = useState<Metodo>('pix')
   const [erro, setErro] = useState('')
+  // Aceite EXPLÍCITO, e não "ao continuar você concorda": a caixa marcada vai ao servidor
+  // com a versão de cada documento e vira evidência (ver registrarAceite).
+  const [aceite, setAceite] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [ok, setOk] = useState(false)
   const [copiado, setCopiado] = useState(false)
@@ -145,6 +153,7 @@ function Checkout() {
   async function assinar() {
     setErro('')
     if (!f.nome.trim() || !f.email.trim()) { setErro('Preencha nome e e-mail.'); return }
+    if (!aceite) { setErro('Para continuar, marque que leu e aceita os Termos de Uso e a Política de Privacidade.'); return }
 
     // CARTÃO → checkout EMBUTIDO na página (recorrente). Congela os dados e mostra
     // o formulário de cartão do Stripe abaixo. A ativação vem pelo webhook.
@@ -158,7 +167,7 @@ function Checkout() {
     setEnviando(true)
     const res = await fetch('/api/assinaturas', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...f, plano: plano.id, metodo }),
+      body: JSON.stringify({ ...f, plano: plano.id, metodo, ...VERSOES_ACEITAS }),
     })
     const d = await res.json().catch(() => ({}))
     setEnviando(false)
@@ -310,13 +319,20 @@ function Checkout() {
                 </div>
               ) : (
                 <>
-                  <button onClick={assinar} disabled={enviando}
-                    className="mt-5 w-full flex items-center justify-center gap-2 text-[15px] font-semibold bg-gradient-brand text-white py-3 rounded-lg hover:brightness-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60">
+                  <label className="mt-5 flex items-start gap-2 text-[12px] text-muted cursor-pointer">
+                    <input type="checkbox" checked={aceite} onChange={(e) => { setAceite(e.target.checked); setErro('') }}
+                      className="mt-0.5 flex-shrink-0" />
+                    <span>
+                      Li e aceito os <Link href="/termos" target="_blank" className="text-accent hover:underline">Termos de Uso</Link> (versão {TERMOS_VERSAO})
+                      e a <Link href="/privacidade" target="_blank" className="text-accent hover:underline">Política de Privacidade</Link> (versão {PRIVACIDADE_VERSAO}).
+                    </span>
+                  </label>
+                  <button onClick={assinar} disabled={enviando || !aceite}
+                    className="mt-3 w-full flex items-center justify-center gap-2 text-[15px] font-semibold bg-gradient-brand text-white py-3 rounded-lg hover:brightness-105 transition-all shadow-lg shadow-accent/20 disabled:opacity-60">
                     {enviando && <Loader2 size={16} className="animate-spin" />}
                     {metodo === 'pix' ? 'Já fiz o Pix — enviar comprovante' : metodo === 'cartao' ? 'Pagar com cartão' : 'Enviar solicitação'} · {formatarPreco(plano.preco)}/{plano.ciclo}
                   </button>
                   <p className="text-[10.5px] text-faint text-center mt-2 flex items-center justify-center gap-1"><ShieldCheck size={11} /> Cartão processado pelo Stripe (PCI-DSS) — não armazenamos dados de cartão. Emitimos nota fiscal.</p>
-                  <p className="text-[10.5px] text-faint text-center mt-2">Ao continuar você concorda com os <Link href="/termos" className="text-accent hover:underline">Termos de Uso</Link> e a <Link href="/privacidade" className="text-accent hover:underline">Política de Privacidade</Link>.</p>
                 </>
               )}
             </div>

@@ -9,6 +9,7 @@
 //
 // UA: o PNCP derruba a conexao para "(compatible; Nome/versao)" — ver src/lib/contratos.ts.
 import fs from 'node:fs'
+import { raizEmpresa } from './lib/raiz-empresa.mjs'
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36 GovHealthAI/1.0'
 const H = { Accept: 'application/json', 'User-Agent': UA }
@@ -53,7 +54,7 @@ for (const it of itens.values()) {
   if (!cnpj || cnpj.length !== 14 || !nome) continue
   const v = Number(d.valorGlobal) || 0
   const cur = porCnpj.get(cnpj) ?? { nome, cnpj, contratos: 0, valor: 0, orgaos: new Set(), ufs: new Set(), ultimo: '' }
-  if (!cur.raiz) cur.raiz = nome.toUpperCase().replace(/s+/g, ' ').split(/ (LTDA|S.?A|EIRELI|ME|EPP)/)[0].trim()
+  if (!cur.raiz) cur.raiz = raizEmpresa(nome)
   cur.contratos++; cur.valor += v
   if (it.orgao_nome) cur.orgaos.add(it.orgao_nome)
   if (it.uf) cur.ufs.add(it.uf)

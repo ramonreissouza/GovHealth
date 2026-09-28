@@ -168,15 +168,22 @@ async function nomeFornecedorPNCP(it: PncpContratoSearch): Promise<string> {
 
 // O PNCP às vezes responde 5xx/instável sob carga. Uma página do resultado com
 // uma tentativa extra — UA de navegador (o PNCP bloqueia alguns UAs "de robô").
-async function buscarPaginaPNCP(cnpj: string, pagina: number, tam: number): Promise<{ itens: PncpContratoSearch[]; total: number } | null> {
+//
+// `prazo` é um instante ABSOLUTO (ms). Era conferido só entre páginas, e uma página
+// sozinha podia gastar ~189 s (4 × 45 s + espera): começada perto do limite, estourava os
+// 300 s da rota e o parcial nunca saía (revisão da #45). Agora cada tentativa só começa
+// se couber, com o timeout cortado ao que resta, e a espera também não passa do prazo.
+async function buscarPaginaPNCP(cnpj: string, pagina: number, tam: number, prazo: number): Promise<{ itens: PncpContratoSearch[]; total: number } | null> {
   const url = `${PNCP_SEARCH}/?q=${cnpj}&tipos_documento=contrato&ordenacao=-data&pagina=${pagina}&tam_pagina=${tam}`
   for (let tentativa = 0; tentativa < TENTATIVAS_BUSCA; tentativa++) {
+    const resta = prazo - Date.now()
+    if (resta < 2_000) return null   // não cabe nem uma chamada: o chamador devolve o parcial
     try {
       const res = await withTimeout(
         // no-store: quem guarda esta busca e o cache da rota (TTL.LONG); deixar o
         // fetch do Next guardar tambem criaria duas validades para o mesmo dado.
         fetch(url, { cache: 'no-store', headers: { Accept: 'application/json', 'User-Agent': UA_BUSCA } }),
-        TIMEOUT_BUSCA,
+        Math.min(TIMEOUT_BUSCA, resta),
         'pncp-search',
       )
       if (res.ok) {
@@ -190,7 +197,7 @@ async function buscarPaginaPNCP(cnpj: string, pagina: number, tam: number): Prom
     }
     // Espera crescente: 0,6s · 1,2s · 2,4s. Insistir no mesmo ritmo numa janela ruim
     // do PNCP só gasta as tentativas todas dentro do mesmo minuto ruim.
-    await sleep(600 * 2 ** tentativa)
+    await sleep(Math.max(0, Math.min(600 * 2 ** tentativa, prazo - Date.now())))
   }
   return null   // falhou após as tentativas
 }
@@ -215,14 +222,16 @@ export async function buscarContratosPorFornecedor(cnpj: string): Promise<Result
   // 20 páginas (1.000) cobrem a cauda larga; acima disso a tela avisa em vez de mentir.
   const MAX_PAGINAS = 20
   // Orçamento de parede: a rota morre em 300s, e uma lista parcial COM AVISO vale
-  // mais que um erro. Paramos antes e deixamos o `truncado` contar a verdade.
+  // mais que um erro. O prazo é absoluto e vale DENTRO de cada página (ver
+  // buscarPaginaPNCP); os 100 s de folga cobrem o detalhe do fornecedor (15 s) e a
+  // montagem da resposta.
   const ORCAMENTO_MS = 200_000
-  const comecou = Date.now()
+  const prazo = Date.now() + ORCAMENTO_MS
   const itens: PncpContratoSearch[] = []
   let totalNoPncp = 0
 
   for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
-    const lote = await buscarPaginaPNCP(limpo, pagina, TAM)
+    const lote = await buscarPaginaPNCP(limpo, pagina, TAM, prazo)
     // A 1ª página falhar é erro real (avisa o usuário). Páginas seguintes falharem
     // não descartam o que já veio — devolvemos o que temos (resultado parcial).
     if (lote === null) {
@@ -232,7 +241,7 @@ export async function buscarContratosPorFornecedor(cnpj: string): Promise<Result
     if (pagina === 1) totalNoPncp = lote.total
     itens.push(...lote.itens)
     if (lote.itens.length < TAM) break        // última página
-    if (Date.now() - comecou > ORCAMENTO_MS) break   // acabou o tempo, não os dados
+    if (Date.now() >= prazo) break            // acabou o tempo, não os dados
   }
 
   if (itens.length === 0) return { contratos: [], totalNoPncp, truncado: false }

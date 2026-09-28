@@ -37,3 +37,14 @@ export const CONTATO_EMAIL = 'contato@techealth.com.br'
 
 /** Comarca do foro eleito nos Termos de Uso. */
 export const FORO = 'São Paulo/SP'
+
+/**
+ * VERSÃO DOS DOCUMENTOS — é ela que o aceite grava (assinaturas.termos_versao).
+ *
+ * Sem versão, depois de qualquer alteração em /termos não dava para demonstrar qual
+ * texto acompanhou cada contratação (revisão da #45). Regra: MUDOU O TEXTO de /termos
+ * ou /privacidade, MUDA A VERSÃO aqui, no mesmo commit. A rota de assinatura recusa um
+ * aceite de versão que não é a vigente (a pessoa leu um texto que já não vale).
+ */
+export const TERMOS_VERSAO = '2026-09-27'
+export const PRIVACIDADE_VERSAO = '2026-09-27'

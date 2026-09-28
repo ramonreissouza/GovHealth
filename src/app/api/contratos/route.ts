@@ -44,8 +44,10 @@ export async function GET(req: NextRequest) {
       fonte: ug ? 'Contratos.gov.br (Comprasnet)' : 'PNCP — Portal Nacional de Contratações Públicas',
       atualizadoEm: new Date().toISOString(),
     }
-    // Contratos mudam pouco no dia — cache de 24h em caso de sucesso.
-    setCached(cacheKey, payload, contratos.length > 0 ? TTL.LONG : TTL.SHORT)
+    // Contratos mudam pouco no dia: 24 h só para a paginação CONCLUÍDA. Um recorte
+    // (página que falhou, prazo que acabou) ficava congelado 24 h mesmo com o PNCP
+    // de volta um minuto depois (revisão da #45); ele fica no TTL curto.
+    setCached(cacheKey, payload, contratos.length > 0 && !res.truncado ? TTL.LONG : TTL.SHORT)
     return NextResponse.json(payload)
   } catch (error) {
     console.error('[contratos]', error)

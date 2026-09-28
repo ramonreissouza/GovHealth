@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     'Como a GovHealth AI trata dados pessoais: dados coletados, finalidades e base legal (LGPD), compartilhamento, direitos do titular e segurança.',
 }
 
-import { CONTROLADOR_NOME, CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE, DPO_NOME, DPO_EMAIL } from '@/lib/empresa-legal'
+import { CONTROLADOR_NOME, CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE, DPO_NOME, DPO_EMAIL, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
 
 const ATUALIZADO_EM = '27 de setembro de 2026'
 
@@ -175,7 +175,7 @@ export default function PrivacidadePage() {
 
       <main className="max-w-[880px] mx-auto px-6 py-10">
         <h1 className="font-heading font-bold text-[26px] leading-tight mb-1">Política de <span className="text-gradient-brand">Privacidade</span></h1>
-        <p className="text-[11px] text-faint font-mono-custom mb-8">Última atualização: {ATUALIZADO_EM} · em conformidade com a LGPD (Lei nº 13.709/2018)</p>
+        <p className="text-[11px] text-faint font-mono-custom mb-8">Última atualização: {ATUALIZADO_EM} · versão {PRIVACIDADE_VERSAO} · em conformidade com a LGPD (Lei nº 13.709/2018)</p>
 
         <div className="space-y-8">
           {SECOES.map((s) => (

@@ -18,7 +18,7 @@ import Image from 'next/image'
 import type { Metadata } from 'next'
 import {
   CONTROLADOR_NOME, CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE,
-  CONTATO_EMAIL, FORO,
+  CONTATO_EMAIL, FORO, TERMOS_VERSAO,
 } from '@/lib/empresa-legal'
 
 export const metadata: Metadata = {
@@ -256,7 +256,7 @@ export default function TermosPage() {
 
       <main className="max-w-[880px] mx-auto px-6 py-10">
         <h1 className="font-heading font-bold text-[26px] leading-tight mb-1">Termos de <span className="text-gradient-brand">Uso</span></h1>
-        <p className="text-[11px] text-faint font-mono-custom mb-8">Última atualização: {ATUALIZADO_EM} · {CONTROLADOR_RAZAO_SOCIAL} · CNPJ {CONTROLADOR_CNPJ}</p>
+        <p className="text-[11px] text-faint font-mono-custom mb-8">Última atualização: {ATUALIZADO_EM} · versão {TERMOS_VERSAO} · {CONTROLADOR_RAZAO_SOCIAL} · CNPJ {CONTROLADOR_CNPJ}</p>
 
         <div className="space-y-8">
           {SECOES.map((s) => (

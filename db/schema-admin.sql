@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS assinaturas (
   criado_em    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_assin_data ON assinaturas (criado_em DESC);
+-- Aceite dos Termos/Privacidade como evidência (espelho de scripts/migrate-aceite-termos.mjs).
+ALTER TABLE assinaturas
+  ADD COLUMN IF NOT EXISTS termos_versao      TEXT,
+  ADD COLUMN IF NOT EXISTS privacidade_versao TEXT,
+  ADD COLUMN IF NOT EXISTS aceite_em          TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS aceite_ip          TEXT;
 
 -- Log de acessos (login e, se viável, page_view). Dado pessoal (LGPD) — expurgo > 90d.
 CREATE TABLE IF NOT EXISTS acessos (
