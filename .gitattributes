@@ -1,0 +1,3 @@
+# Lidos dentro de contêiner Linux: CRLF quebra o parser (crontab) ou o shebang (sh).
+*.crontab text eol=lf
+*.sh      text eol=lf
