@@ -361,16 +361,18 @@ export default function RadarPage() {
     return () => clearInterval(t)
   }, [carregar])
 
-  const marcarLidaMsg = useCallback(async (m: Mensagem) => {
-    if (m.lida) return
+  /** Marca várias numa requisição só — um PATCH por mensagem estourava o rate limit. */
+  const marcarLidasLote = useCallback(async (msgs: Mensagem[]) => {
+    const ids = new Set(msgs.filter((m) => !m.lida).map((m) => m.id))
+    if (ids.size === 0) return
     setData((d) => d ? {
       ...d,
-      mensagens: d.mensagens.map((x) => x.id === m.id ? { ...x, lida: true } : x),
-      kpis: { ...d.kpis, naoLidas: Math.max(0, d.kpis.naoLidas - 1) },
+      mensagens: d.mensagens.map((x) => ids.has(x.id) ? { ...x, lida: true } : x),
+      kpis: { ...d.kpis, naoLidas: Math.max(0, d.kpis.naoLidas - ids.size) },
     } : d)
     try {
-      await fetch(`/api/radar/mensagens/${m.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ acao: 'lida' }),
+      await fetch('/api/radar/mensagens', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids] }),
       })
     } catch { /* melhor esforço; o próximo carregar reconcilia */ }
   }, [])
@@ -515,7 +517,7 @@ export default function RadarPage() {
     return lote ? selecionado.mensagens.filter((m) => m.lote === lote) : selecionado.mensagens
   }, [selecionado, lote])
 
-  const marcarTodasLidas = (p: Processo) => { for (const m of p.mensagens) if (!m.lida) void marcarLidaMsg(m) }
+  const marcarTodasLidas = (p: Processo) => { void marcarLidasLote(p.mensagens) }
   const abrirProcesso = (p: Processo) => {
     setSelId(p.id)
     // No Compras.gov.br com link público, a vista inicial é o CHAT OFICIAL e as capturadas
