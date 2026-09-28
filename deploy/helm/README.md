@@ -49,12 +49,15 @@ cada job duas vezes.
 
 ## Migrations
 
-O chart não roda migration. Hoje o schema muda por scripts avulsos
-(`npm run *:migrate`), sem um executor único que um hook do Helm possa
-chamar. Enquanto for assim, uma mudança de schema é aplicada à mão antes do
-deploy, com `kubectl -n govhealth exec -it db-0 -- psql ...` ou rodando o
-script com `DATABASE_URL` apontado para um `kubectl port-forward`. O deploy
-automático pelo Jenkins depende de resolver isso primeiro.
+O chart não roda migration: o schema muda por scripts avulsos
+(`scripts/**/migrate-*.mjs`), sem um executor único que um hook do Helm possa
+chamar. Quem aplica é o deploy do Jenkins, antes do `helm upgrade`: ele
+descobre quais scripts mudaram desde o commit no ar, faz backup do banco e
+os roda num pod do namespace. Se algum falha, o upgrade não acontece.
+
+Como escrever uma migration que esse deploy aplica sem risco está em
+[`docs/migrations.md`](../../docs/migrations.md). Não é mais preciso rodar
+`npm run *:migrate` à mão antes do merge.
 
 ## Acesso ao banco
 
