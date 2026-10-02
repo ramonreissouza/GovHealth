@@ -8,6 +8,24 @@ import type { StatusSaude } from './types'
 export interface SaudeLike {
   status: StatusSaude
   verificadoEm: string | null
+  /** null no monitor PÚBLICO (portal lido sem login): não há conta do cliente ali. */
+  credencialId?: string | null
+}
+
+/** Os campos de diagnóstico de operação que só o administrador recebe. */
+const CAMPOS_DIAGNOSTICO = ['detalhe', 'duracao_ms', 'duracaoMs'] as const
+
+/**
+ * Tira o diagnóstico de um item de saúde (ou de conexão) para quem não é o administrador.
+ * É a única regra para TODAS as rotas que expõem saúde de conector — a inbox, a lista de
+ * conectores e a de credenciais. Revisão da #52: aplicar só na inbox deixava o mesmo
+ * texto a um GET de distância. Devolve cópia; não muda o original.
+ */
+export function semDiagnostico<T extends object>(item: T, podeVer: boolean): T {
+  if (podeVer) return item
+  const copia = { ...item } as Record<string, unknown>
+  for (const campo of CAMPOS_DIAGNOSTICO) if (campo in copia) copia[campo] = null
+  return copia as T
 }
 
 export interface RotuloSaude {
@@ -100,9 +118,17 @@ export function precisaAtencao(s: SaudeLike, agoraMs: number): boolean {
   return quebrado(s) || parado(s, agoraMs)
 }
 
-/** A conta do cliente no portal caiu: só ele resolve, reconectando. */
+/**
+ * A conta do cliente no portal caiu: só ele resolve, reconectando.
+ *
+ * `captcha_2fa` só conta quando HÁ conta (credencial): o monitor público do Compras.gov.br
+ * também cai em CAPTCHA, e ali não existe conta nenhuma para reconectar. Mandar o cliente
+ * "reconectar em Configurações" seria pedir uma ação impossível (revisão da #52). O
+ * CAPTCHA público segue pela régua do atraso, como qualquer portal que não deixou ler.
+ */
 export function contaExpirada(s: SaudeLike): boolean {
-  return s.status === 'sessao_expirada' || s.status === 'captcha_2fa'
+  if (s.status === 'sessao_expirada') return true
+  return s.status === 'captcha_2fa' && !!s.credencialId
 }
 
 /**

@@ -10,7 +10,8 @@ import { sincronizarSelecao, filtrosDoSetup } from '@/lib/radar/selecao'
 import { resolverPortal } from '@/lib/portais'
 import { cofreDisponivel } from '@/lib/radar/crypto'
 import { saudeComprasgov } from '@/lib/radar/comprasgov'
-import { tokenMaster } from '@/lib/admin-guard'
+import { podeVerDiagnostico } from '@/lib/radar/diagnostico'
+import { semDiagnostico } from '@/lib/radar/saude'
 
 export const runtime = 'nodejs'
 // O trabalho do `after()` corre DENTRO desta invocação e gasta deste mesmo orçamento.
@@ -225,7 +226,7 @@ export async function GET(req: NextRequest) {
   // O `detalhe` do conector é diagnóstico de operação ("locator.click: Timeout 10000ms",
   // call log do Playwright). Para o cliente não diz nada que ele possa usar, e assusta
   // (02/10/2026). Só o administrador da plataforma o recebe; os demais, só o estado.
-  const diagnostico = !!(await tokenMaster(req))
+  const diagnostico = await podeVerDiagnostico(req)
 
   return NextResponse.json({
     mensagens,
@@ -259,11 +260,10 @@ export async function GET(req: NextRequest) {
       processosAtivos: Number(kpi?.processos_ativos ?? 0),
       conectores: saude.length,
     },
-    saude: saude.map((s) => ({
+    saude: saude.map((s) => semDiagnostico({
       credencialId: s.credencial_id, conectorId: s.conector_id, cnpj: s.cnpj,
-      status: s.status, verificadoEm: s.verificado_em, tentadoEm: s.tentado_em,
-      detalhe: diagnostico ? s.detalhe : null,
-    })),
+      status: s.status, verificadoEm: s.verificado_em, tentadoEm: s.tentado_em, detalhe: s.detalhe,
+    }, diagnostico)),
     // O que este AMBIENTE consegue fazer. Sem isso a tela oferecia "Conectar
     // portal" onde conectar é impossível: sem RADAR_CRED_KEY o cadastro da
     // credencial devolve 503 ("cofre indisponível") e sem RADAR_CONNECT_URL o

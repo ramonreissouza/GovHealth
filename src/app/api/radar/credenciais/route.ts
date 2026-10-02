@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
 import { cofreDisponivel } from '@/lib/radar/crypto'
+import { podeVerDiagnostico } from '@/lib/radar/diagnostico'
+import { semDiagnostico } from '@/lib/radar/saude'
 
 export const runtime = 'nodejs'
 
@@ -36,13 +38,15 @@ export async function GET(req: NextRequest) {
   )
   // Nunca devolve cred_cipher/storage_state; login vem mascarado.
   // `conectado` = já capturamos uma sessão do gov.br; `conexao` = fase do fluxo de conexão.
+  // Os dois `detalhe` são diagnóstico de operação: só o administrador recebe.
+  const pode = await podeVerDiagnostico(req)
   return NextResponse.json({
     credenciais: rows.map((r) => ({
       id: r.id, conectorId: r.conector_id, cnpj: r.cnpj, login: mascarar(r.login), ativo: r.ativo,
       conectado: r.conectado,
-      conexao: { status: r.conexao_status, detalhe: r.conexao_detalhe },
+      conexao: semDiagnostico({ status: r.conexao_status, detalhe: r.conexao_detalhe }, pode),
       criadoEm: r.criado_em,
-      saude: { status: r.status ?? 'nunca_verificado', verificadoEm: r.verificado_em, tentadoEm: r.tentado_em, detalhe: r.detalhe },
+      saude: semDiagnostico({ status: r.status ?? 'nunca_verificado', verificadoEm: r.verificado_em, tentadoEm: r.tentado_em, detalhe: r.detalhe }, pode),
     })),
   })
 }
