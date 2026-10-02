@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { tenantDe } from '@/lib/radar/db'
 import { saudeComprasgov } from '@/lib/radar/comprasgov'
+import { podeVerDiagnostico } from '@/lib/radar/diagnostico'
+import { semDiagnostico } from '@/lib/radar/saude'
 
 export const runtime = 'nodejs'
 
@@ -18,5 +20,8 @@ export async function GET(req: NextRequest) {
       ORDER BY c.cnpj`,
     [t.titularId],
   )
-  return NextResponse.json({ conectores: [...rows, await saudeComprasgov(t.titularId)] })
+  // `detalhe` e `duracao_ms` são diagnóstico de operação: só o administrador recebe.
+  const pode = await podeVerDiagnostico(req)
+  const conectores = [...rows, await saudeComprasgov(t.titularId)].map((c) => semDiagnostico(c as object, pode))
+  return NextResponse.json({ conectores })
 }

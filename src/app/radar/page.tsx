@@ -67,6 +67,8 @@ interface Inbox {
   chaves: string[]
   kpis: { naoLidas: number; processosAtivos: number; conectores: number }
   saude: SaudeItem[]
+  /** `diagnostico`: o servidor mandou o motivo técnico de cada portal (só ao administrador). */
+  capacidades?: { diagnostico?: boolean }
   /** Recorte do Setup da Empresa aplicado pelo servidor nesta resposta. */
   setupFiltro?: { aplicado: boolean; ufs: string[]; categorias: string[] }
   atualizadoEm: string
@@ -614,7 +616,7 @@ export default function RadarPage() {
               componente para o porquê. */}
           <div className="mb-4">
             <div className="text-[10px] font-mono-custom text-faint uppercase tracking-wider mb-1.5">Portais</div>
-            <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} carregando={!data && !falhaInbox} falhou={!data && falhaInbox} />
+            <SaudeConectores saude={(data?.saude ?? []) as SaudeItem[]} agoraMs={agoraMs} carregando={!data && !falhaInbox} falhou={!data && falhaInbox} diagnostico={!!data?.capacidades?.diagnostico} />
           </div>
 
           {/* Falhou a ATUALIZAÇÃO, com dados antigos na tela: sem este aviso a caixa
