@@ -1,0 +1,89 @@
+{{- if .Values.backup.enabled }}
+{{/* Backup diário do banco. Na VM Oracle, isto era o `/usr/local/bin/pg-backup`
+     no cron do postgres (03:15, mantinha 7). No k3s só havia o backup que o
+     Jenkins faz antes de uma migration, ou seja, nenhum nos dias sem migration.
+
+     O dump fica no disco da própria VPS. Protege contra erro humano e contra um
+     banco corrompido, mas não contra perder a máquina: copiar para fora é o
+     próximo passo (docs/vps-mineracao.md, "Backup"). */}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-banco
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{/* `helm uninstall` não pode levar os backups junto com o resto. */}}
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{/* Classe dinâmica, como a pista da mineração: o PV nasce pelo provisionador
+       do k3s, e não pela ServiceAccount do Jenkins, que só LÊ PV. */}}
+  storageClassName: {{ .Values.backup.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.storage }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-banco
+  labels: { app: backup }
+spec:
+  schedule: {{ .Values.backup.agenda | quote }}
+  timeZone: America/Sao_Paulo
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 172800
+      template:
+        metadata:
+          labels: { app: backup }
+        spec:
+          restartPolicy: Never
+          priorityClassName: govhealth-prod
+          automountServiceAccountToken: false
+          securityContext:
+            {{/* uid 70 = postgres na imagem alpine. */}}
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+          containers:
+            - name: pg-dump
+              image: {{ .Values.db.image }}
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef: { name: {{ .Values.existingSecret }}, key: POSTGRES_PASSWORD }
+                - { name: TZ, value: America/Sao_Paulo }
+                - { name: MANTER_DIAS, value: {{ .Values.backup.manterDias | quote }} }
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  arq="/backup/govhealth-$(date +%Y-%m-%d_%H%M).dump"
+                  # Escreve num .parcial e só renomeia no fim: um dump interrompido
+                  # nunca fica com cara de backup bom.
+                  pg_dump -h db -U govhealth -d govhealth -Fc -f "$arq.parcial"
+                  mv "$arq.parcial" "$arq"
+                  # Confere que o arquivo abre: um dump que o pg_restore não lê não é backup.
+                  pg_restore --list "$arq" > /dev/null
+                  echo "backup ok: $arq ($(du -h "$arq" | cut -f1))"
+                  find /backup -name 'govhealth-*.dump' -mtime +"$MANTER_DIAS" -print -delete
+                  find /backup -name '*.parcial' -mmin +120 -print -delete
+                  ls -lh /backup
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: '1', memory: 256Mi }
+          volumes:
+            - name: backup
+              persistentVolumeClaim: { claimName: backup-banco }
+{{- end }}

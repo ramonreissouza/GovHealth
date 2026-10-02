@@ -63,6 +63,16 @@ worker:
     requests: {cpu: 50m, memory: 192Mi}
     limits: {cpu: '1', memory: 1Gi}
 
+# Backup diário do banco (templates/backup.yaml), no lugar do cron da VM Oracle.
+# Desligado por padrão pelo mesmo motivo da mineração: o deploy do Jenkins precisa
+# poder criar CronJob e PVC no namespace (RBAC no repositório `infra`).
+backup:
+  enabled: false
+  agenda: '15 3 * * *'      # 03:15, o mesmo horário da VM Oracle
+  manterDias: 7
+  storageClassName: local-path
+  storage: 10Gi             # o banco tem 1,3 GB; o dump comprimido, uma fração disso
+
 # As minerações que rodavam no Agendador do Windows, uma CronJob cada
 # (templates/mineracao.yaml). Gravam no Service `db`, pelo `DATABASE_URL` do Secret.
 mineracao:

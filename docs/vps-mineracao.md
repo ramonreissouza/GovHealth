@@ -102,6 +102,27 @@ kubectl -n govhealth patch cronjob mineracao-backfill-itens -p '{"spec":{"suspen
 O próximo `helm upgrade` desfaz o patch. Para a pausa ficar, ponha `suspenso: true`
 na tarefa, em `mineracao.jobs` do `values.yaml`.
 
+## Backup do banco
+
+A CronJob `backup-banco` (`templates/backup.yaml`) roda às 03:15, como o cron que existia
+na VM Oracle. Ela grava um `pg_dump -Fc` no PVC `backup-banco`, confere que o arquivo
+abre com `pg_restore --list` e apaga as cópias com mais de `backup.manterDias` (7).
+
+Ligar junto com a mineração, no `helm upgrade`:
+
+```bash
+helm upgrade govhealth deploy/helm/govhealth -n govhealth --reuse-values --set backup.enabled=true
+```
+
+Para conferir o último backup:
+
+```bash
+kubectl -n govhealth logs -l app=backup --tail=20
+```
+
+O dump fica no mesmo disco da VPS. Ele cobre erro humano e banco corrompido, mas não a
+perda da máquina. Copiar para fora (outro servidor, ou um bucket) é o próximo passo.
+
 ## Voltar para o Windows
 
 1. Ponha `mineracao.enabled=false` e rode o `helm upgrade`: as CronJobs somem.

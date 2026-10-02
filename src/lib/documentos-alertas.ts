@@ -7,6 +7,7 @@
 import { Resend } from 'resend'
 import { query } from '@/lib/db'
 import { estadoDoc, tipoLabel, diasParaVencer, DIAS_ALERTA } from '@/lib/documentos'
+import { SITE_OFICIAL } from '@/lib/site'
 
 interface DocRow {
   id: string; titular_id: string; tipo: string; nome: string
@@ -29,7 +30,7 @@ function buildHtml(docs: DocRow[], nome: string | null, hojeMs: number): string 
       <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:13px;font-weight:600;color:${cor}">${txt}</td>
     </tr>`
   }).join('')
-  const url = process.env.NEXT_PUBLIC_APP_URL ?? 'https://gov-health.vercel.app'
+  const url = process.env.NEXT_PUBLIC_APP_URL || SITE_OFICIAL
   return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto">
     <h2 style="font-size:18px;color:#111">Documentos a renovar${nome ? `, ${esc(nome)}` : ''}</h2>
     <p style="font-size:13px;color:#444">Estes documentos do seu Cofre vencem em até ${DIAS_ALERTA} dias ou já venceram. Certidão vencida trava participação em pregão — renove antes.</p>
