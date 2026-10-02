@@ -19,14 +19,6 @@
     {
       "path": "/api/cron/sync-emendas",
       "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/cron/trial-reminders",
-      "schedule": "0 12 * * *"
-    },
-    {
-      "path": "/api/cron/alertas-email",
-      "schedule": "0 11 * * *"
     }
   ]
 }
