@@ -31,14 +31,26 @@
 //   · âmbar/vermelho — QUEBRADO (sessão expirada, falha, portal fora) ou MUDO há
 //              horas. Só este abre uma linha com o motivo, sem clique.
 //
+// QUARTA PASSADA, 02/10/2026: O CLIENTE NÃO VÊ MAIS A LINHA TÉCNICA. Com o coletor parado,
+// a tela mostrava quatro faixas âmbar e vermelhas com "Timeout 10000ms", "call log",
+// "o coletor pode estar parado" — linguagem de operação, sem nada que o cliente possa
+// fazer, e que lia como "o produto quebrou". Agora:
+//   · cliente — UMA frase neutra, só quando um portal está mesmo sem leitura há horas
+//     (ou a conta precisa ser reconectada): quais portais, e o que isso muda para ele
+//     ("as mensagens novas podem demorar"). O 4.2 continua: ele nunca lê "sem novidades"
+//     de um portal que não foi lido. O que sai é o alarme, não a informação.
+//   · administrador (`diagnostico`, só o master recebe o `detalhe` do servidor) — a
+//     mesma frase, e as linhas de antes com o motivo, FECHADAS num "Detalhes técnicos":
+//     é ele quem conserta, mas também é ele quem demonstra o produto com esta tela.
+//
 // A faixa agrupa POR PORTAL, não por credencial: quem tem cinco CNPJs no mesmo
 // portal via cinco cartões iguais. E o selo do grupo carrega SEMPRE o pior estado
 // do grupo — quatro contas boas e uma expirada não podem pintar de verde, ou o
 // agrupamento viraria exatamente a falsa sensação de segurança que o 4.2 proíbe.
 
 import { clsx } from 'clsx'
-import { ShieldCheck, ShieldAlert, ShieldQuestion, Loader2 } from 'lucide-react'
-import { rotuloSaude, tempoDesde, confiavelAgora, quebrado, parado, precisaAtencao } from '@/lib/radar/saude'
+import { ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, Clock } from 'lucide-react'
+import { rotuloSaude, tempoDesde, confiavelAgora, quebrado, parado, precisaAtencao, contaExpirada, atrasadoParaCliente } from '@/lib/radar/saude'
 import { CONECTORES, nomeConector } from '@/lib/radar/conectores'
 import type { StatusSaude } from '@/lib/radar/types'
 
@@ -129,7 +141,50 @@ function Linha({ s, agoraMs }: { s: SaudeItem; agoraMs: number }) {
   )
 }
 
-export default function SaudeConectores({ saude, agoraMs, carregando = false, falhou = false }: { saude: SaudeItem[]; agoraMs: number; carregando?: boolean; falhou?: boolean }) {
+/** Nomes curtos, sem repetir o portal (cinco CNPJs no mesmo portal são um portal só). */
+function nomesCurtos(itens: SaudeItem[]): string[] {
+  return [...new Set(itens.map((s) => nomeConector(s.conectorId).split(' — ')[0]))]
+}
+
+/** "A", "A e B", "A, B e C". */
+function listaPt(nomes: string[]): string {
+  return nomes.length <= 1 ? (nomes[0] ?? '') : `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`
+}
+
+/**
+ * O que o CLIENTE lê quando algum portal pede atenção. Sem cor de alarme e sem motivo
+ * técnico: o que está atrasado e o que isso muda para ele. Conta expirada é separada
+ * porque, essa sim, tem uma ação dele (reconectar).
+ */
+function AvisoCliente({ saude, agoraMs }: { saude: SaudeItem[]; agoraMs: number }) {
+  const reconectar = nomesCurtos(saude.filter((s) => contaExpirada(s)))
+  // Um portal com conta expirada não entra também como "atrasado": a frase dele é a outra.
+  const atrasados = nomesCurtos(saude.filter((s) => atrasadoParaCliente(s, agoraMs)))
+    .filter((n) => !reconectar.includes(n))
+  if (atrasados.length === 0 && reconectar.length === 0) return null
+  return (
+    <div className="flex items-start gap-1.5 text-[12px] text-muted">
+      <Clock size={13} className="mt-[2px] shrink-0 text-faint" aria-hidden />
+      <p>
+        {atrasados.length > 0 && (
+          <>
+            Leitura atrasada em <span className="text-strong font-medium">{listaPt(atrasados)}</span>: mensagens novas
+            {atrasados.length > 1 ? ' desses portais' : ' desse portal'} podem demorar a aparecer aqui. O chat de cada
+            pregão continua disponível no próprio portal.{' '}
+          </>
+        )}
+        {reconectar.length > 0 && (
+          <>
+            A conexão da sua conta em <span className="text-strong font-medium">{listaPt(reconectar)}</span> expirou:
+            reconecte em Configurações gerais para voltar a receber as mensagens.
+          </>
+        )}
+      </p>
+    </div>
+  )
+}
+
+export default function SaudeConectores({ saude, agoraMs, carregando = false, falhou = false, diagnostico = false }: { saude: SaudeItem[]; agoraMs: number; carregando?: boolean; falhou?: boolean; diagnostico?: boolean }) {
   // Dizia "Nenhum conector configurado. Conecte um portal…", e na prática aparecia só
   // enquanto a página carregava (a inbox sempre manda o Compras.gov.br): mandava a pessoa
   // configurar algo que não existe, no segundo em que ela chegava à tela.
@@ -163,8 +218,21 @@ export default function SaudeConectores({ saude, agoraMs, carregando = false, fa
           </span>
         )}
       </p>
-      {/* Só a falha REAL ocupa espaço: portal que recusou, erro, ou calado há horas. */}
-      {pedemAtencao.map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
+      {/* Só a falha REAL ocupa espaço: portal que recusou, erro, ou calado há horas.
+          O cliente lê uma frase; o administrador, a linha com o motivo. */}
+      <AvisoCliente saude={saude} agoraMs={agoraMs} />
+      {/* Fechado por padrão: o administrador também demonstra o produto com esta tela
+          aberta, e a linha técnica só serve a quem vai consertar. */}
+      {diagnostico && pedemAtencao.length > 0 && (
+        <details className="group">
+          <summary className="text-[11px] text-faint cursor-pointer select-none hover:text-muted">
+            Detalhes técnicos dos portais ({pedemAtencao.length}) · só o administrador vê
+          </summary>
+          <div className="space-y-1.5 mt-1.5">
+            {pedemAtencao.map((s) => <Linha key={chaveDe(s)} s={s} agoraMs={agoraMs} />)}
+          </div>
+        </details>
+      )}
     </div>
   )
 }

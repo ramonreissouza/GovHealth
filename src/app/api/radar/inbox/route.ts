@@ -10,6 +10,7 @@ import { sincronizarSelecao, filtrosDoSetup } from '@/lib/radar/selecao'
 import { resolverPortal } from '@/lib/portais'
 import { cofreDisponivel } from '@/lib/radar/crypto'
 import { saudeComprasgov } from '@/lib/radar/comprasgov'
+import { tokenMaster } from '@/lib/admin-guard'
 
 export const runtime = 'nodejs'
 // O trabalho do `after()` corre DENTRO desta invocação e gasta deste mesmo orçamento.
@@ -221,6 +222,11 @@ export async function GET(req: NextRequest) {
 
   saude.push(await saudeComprasgov(t.titularId))
 
+  // O `detalhe` do conector é diagnóstico de operação ("locator.click: Timeout 10000ms",
+  // call log do Playwright). Para o cliente não diz nada que ele possa usar, e assusta
+  // (02/10/2026). Só o administrador da plataforma o recebe; os demais, só o estado.
+  const diagnostico = !!(await tokenMaster(req))
+
   return NextResponse.json({
     mensagens,
     processos: processos.map((p) => ({
@@ -255,7 +261,8 @@ export async function GET(req: NextRequest) {
     },
     saude: saude.map((s) => ({
       credencialId: s.credencial_id, conectorId: s.conector_id, cnpj: s.cnpj,
-      status: s.status, verificadoEm: s.verificado_em, tentadoEm: s.tentado_em, detalhe: s.detalhe,
+      status: s.status, verificadoEm: s.verificado_em, tentadoEm: s.tentado_em,
+      detalhe: diagnostico ? s.detalhe : null,
     })),
     // O que este AMBIENTE consegue fazer. Sem isso a tela oferecia "Conectar
     // portal" onde conectar é impossível: sem RADAR_CRED_KEY o cadastro da
@@ -263,6 +270,8 @@ export async function GET(req: NextRequest) {
     // login do gov.br não abre — o usuário clicava e batia num erro.
     // O caminho SEM LOGIN (andamento público) não depende de nenhum dos dois.
     capacidades: {
+      // Quem vê o estado dos portais com o motivo técnico (só o administrador).
+      diagnostico,
       cofre: cofreDisponivel(),
       hosted: !!(process.env.RADAR_CONNECT_URL && process.env.RADAR_CONNECT_TOKEN),
     },
