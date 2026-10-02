@@ -3,6 +3,7 @@
 // Cada item vira um LINK clicável que leva ao lead na sessão de licitações.
 
 import type { AlertaNotificacao } from '@/lib/alertas'
+import { SITE_OFICIAL } from '@/lib/site'
 
 /**
  * O que o template REALMENTE usa de uma notificação. Existe para o caminho de
@@ -23,7 +24,7 @@ const URGENCIA_COLOR: Record<string, string> = {
 }
 
 export function appBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL ?? 'https://gov-health.vercel.app').replace(/\/$/, '')
+  return (process.env.NEXT_PUBLIC_APP_URL || SITE_OFICIAL).replace(/\/$/, '')
 }
 
 // Mesmo padrão de escape já usado em src/lib/documentos-alertas.ts — não há um
