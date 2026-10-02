@@ -68,15 +68,24 @@ spec:
                 - |
                   set -eu
                   arq="/backup/govhealth-$(date +%Y-%m-%d_%H%M).dump"
-                  # Escreve num .parcial e só renomeia no fim: um dump interrompido
-                  # nunca fica com cara de backup bom.
+                  # Escreve num .parcial, VALIDA o .parcial e só então promove a .dump.
+                  # Nessa ordem: validar depois de renomear deixava um .dump com cara de
+                  # backup bom mesmo quando o pg_restore não o lia (revisão da #51), e
+                  # é o .dump que alguém escolhe na hora de recuperar.
                   pg_dump -h db -U govhealth -d govhealth -Fc -f "$arq.parcial"
+                  if ! pg_restore --list "$arq.parcial" > /dev/null; then
+                    # Fica para diagnóstico com um nome que ninguém confunde com backup,
+                    # e o job falha (aparece em `kubectl get jobs`). Os backups antigos
+                    # NÃO são apagados numa noite em que o novo não presta.
+                    mv "$arq.parcial" "$arq.invalido"
+                    echo "BACKUP INVALIDO: $arq.invalido não abre no pg_restore" >&2
+                    exit 1
+                  fi
                   mv "$arq.parcial" "$arq"
-                  # Confere que o arquivo abre: um dump que o pg_restore não lê não é backup.
-                  pg_restore --list "$arq" > /dev/null
                   echo "backup ok: $arq ($(du -h "$arq" | cut -f1))"
                   find /backup -name 'govhealth-*.dump' -mtime +"$MANTER_DIAS" -print -delete
                   find /backup -name '*.parcial' -mmin +120 -print -delete
+                  find /backup -name '*.invalido' -mtime +"$MANTER_DIAS" -print -delete
                   ls -lh /backup
               volumeMounts:
                 - { name: backup, mountPath: /backup }
