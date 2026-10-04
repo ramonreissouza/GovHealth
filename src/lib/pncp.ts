@@ -389,7 +389,10 @@ export function normalizarLicitacao(raw: PNCPContratacao): Licitacao {
       razaoSocial: raw.orgaoEntidade?.razaoSocial ?? '',
       municipio: raw.unidadeOrgao?.municipioNome,
       uf: raw.unidadeOrgao?.ufSigla,
+      // Esfera e unidade: quem paga a compra (Pagômetro), igual ao caminho do banco.
+      esferaId: raw.orgaoEntidade?.esferaId ?? null,
     },
+    codigoUnidade: raw.unidadeOrgao?.codigoUnidade ?? null,
     modalidadeNome: raw.modalidadeNome,
     objetoCompra: raw.objetoCompra,
     valorTotalEstimado: raw.valorTotalEstimado ?? 0,

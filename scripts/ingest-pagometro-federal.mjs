@@ -34,7 +34,7 @@ const DRY = tem('--dry')
 const SO_RESUMO = tem('--so-resumo')
 const SO_SCHEMA = tem('--so-schema')
 const MAX_MIN = Number(arg('--max-min') ?? process.env.PAGOMETRO_MAX_MIN ?? 300)
-const PAUSA_MS = Number(arg('--pausa-ms') ?? 1500)
+const PAUSA_MS = Number(arg('--pausa-ms') ?? 3000)
 const PULAR_APOS_DIAS = 15
 const DESDE_PADRAO = '2025-07-01'
 
@@ -60,19 +60,49 @@ const diaIso = (d) => d.toISOString().slice(0, 10)
 const maisDias = (iso, n) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return diaIso(d) }
 const validarDia = (s, nome) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s))) { console.error(`ERRO: ${nome} inválido: ${s} (use AAAA-MM-DD)`); process.exit(1) } return s }
 
-/** O ZIP do dia, ou null se a CGU ainda não publicou (403/404). */
+/** O maior ZIP diário medido tem ~13 MB; acima disto o download é recusado. */
+const MAX_ZIP_BYTES = 100 * 1024 * 1024
+
+/** Lê o corpo até MAX_ZIP_BYTES: nem o Content-Length nem o corpo podem passar disso. */
+async function corpoLimitado(r) {
+  const declarado = Number(r.headers.get('content-length') ?? 0)
+  if (declarado > MAX_ZIP_BYTES) throw new Error(`ZIP de ${declarado} bytes, acima do teto de ${MAX_ZIP_BYTES}`)
+  const partes = []
+  let total = 0
+  for await (const parte of r.body) {
+    total += parte.length
+    if (total > MAX_ZIP_BYTES) throw new Error(`ZIP passou de ${MAX_ZIP_BYTES} bytes no download`)
+    partes.push(parte)
+  }
+  return Buffer.concat(partes.map((p) => Buffer.from(p)))
+}
+
+/** O servidor recusou de novo e de novo: a rodada para aqui e a próxima continua do dia. */
+class ServidorRecusou extends Error {}
+
+/**
+ * O ZIP do dia, ou null se a CGU ainda não publicou (403/404).
+ * 405/408/429/5xx são recusa passageira: medido em 05/10/2026, o servidor respondeu 405
+ * à VPS depois de ~23 downloads seguidos com 1,5 s de pausa, e o mesmo arquivo baixou
+ * normal minutos depois. Espera crescente (30 s → 4 min) e, persistindo, ServidorRecusou.
+ */
 async function baixarDia(dia) {
   const url = `${URL_BASE}/${dia.replace(/-/g, '')}_Despesas.zip`
   for (let tentativa = 1; ; tentativa++) {
+    let status = 0
     try {
       const r = await fetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(180_000) })
+      status = r.status
       if (r.status === 403 || r.status === 404) return null
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      return Buffer.from(await r.arrayBuffer())
+      if (r.ok) return await corpoLimitado(r)
+      await r.body?.cancel().catch(() => {})
     } catch (e) {
-      if (tentativa >= 3) throw e
-      await dormir(5000 * tentativa)
+      if (/acima do teto|passou de/.test(String(e?.message))) throw e // grande demais: não adianta repetir
     }
+    if (tentativa >= 4) throw new ServidorRecusou(`${dia}: servidor recusou ${tentativa} vezes (último HTTP ${status || 'sem resposta'})`)
+    const espera = 30_000 * 2 ** (tentativa - 1)
+    console.log(`  ${dia}: HTTP ${status || 'sem resposta'}, nova tentativa em ${espera / 1000}s`)
+    await dormir(espera)
   }
 }
 
@@ -184,7 +214,12 @@ async function coletar(ate) {
   for (; dia <= ate; dia = maisDias(dia, 1)) {
     if (estourou()) { console.log(`[pagometro-federal] teto de ${MAX_MIN} min: continua na próxima rodada a partir de ${dia}`); break }
     await dormir(PAUSA_MS)
-    const buf = await baixarDia(dia)
+    let buf
+    try { buf = await baixarDia(dia) } catch (e) {
+      if (!(e instanceof ServidorRecusou)) throw e
+      console.log(`[pagometro-federal] ${e.message}: para aqui e continua na próxima rodada`)
+      break
+    }
     if (!buf) {
       const idade = Math.round((Date.now() - Date.parse(`${dia}T12:00:00Z`)) / 86_400_000)
       if (idade <= PULAR_APOS_DIAS) { console.log(`[pagometro-federal] ${dia} ainda não publicado: para aqui e tenta na próxima rodada`); break }

@@ -128,7 +128,9 @@ export function aplicarDia(filas, { liqs, pags }) {
       if (l.saldo <= 0.005) fila.shift()
     }
     if (v > 0.005) m.semLiquidacao += v
-    m.pagamentos++
+    // Só conta como observação o pagamento que casou com alguma liquidação: é ele que
+    // mede dias. Os sem correspondência inflariam o mínimo de MIN_PAGAMENTOS_FEDERAL.
+    if (v < p.valor - 0.005) m.pagamentos++
     mensal.set(chave, m)
     if (fila.length) filas.set(p.empenho, fila); else filas.delete(p.empenho)
   }
@@ -146,12 +148,25 @@ export const MIN_PAGAMENTOS_FEDERAL = 20
 export const AQUECIMENTO_DIAS = 90
 
 /**
+ * O primeiro mês (AAAA-MM) que começa DEPOIS do aquecimento inteiro. Série desde 01/07:
+ * o aquecimento vai até 29/09, então setembro ainda é aquecimento e o primeiro mês válido
+ * é outubro. (Cortar pelo mês da data — "2025-09" — deixava setembro inteiro entrar.)
+ */
+export function primeiroMesInteiroApos(inicioSerie, dias) {
+  const fim = new Date(Date.parse(`${inicioSerie}T00:00:00Z`) + dias * 86_400_000)
+  const mes = fim.getUTCDate() === 1
+    ? new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth(), 1))
+    : new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth() + 1, 1))
+  return mes.toISOString().slice(0, 7)
+}
+
+/**
  * Resumo de uma UG a partir dos meses dela.
  * @param {{ ano: number, mes: number, pago: number, pagoXdias: number, semLiquidacao: number, pagamentos: number }[]} meses
  * @param {{ inicioSerie: string, janelaMeses?: number }} op  inicioSerie = 1º dia processado (AAAA-MM-DD)
  */
 export function resumirUg(meses, op) {
-  const corte = new Date(Date.parse(op.inicioSerie) + AQUECIMENTO_DIAS * 86_400_000).toISOString().slice(0, 7)
+  const corte = primeiroMesInteiroApos(op.inicioSerie, AQUECIMENTO_DIAS)
   const validos = meses
     .filter((m) => `${m.ano}-${String(m.mes).padStart(2, '0')}` >= corte)
     .sort((a, b) => a.ano - b.ano || a.mes - b.mes)

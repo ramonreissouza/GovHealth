@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import zlib from 'node:zlib'
 import { ehFornecedor, somarMsc, resumirDias, faixaDias, classificarPagador, normalizeKey, pagadorDe } from '../src/lib/pagometro-calculo.mjs'
-import { lerCsv, eventosDoDia, aplicarDia, resumirUg, AQUECIMENTO_DIAS } from '../src/lib/pagometro-federal.mjs'
+import { lerCsv, eventosDoDia, aplicarDia, resumirUg, AQUECIMENTO_DIAS, primeiroMesInteiroApos } from '../src/lib/pagometro-federal.mjs'
 import { lerDoZip, entradasZip } from './lib/zip.mjs'
 
 test('só compra de fornecedor entra: folha e transferência ficam de fora', () => {
@@ -235,12 +235,43 @@ test('federal: estorno de liquidação tira do fim da fila; pago no mesmo dia da
 test('federal: resumo descarta os meses do aquecimento e exige volume', () => {
   const mes = (ano, m, pago, pagoXdias, n = 30) => ({ ano, mes: m, pago, pagoXdias, semLiquidacao: 0, pagamentos: n })
   assert.equal(AQUECIMENTO_DIAS, 90)
-  // Série começa em 01/07: julho, agosto e setembro (até 29/09) são aquecimento.
-  const r = resumirUg([mes(2025, 7, 1e6, 1e6), mes(2025, 10, 300e3, 300e3 * 6), mes(2025, 11, 300e3, 300e3 * 4)], { inicioSerie: '2025-07-01' })
+  // Série começa em 01/07: o aquecimento vai até 29/09, então SETEMBRO TAMBÉM fica fora
+  // (revisão da #57: cortar por "2025-09" deixava setembro inteiro entrar).
+  const r = resumirUg([
+    mes(2025, 7, 1e6, 1e6), mes(2025, 9, 1e6, 1e6),
+    mes(2025, 10, 300e3, 300e3 * 6), mes(2025, 11, 300e3, 300e3 * 4),
+  ], { inicioSerie: '2025-07-01' })
   assert.equal(r.dias, 5, 'só outubro e novembro: (6+4)/2')
   assert.equal(r.inicio, '2025-10-01')
+  assert.equal(primeiroMesInteiroApos('2025-07-01', 90), '2025-10')
+  assert.equal(primeiroMesInteiroApos('2025-07-03', 90), '2025-10', 'aquecimento acaba em 01/10: outubro já vale')
+  assert.equal(primeiroMesInteiroApos('2025-07-04', 90), '2025-11')
   assert.equal(resumirUg([mes(2025, 10, 100e3, 100e3)], { inicioSerie: '2025-07-01' }).dias, null, 'pouco pago')
   assert.equal(resumirUg([mes(2025, 10, 900e3, 900e3, 5)], { inicioSerie: '2025-07-01' }).dias, null, 'poucos pagamentos')
+})
+
+test('federal: pagamento sem liquidação conhecida não conta para o mínimo de pagamentos (revisão da #57)', () => {
+  const filas = new Map()
+  aplicarDia(filas, eventosDoDia(csvDia({ liqs: [{ cod: 'L1', data: '01/10/2025', ug: '9', emp: 'E1', valor: '300.000,00' }] })))
+  const pags = [{ cod: 'P0', data: '11/10/2025', ug: '9', emp: 'E1', valor: '300.000,00' }]
+  for (let i = 1; i <= 19; i++) pags.push({ cod: `P${i}`, data: '11/10/2025', ug: '9', emp: `X${i}`, valor: '1.000,00' })
+  const m = aplicarDia(filas, eventosDoDia(csvDia({ pags })))
+  const out = m.get('9|2025-10')
+  assert.equal(out.pagamentos, 1, 'só o que casou é observação')
+  assert.equal(out.semLiquidacao, 19_000)
+  assert.equal(resumirUg([out], { inicioSerie: '2025-01-01' }).dias, null, 'uma observação de R$ 300 mil não publica prazo')
+})
+
+test('PNCP ao vivo: a licitação normalizada traz esfera e unidade (revisão da #57)', async () => {
+  const { normalizarLicitacao } = await import('../src/lib/pncp.ts')
+  const lic = normalizarLicitacao({
+    numeroControlePNCP: 'x', modalidadeNome: 'Pregão', objetoCompra: 'monitores', valorTotalEstimado: 1,
+    dataPublicacaoPncp: '2026-10-01', situacaoCompraId: 1, situacaoCompraNome: 'Divulgada',
+    orgaoEntidade: { cnpj: '00394544000185', razaoSocial: 'MINISTERIO DA SAUDE', poderId: 'E', esferaId: 'F' },
+    unidadeOrgao: { codigoUnidade: '250052', nomeUnidade: 'INCA', municipioNome: 'Rio de Janeiro', ufSigla: 'RJ' },
+  })
+  assert.equal(lic.orgaoEntidade.esferaId, 'F')
+  assert.equal(lic.codigoUnidade, '250052')
 })
 
 test('na tela: compra federal acha a UG pela UASG; sem UASG, sem selo; esfera decide antes do nome', async () => {
@@ -264,10 +295,11 @@ function montarZip(arquivos) {
     const bruto = Buffer.from(texto, 'latin1')
     const dados = comprimir ? zlib.deflateRawSync(bruto) : bruto
     const n = Buffer.from(nome)
+    const crc = zlib.crc32(bruto) >>> 0
     const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(comprimir ? 8 : 0, 8)
-    lh.writeUInt32LE(dados.length, 18); lh.writeUInt32LE(bruto.length, 22); lh.writeUInt16LE(n.length, 26)
+    lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(dados.length, 18); lh.writeUInt32LE(bruto.length, 22); lh.writeUInt16LE(n.length, 26)
     const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(comprimir ? 8 : 0, 10)
-    ch.writeUInt32LE(dados.length, 20); ch.writeUInt32LE(bruto.length, 24); ch.writeUInt16LE(n.length, 28); ch.writeUInt32LE(ofs, 42)
+    ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(dados.length, 20); ch.writeUInt32LE(bruto.length, 24); ch.writeUInt16LE(n.length, 28); ch.writeUInt32LE(ofs, 42)
     locais.push(lh, n, dados); centrais.push(ch, n)
     ofs += 30 + n.length + dados.length
   }
@@ -287,4 +319,26 @@ test('zip: lê entrada comprimida e não comprimida; acha pelo fim do nome', () 
   assert.equal(r.get('_Despesas_Liquidacao.csv').toString('latin1'), '"a";"b"\n"ção";"2"\n'.repeat(50))
   assert.equal(r.get('_Despesas_Liquidacao_EmpenhosImpactados.csv').toString('latin1'), '"x"\n"1"\n')
   assert.throws(() => entradasZip(Buffer.from('não é zip, só texto qualquer com mais de vinte e dois bytes')), /não é um arquivo zip/)
+})
+
+test('zip vindo de fora não é confiado: tetos, CRC, posições e tamanho mentiroso (revisão da #57)', () => {
+  const texto = '"a";"b"\n'.repeat(2000)
+  const base = () => montarZip([['x_Despesas_Liquidacao.csv', texto, true]])
+  const suf = ['_Despesas_Liquidacao.csv']
+  // Posição do diretório central: fim - 22 + 16; da entrada central: lida dali.
+  const central = (z) => z.readUInt32LE(z.length - 22 + 16)
+
+  const crcErrado = base(); crcErrado.writeUInt32LE(0xdeadbeef, central(crcErrado) + 16)
+  assert.throws(() => lerDoZip(crcErrado, suf), /CRC não confere/)
+
+  assert.throws(() => lerDoZip(base(), suf, { porEntrada: 1000, total: 1e9 }), /acima do teto/, 'teto por entrada, antes de descomprimir')
+  assert.throws(() => lerDoZip(base(), suf, { porEntrada: 1e9, total: 1000 }), /no total, acima do teto/)
+
+  const mentiroso = base(); mentiroso.writeUInt32LE(100, central(mentiroso) + 24) // declara 100 bytes; tem 16 mil
+  assert.throws(() => lerDoZip(mentiroso, suf), /descompressão falhou|tamanho lido/, 'não descomprime além do declarado')
+
+  const foraDoArquivo = base(); foraDoArquivo.writeUInt32LE(0x7fffffff, central(foraDoArquivo) + 42)
+  assert.throws(() => lerDoZip(foraDoArquivo, suf), /fora do arquivo/)
+
+  assert.equal(lerDoZip(base(), suf).get(suf[0]).toString('latin1'), texto, 'o íntegro continua passando')
 })

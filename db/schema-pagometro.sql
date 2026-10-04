@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS pagometro_fed_mensal (
   pago            numeric NOT NULL DEFAULT 0,
   pago_x_dias     numeric NOT NULL DEFAULT 0,
   sem_liquidacao  numeric NOT NULL DEFAULT 0,
-  pagamentos      int     NOT NULL DEFAULT 0,
+  pagamentos      int     NOT NULL DEFAULT 0,   -- só os que casaram com alguma liquidação
   PRIMARY KEY (ug, ano, mes)
 );
 
