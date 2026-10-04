@@ -813,14 +813,10 @@ export async function GET(req: NextRequest) {
         console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
       }
       // Pagômetro: informação ao lado do CAPAG, fora do score nesta fase. Quem paga é
-      // decidido pelo nome do órgão (`hospital`): prefeitura, estado, União ou consórcio.
-      try {
-        const ufsPresentes = [...new Set(oportunidades.map((o) => o.uf).filter((u) => u && u !== 'N/D'))]
-        const pagIdx = await carregarIndicePagometro(ufsPresentes.length ? ufsPresentes : undefined)
-        oportunidades = oportunidades.map((o) => ({ ...o, pagometro: pagIdx.resolver(o.uf, o.municipio, o.hospital) }))
-      } catch (pagErr) {
-        console.warn('[opportunities] pagômetro indisponível:', String(pagErr))
-      }
+      // decidido pelo nome do órgão (`hospital`): prefeitura ou estado; o resto fica sem.
+      // Sem a tabela, o índice vem vazio e o selo não aparece.
+      const pagIdx = await carregarIndicePagometro()
+      oportunidades = oportunidades.map((o) => ({ ...o, pagometro: pagIdx.resolver(o.uf, o.municipio, o.hospital) }))
     }
 
     // Dedup pelo ID REAL da licitação (nº de controle PNCP). Antes deduplicava por

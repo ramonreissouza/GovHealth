@@ -1,8 +1,8 @@
 // scripts/pagometro.teste.mjs — o cálculo do Pagômetro (src/lib/pagometro-calculo.mjs).
-// Uso: node --test scripts/pagometro.teste.mjs
+// Uso: npm run pagometro:teste (tsx --test: alguns casos importam os módulos .ts do app)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ehFornecedor, somarMsc, resumirDias, faixaDias, classificarPagador } from '../src/lib/pagometro-calculo.mjs'
+import { ehFornecedor, somarMsc, resumirDias, faixaDias, classificarPagador, normalizeKey } from '../src/lib/pagometro-calculo.mjs'
 
 test('só compra de fornecedor entra: folha e transferência ficam de fora', () => {
   assert.equal(ehFornecedor('33903000'), true)   // material de consumo
@@ -93,14 +93,72 @@ test('faixas: até 15 dias verde, até 45 âmbar, acima vermelho', () => {
 test('quem paga: prefeitura, estado, União ou consórcio', () => {
   assert.equal(classificarPagador('MUNICIPIO DE SALVADOR'), 'municipio')
   assert.equal(classificarPagador('FUNDO MUNICIPAL DE SAÚDE DE PATO BRANCO'), 'municipio')
+  assert.equal(classificarPagador('FUNDO MUN.DE SAUDE DE SAO LUIS DE MONTES BELOS'), 'municipio')
   assert.equal(classificarPagador('PREFEITURA MUNICIPAL DE BORÁ - ESTADO DE SÃO PAULO'), 'municipio')
   assert.equal(classificarPagador('SECRETARIA DA SAÚDE DO ESTADO DA BAHIA'), 'estado')
   assert.equal(classificarPagador('FUNDO ESTADUAL DE SAÚDE'), 'estado')
   assert.equal(classificarPagador('ESTADO DE MINAS GERAIS'), 'estado')
+  assert.equal(classificarPagador('SECRETARIA DE ESTADO DE SAUDE DO DISTRITO FEDERAL'), 'estado')
+  assert.equal(classificarPagador('MINISTERIO PUBLICO DO ESTADO DA BAHIA'), 'estado')
   assert.equal(classificarPagador('MINISTÉRIO DA SAÚDE'), 'federal')
   assert.equal(classificarPagador('EMPRESA BRASILEIRA DE SERVIÇOS HOSPITALARES - EBSERH'), 'federal')
   assert.equal(classificarPagador('UNIVERSIDADE FEDERAL DO PARANÁ'), 'federal')
+  assert.equal(classificarPagador('UNIVERSIDADE FEDERAL DO ESTADO DO RIO DE JANEIRO'), 'federal')
   assert.equal(classificarPagador('CONSÓRCIO INTERMUNICIPAL DE SAÚDE DO OESTE'), 'outro')
-  assert.equal(classificarPagador('HOSPITAL REGIONAL DE ITABUNA'), 'municipio')
-  assert.equal(classificarPagador(null), 'municipio')
+  assert.equal(classificarPagador('CONDERG - CONS. DE DESENV. - HOSPITAL DIVINOLÂNDIA'), 'outro')
+})
+
+test('sem marca de prefeitura, não herda o prazo da cidade (nomes reais da base)', () => {
+  // Estes caíam em 'municipio' e mostravam o Pagômetro da prefeitura onde ficam.
+  for (const [orgao, esperado] of [
+    ['UNIVERSIDADE ESTADUAL DE LONDRINA', 'estado'],
+    ['UNIVERSIDADE ESTADUAL DE CAMPINAS', 'estado'],
+    ['INSTITUTO DE ASSISTENCIA MEDICA AO SERVIDOR PUBLICO ESTADUAL', 'estado'],
+    ['RIO GRANDE DO NORTE SECRETARIA DA SAUDE PUBLICA', 'estado'],
+    ['SAO PAULO SECRETARIA DA ADMINISTRACAO PENITENCIARIA', 'estado'],
+    ['(UO) ESP-CETESB-CIA AMBIENTAL DO EST.DE SP', 'estado'],
+    ['BANCO CENTRAL DO BRASIL', 'federal'],
+    ['TRIBUNAL SUPERIOR DO TRABALHO', 'federal'],
+    ['JUSTICA FEDERAL DE PRIMEIRA INSTANCIA', 'federal'],
+    ['FUNDACAO NACIONAL DE SAUDE', 'federal'],
+    ['CONSELHO REGIONAL DE FARMACIA', 'outro'],
+    // Ambíguos: sem selo é melhor que o prazo de outro ente.
+    ['SECRETARIA DE SAUDE', 'outro'],
+    ['HOSPITAL DAS CLINICAS DA FACULDADE DE MEDICINA DE RPUSP', 'outro'],
+    ['HOSPITAL REGIONAL DE ITABUNA', 'outro'],
+    [null, 'outro'],
+  ]) assert.equal(classificarPagador(orgao), esperado, String(orgao))
+})
+
+test('a chave da carga é a mesma da consulta (normalizeKey de src/lib/text.ts)', async () => {
+  const { normalizeKey: doApp } = await import('../src/lib/text.ts')
+  for (const nome of ['São João del-Rei', 'Pingo-d\'Água', ' Mãe d\'Água ', 'ITAPAJÉ', 'Westfália']) {
+    assert.equal(normalizeKey(nome), doApp(nome), nome)
+  }
+})
+
+test('localidade da emenda: município, estado e sem ente', async () => {
+  const { lerLocalidade } = await import('../src/lib/capacidade-pagamento.ts')
+  assert.deepEqual(lerLocalidade('SALVADOR - BA'), { uf: 'BA', municipio: 'SALVADOR' })
+  assert.deepEqual(lerLocalidade('Embu/SP'), { uf: 'SP', municipio: 'Embu' })
+  assert.deepEqual(lerLocalidade('Westfália (RS)'), { uf: 'RS', municipio: 'Westfália' })
+  assert.deepEqual(lerLocalidade('BAHIA (UF)'), { uf: 'BA', municipio: null })
+  assert.deepEqual(lerLocalidade('PARANÁ'), { uf: 'PR', municipio: null })
+  assert.equal(lerLocalidade('MÚLTIPLO'), null)
+  assert.equal(lerLocalidade('NACIONAL'), null)
+  assert.equal(lerLocalidade(''), null)
+})
+
+test('frase do selo: com e sem período, sempre com a ressalva', async () => {
+  const { textoPagometro, diasSelo } = await import('../src/lib/pagometro-texto.ts')
+  const p = { dias: 8.7, saude: true, faixa: 'rapido', pagador: 'Salvador/BA', meses: 6, inicio: '2026-01-01', fim: '2026-06-01' }
+  assert.equal(textoPagometro(p),
+    'Salvador/BA: depois de reconhecer a nota (liquidação), paga fornecedores da Saúde em ~9 dias. '
+    + 'Média de jan/2026 a jun/2026, pela contabilidade que o ente entrega ao Tesouro (Siconfi/MSC). '
+    + 'Não inclui o tempo até o órgão atestar a entrega.')
+  const semPeriodo = textoPagometro({ ...p, inicio: null, fim: null })
+  assert.doesNotMatch(semPeriodo, /\.\s*,|\s,|\.\./, semPeriodo)
+  assert.match(semPeriodo, /Não inclui o tempo até o órgão atestar a entrega\.$/)
+  assert.equal(diasSelo(0.4), '<1d')
+  assert.equal(diasSelo(12.4), '~12d')
 })

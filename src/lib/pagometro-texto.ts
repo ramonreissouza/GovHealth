@@ -26,14 +26,21 @@ export function diasCurto(dias: number): string {
   return `~${n} ${n === 1 ? 'dia' : 'dias'}`
 }
 
+/** O que cabe no selo: "~9d" ou "<1d". */
+export function diasSelo(dias: number): string {
+  return dias < 1 ? '<1d' : `~${Math.round(dias)}d`
+}
+
 /**
  * A frase completa do selo. Diz o que é medido e o que NÃO é — a ressalva faz parte
  * do número, não é nota de rodapé.
  */
 export function textoPagometro(p: PagometroInfo): string {
   const oQue = p.saude ? 'fornecedores da Saúde' : 'fornecedores'
-  const periodo = p.inicio && p.fim ? ` Média de ${mesAno(p.inicio)} a ${mesAno(p.fim)}` : ''
-  return `${p.pagador}: depois de reconhecer a nota (liquidação), paga ${oQue} em ${diasCurto(p.dias)}.${periodo}, `
-    + 'pela contabilidade que o ente entrega ao Tesouro (Siconfi/MSC). '
-    + 'Não inclui o tempo até o órgão atestar a entrega.'
+  const fonte = 'pela contabilidade que o ente entrega ao Tesouro (Siconfi/MSC)'
+  const base = p.inicio && p.fim
+    ? `Média de ${mesAno(p.inicio)} a ${mesAno(p.fim)}, ${fonte}.`
+    : `Calculado ${fonte}.`
+  return `${p.pagador}: depois de reconhecer a nota (liquidação), paga ${oQue} em ${diasCurto(p.dias)}. `
+    + `${base} Não inclui o tempo até o órgão atestar a entrega.`
 }

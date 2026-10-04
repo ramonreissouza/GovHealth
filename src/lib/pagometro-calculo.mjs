@@ -113,21 +113,50 @@ export function faixaDias(dias) {
   return dias <= 15 ? 'rapido' : dias <= 45 ? 'medio' : 'lento'
 }
 
+/** Chave canônica de município. DEVE ser igual a normalizeKey de src/lib/text.ts: a
+ *  carga grava com esta e o app consulta com aquela (teste em pagometro.teste.mjs). */
+export function normalizeKey(s) {
+  return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim()
+}
+
+const ESTADOS = 'ACRE|ALAGOAS|AMAPA|AMAZONAS|BAHIA|CEARA|ESPIRITO SANTO|GOIAS|MARANHAO|MATO GROSSO( DO SUL)?|MINAS GERAIS|PARA|PARAIBA|PARANA|PERNAMBUCO|PIAUI|RIO DE JANEIRO|RIO GRANDE DO NORTE|RIO GRANDE DO SUL|RONDONIA|RORAIMA|SANTA CATARINA|SAO PAULO|SERGIPE|TOCANTINS'
+// Abreviações com ponto ("CONS.", "EST.DE SP") ficam fora do \b final: depois do ponto
+// não há fronteira de palavra quando vem espaço.
+const RE_OUTRO = /\b(CONSORCIO|INTERMUNICIPAL|CONSELHO (REGIONAL|FEDERAL))\b|\bCONS\./
+const RE_MUNICIPAL = /\b(MUNICIPIO|MUNICIPAL|MUNICIPAIS|PREFEITURA|MUN)\b/
+const RE_FEDERAL = new RegExp('\\b(' + [
+  'FEDERAL', 'NACIONAL', 'UNIAO', 'MINISTERIO D[AOE]', 'EBSERH', 'EMPRESA BRASILEIRA', 'BANCO CENTRAL',
+  'TRIBUNAL SUPERIOR', 'SUPERIOR TRIBUNAL', 'TRIBUNAL REGIONAL', 'JUSTICA DO TRABALHO', 'JUSTICA ELEITORAL',
+  'COMANDO D[AOE]', 'EXERCITO', 'MARINHA', 'AERONAUTICA', 'FUNDACAO OSWALDO CRUZ', 'FIOCRUZ', 'HOSPITAL UNIVERSITARIO',
+].join('|') + ')\\b')
+const RE_ESTADUAL = new RegExp('\\b(' + [
+  'GOVERNO DO ESTADO', 'SECRETARIA D[AEO] ESTADO', 'ESTADUAL', 'ESTADO D[AEO]', 'DISTRITO FEDERAL',
+  'POLICIA MILITAR', 'CORPO DE BOMBEIROS', 'TRIBUNAL DE JUSTICA', 'ASSEMBLEIA LEGISLATIVA',
+].join('|') + ')\\b|\\bEST\\.|^(' + ESTADOS + ') SECRETARIA\\b')
+
 /**
  * Quem paga a compra: a prefeitura, o estado ou a União. O PNCP não traz a esfera de
  * forma confiável na nossa base (370 mil contratações com `esfera` nula), e uma compra
  * da Secretaria de Estado da Saúde feita em Salvador é paga pelo ESTADO, não pela
  * prefeitura. Federal fica sem Pagômetro nesta fase (vem do Portal da Transparência).
+ *
+ * Sem marca reconhecível, 'outro' — e o selo some. Medido em 04/10/2026: 13% das
+ * contratações (UEL, Unicamp, USP, Banco Central, TST…) não têm marca de prefeitura no
+ * nome; o padrão antigo ('municipio') dava a elas o prazo da cidade onde ficam.
  * @param {string | null | undefined} orgao razão social do órgão comprador
  * @returns {'municipio' | 'estado' | 'federal' | 'outro'}
  */
 export function classificarPagador(orgao) {
-  const o = String(orgao ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
-  // Consórcio público tem caixa próprio: não é a prefeitura nem o estado.
-  if (/\bCONSORCIO\b/.test(o)) return 'outro'
+  const o = normalizeKey(orgao).replace(/\s+/g, ' ')
+  // Consórcio e afins têm caixa próprio: não é a prefeitura nem o estado.
+  if (RE_OUTRO.test(o)) return 'outro'
   // Marca municipal vence: "PREFEITURA MUNICIPAL DE X - ESTADO DE SP" é da prefeitura.
-  if (/\b(MUNICIPIO|MUNICIPAL|PREFEITURA)\b/.test(o)) return 'municipio'
-  if (/\b(MINISTERIO|UNIVERSIDADE FEDERAL|INSTITUTO FEDERAL|EBSERH|EMPRESA BRASILEIRA DE SERVICOS HOSPITALARES|COMANDO D[AOE]|EXERCITO|MARINHA|AERONAUTICA|FUNDACAO OSWALDO CRUZ|FIOCRUZ|HOSPITAL UNIVERSITARIO|UNIAO FEDERAL)\b/.test(o)) return 'federal'
-  if (/\b(GOVERNO DO ESTADO|SECRETARIA D[AEO] ESTADO|SECRETARIA ESTADUAL|FUNDO ESTADUAL|DISTRITO FEDERAL)\b/.test(o) || /\bESTADO D[AEO] /.test(o)) return 'estado'
-  return 'municipio'
+  if (RE_MUNICIPAL.test(o)) return 'municipio'
+  // Ministério Público estadual antes do federal: "MINISTERIO PUBLICO DO ESTADO DA BAHIA".
+  if (/\bMINISTERIO PUBLICO D[OE] ESTADO\b/.test(o)) return 'estado'
+  // "UNIVERSIDADE FEDERAL DO ESTADO DO RIO DE JANEIRO" é federal: federal antes do estado,
+  // com o Distrito Federal tirado da frente.
+  if (RE_FEDERAL.test(o.replace(/DISTRITO FEDERAL/g, ''))) return 'federal'
+  if (RE_ESTADUAL.test(o)) return 'estado'
+  return 'outro'
 }

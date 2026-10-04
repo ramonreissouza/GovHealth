@@ -5,7 +5,7 @@
 
 import { clsx } from 'clsx'
 import { Timer } from 'lucide-react'
-import { diasCurto, textoPagometro, type PagometroInfo } from '@/lib/pagometro-texto'
+import { diasSelo, textoPagometro, type PagometroInfo } from '@/lib/pagometro-texto'
 
 const CLS: Record<PagometroInfo['faixa'], string> = {
   rapido: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25',
@@ -23,7 +23,7 @@ export default function PagometroBadge({ p, className }: { p?: PagometroInfo | n
       className={clsx('inline-flex items-center gap-0.5 text-[9px] font-mono-custom px-1.5 h-4 rounded-md border whitespace-nowrap', CLS[p.faixa], className)}
     >
       <Timer size={9} aria-hidden="true" />
-      {diasCurto(p.dias).replace(' dias', 'd').replace(' dia', 'd')}
+      {diasSelo(p.dias)}
     </span>
   )
 }

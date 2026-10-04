@@ -8,6 +8,7 @@
 import { query } from '@/lib/db'
 import { normalizeKey } from '@/lib/text'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
+import { lerLocalidade } from '@/lib/capacidade-pagamento'
 import { classificarPagador, faixaDias } from '@/lib/pagometro-calculo.mjs'
 import type { FaixaPagometro, PagometroInfo } from '@/lib/pagometro-texto'
 
@@ -37,38 +38,57 @@ export class IndicePagometro {
     else this.municipios.set(`${l.uf}:${l.municipio_key}`, l)
   }
 
+  /** O governo do estado (ou do DF) como pagador. */
+  estado(uf: string | null | undefined): PagometroInfo | null {
+    const UF = (uf ?? '').trim().toUpperCase()
+    const l = this.estados.get(UF)
+    return l ? info(l, UF === 'DF' ? 'Governo do Distrito Federal' : `Governo do estado (${UF})`) : null
+  }
+
   /**
-   * Resolve pelo órgão comprador. Diferente do CAPAG, NÃO cai para o estado quando o
+   * A prefeitura como pagadora. Diferente do CAPAG, NÃO cai para o estado quando o
    * município não tem dado: quem paga a compra da prefeitura é a prefeitura, e o prazo
    * do estado diria outra coisa.
    */
-  resolver(uf: string | null | undefined, municipio: string | null | undefined, orgao?: string | null): PagometroInfo | null {
+  municipio(uf: string | null | undefined, municipio: string | null | undefined): PagometroInfo | null {
     const UF = (uf ?? '').trim().toUpperCase()
-    if (!UF) return null
-    const pagador = classificarPagador(orgao)
-    if (pagador === 'estado') {
-      const l = this.estados.get(UF)
-      return l ? info(l, UF === 'DF' ? 'Governo do Distrito Federal' : `Governo do estado (${UF})`) : null
-    }
-    if (pagador !== 'municipio' || !municipio) return null
+    if (!UF || !municipio) return null
     const l = this.municipios.get(`${UF}:${normalizeKey(municipio)}`)
     return l ? info(l, `${l.municipio_nome ?? municipio}/${UF}`) : null
   }
+
+  /** Compra de licitação: quem paga sai do nome do órgão comprador (classificarPagador). */
+  resolver(uf: string | null | undefined, municipio: string | null | undefined, orgao: string | null | undefined): PagometroInfo | null {
+    const pagador = classificarPagador(orgao)
+    if (pagador === 'estado') return this.estado(uf)
+    if (pagador === 'municipio') return this.municipio(uf, municipio)
+    return null
+  }
+
+  /** Emenda federal: o ente que recebe sai da "localidade do gasto" do Portal, lida como
+   *  o CAPAG lê ("Cidade - PB", "Embu/SP", "BAHIA (UF)"). */
+  resolverLocalidade(localidade: string | null | undefined): PagometroInfo | null {
+    const l = lerLocalidade(localidade)
+    if (!l) return null
+    return l.municipio ? this.municipio(l.uf, l.municipio) : this.estado(l.uf)
+  }
 }
 
-export async function carregarIndicePagometro(ufs?: string[]): Promise<IndicePagometro> {
-  const chave = `pagometro:idx:${ufs?.length ? [...ufs].map((u) => u.toUpperCase()).sort().join(',') : 'all'}`
+/** A tabela inteira (~5,6 mil entes), num cache só: filtrar por UF criava uma entrada
+ *  por combinação de filtro sem economizar nada que importe. */
+export async function carregarIndicePagometro(): Promise<IndicePagometro> {
+  const chave = 'pagometro:idx'
   const cached = getCached<IndicePagometro>(chave)
   if (cached) return cached
   const idx = new IndicePagometro()
   try {
     // Data como TEXTO de propósito: o pg converte DATE em Date no fuso da máquina, e num
     // servidor fora do Brasil 2026-01-01 virava 31/12/2025 — o selo diria "dez/2025".
-    const cols = `ente_tipo, uf, municipio_key, municipio_nome, dias::float8 AS dias, dias_saude::float8 AS dias_saude, meses,
-                  to_char(mes_inicio, 'YYYY-MM-DD') AS mes_inicio, to_char(mes_fim, 'YYYY-MM-DD') AS mes_fim`
-    const rows = ufs?.length
-      ? await query<Linha>(`SELECT ${cols} FROM pagometro WHERE uf = ANY($1::text[])`, [ufs.map((u) => u.toUpperCase())])
-      : await query<Linha>(`SELECT ${cols} FROM pagometro`)
+    const rows = await query<Linha>(
+      `SELECT ente_tipo, uf, municipio_key, municipio_nome, dias::float8 AS dias, dias_saude::float8 AS dias_saude, meses,
+              to_char(mes_inicio, 'YYYY-MM-DD') AS mes_inicio, to_char(mes_fim, 'YYYY-MM-DD') AS mes_fim
+         FROM pagometro`,
+    )
     for (const r of rows) idx.add(r)
     setCached(chave, idx, TTL.LONG)
   } catch (e) {
