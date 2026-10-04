@@ -24,6 +24,7 @@ if (!['localhost', '127.0.0.1'].includes(host)) { console.error(`recuso apagar o
 process.env.DATABASE_URL = URL_E2E
 process.env.RESEND_API_KEY = 're_teste_falso'
 process.env.RESEND_BASE_URL = 'http://127.0.0.1:9' // porta morta, se o stub abaixo falhar
+process.env.NEXTAUTH_SECRET = 'segredo-so-do-teste' // assina o link "Vi"
 
 type Enviado = { to: string; subject: string; html: string }
 const enviados: Enviado[] = []
@@ -59,6 +60,9 @@ const CLI = 'cliente@exemplo.com'
 const OUT = 'outro@exemplo.com'
 await query(`INSERT INTO usuarios (id, email, nome, senha_hash, empresa, cnpj)
              VALUES ($1, $1, 'Cliente', 'x', 'Remora Saúde', '12.345.678/0001-90'), ($2, $2, 'Outro', 'x', NULL, NULL)`, [CLI, OUT])
+// A equipe do cliente tem mais uma pessoa (o repasse vai para ela); a do OUT é só ele.
+const MEM = 'membro@exemplo.com'
+await query(`INSERT INTO usuarios (id, email, nome, senha_hash, titular_id) VALUES ($1, $1, 'Membro', 'x', $2)`, [MEM, CLI])
 const conector = (await query<{ id: string }>(`SELECT id FROM radar_conectores ORDER BY id LIMIT 1`))[0].id
 const proc = (id: string, titular: string, participando = false) =>
   query(`INSERT INTO radar_processos (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, participando, link_portal)
@@ -82,7 +86,8 @@ const CITA = 'Convoco a REMORA PRODUTOS PARA SAUDE LTDA'
 const ids = {
   velho: await notif({ titular: CLI, proc: 'p-auto', texto: CITA, idadeMin: 3 * 24 * 60 }),
   citaMasParada: await notif({ titular: CLI, proc: 'p-auto', texto: CITA, idadeMin: 8 * 60 }),
-  orfao: await notif({ titular: CLI, proc: 'p-auto', texto: 'qualquer', status: 'enviando', enviadoHaMin: 20 }),
+  // Envio interrompido há 3 h: fora da janela do repasse (o mais novo seria repassado).
+  orfao: await notif({ titular: CLI, proc: 'p-auto', texto: 'qualquer', status: 'enviando', enviadoHaMin: 180 }),
   lida: await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'entregue' }),
   terceiro: await notif({ titular: CLI, proc: 'p-auto', texto: 'Convoco a empresa D. GOMES DA SILVA para habilitação' }),
   participando: await notif({ titular: CLI, proc: 'p-part', texto: 'Ficam os licitantes convocados em 2 horas' }),
@@ -115,6 +120,8 @@ const imediatos = [ids.participando, ids.citaCnpj, ...ids.citaNome]
 assert.equal(imediatos.filter((i) => s[i] === 'enviado').length, 5, 'teto de 5 por pessoa por rodada')
 assert.equal(enviados.length, 5)
 assert.match(enviados[0].html, /Publicada no portal em \d{2}\/\d{2} às \d{2}:\d{2}/, 'o aviso diz quando a mensagem saiu')
+assert.match(enviados[0].html, /\/api\/radar\/vi\?t=[\w.-]+/, 'o aviso traz o botão "Vi"')
+assert.match(enviados[0].html, /vai para outra pessoa da equipe/, 'e avisa que repassa: a equipe tem mais alguém')
 
 await runRadarNotify()
 s = await status()
@@ -142,6 +149,98 @@ await notif({ titular: CLI, proc: 'p-auto', texto: 'Sessão retomada às 14h', p
 await runRadarNotify()
 const r3 = await runRadarResumo()
 assert.equal(r3.enviados, 0, 'já recebeu hoje: o que chegou depois fica para amanhã')
+
+// ── "Vi" e repasse ───────────────────────────────────────────────────────────────
+const semVi = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 20 })
+const visto = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 20 })
+const recente = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 5 })
+const antigo = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 180, idadeMin: 185 })
+const sozinho = await notif({ titular: OUT, proc: 'p-out', texto: 'Convoco a empresa X LTDA', status: 'enviado', enviadoHaMin: 20 })
+
+const { GET, POST } = await import('../../src/app/api/radar/vi/route')
+const { NextRequest } = await import('next/server')
+const { tokenVi } = await import('../../src/lib/radar/vi-token')
+const tok = tokenVi(visto)
+const confirmado = async (id: string) => (await query<{ c: string | null }>(`SELECT confirmado_em AS c FROM radar_notificacoes WHERE id = $1`, [id]))[0].c
+// Abrir o link (o que o antivírus do e-mail faz sozinho) NÃO confirma: só mostra o botão.
+const pg1 = await GET(new NextRequest(`http://localhost/api/radar/vi?t=${encodeURIComponent(tok)}`))
+assert.equal(pg1.status, 200)
+assert.match(await pg1.text(), /Vi, estou cuidando/)
+assert.equal(await confirmado(visto), null, 'GET não confirma')
+const fd = new FormData(); fd.set('t', tok)
+const pg2 = await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd }))
+assert.equal(pg2.status, 200)
+assert.ok(await confirmado(visto), 'POST confirma')
+const msgVista = (await query<{ lida: boolean; lida_por: string | null }>(
+  `SELECT m.lida, m.lida_por FROM radar_mensagens m JOIN radar_notificacoes n ON n.mensagem_id = m.id WHERE n.id = $1`, [visto]))[0]
+assert.deepEqual(msgVista, { lida: true, lida_por: CLI }, 'a mensagem fica lida, por quem recebeu')
+const fd2 = new FormData(); fd2.set('t', tok.slice(0, -3) + 'xyz')
+assert.equal((await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd2 }))).status, 400, 'token adulterado')
+
+const antesRepasse = enviados.length
+const rr = await runRadarNotify()
+assert.equal(rr.repassados, 1, 'só o sem "Vi", dentro da janela, depois do SLA')
+assert.equal(rr.semEquipe, 1, 'equipe de uma pessoa: marca, não manda')
+const repasse = enviados.slice(antesRepasse)
+assert.equal(repasse.length, 1)
+assert.equal(repasse[0].to, MEM, 'vai para o outro membro, não para quem já recebeu')
+assert.match(repasse[0].subject, /^⚠️ Sem resposta — /)
+assert.match(repasse[0].html, /Ninguém confirmou este aviso em 2\d min\. Ele foi para cliente@exemplo\.com/)
+assert.match(repasse[0].html, /\/api\/radar\/vi\?t=/, 'o repasse também tem "Vi"')
+const esc = Object.fromEntries((await query<{ id: string; escalonado_para: string | null; escalonado_em: string | null }>(
+  `SELECT id, escalonado_para, escalonado_em FROM radar_notificacoes WHERE id = ANY($1::text[])`,
+  [[semVi, visto, recente, antigo, sozinho]])).map((r) => [r.id, r]))
+assert.equal(esc[semVi].escalonado_para, MEM)
+assert.equal(esc[visto].escalonado_em, null, 'quem deu "Vi" não é repassado')
+assert.equal(esc[recente].escalonado_em, null, 'antes dos 15 min, espera')
+assert.equal(esc[antigo].escalonado_em, null, 'fora da janela de 2 h: não repassa o acúmulo antigo')
+assert.ok(esc[sozinho].escalonado_em && esc[sozinho].escalonado_para === null)
+assert.equal((await query<{ s: string }>(`SELECT status AS s FROM radar_notificacoes WHERE id = $1`, [`esc:${semVi}`]))[0].s, 'enviado')
+// "Vi" no e-mail repassado confirma o aviso inteiro, inclusive o original.
+const fd3 = new FormData(); fd3.set('t', tokenVi(`esc:${semVi}`))
+await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd3 }))
+assert.ok(await confirmado(semVi), '"Vi" do repasse confirma o original')
+assert.equal((await runRadarNotify()).repassados, 0, 'um repasse por aviso')
+
+// ── aviso que não chegou, repasse que falha, indicação à mão ────────────────────
+const MEM2 = 'membro2@exemplo.com'
+await query(`INSERT INTO usuarios (id, email, nome, senha_hash, titular_id, criado_em)
+             VALUES ($1, $1, 'Membro 2', 'x', $2, now() + interval '1 minute')`, [MEM2, CLI])
+const naoChegou = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'falha', enviadoHaMin: 2 })
+const indicado = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 20 })
+await query(`UPDATE radar_notificacoes SET escalonado_para = $2 WHERE id = $1`, [indicado, MEM2])
+const info = async (ids: string[]) => Object.fromEntries((await query<{ id: string; escalonado_em: string | null; escalonado_para: string | null }>(
+  `SELECT id, escalonado_em, escalonado_para FROM radar_notificacoes WHERE id = ANY($1::text[])`, [ids])).map((r) => [r.id, r]))
+
+resendFalha = true // Resend fora do ar: os dois repasses falham
+const fora = await runRadarNotify()
+assert.equal(fora.repassados, 0)
+assert.equal(fora.falhas, 2)
+let est = await info([naoChegou, indicado])
+assert.equal(est[naoChegou].escalonado_em, null, 'repasse que falhou volta para a fila')
+assert.equal(est[indicado].escalonado_em, null)
+assert.equal(est[indicado].escalonado_para, MEM2, 'e guarda quem foi indicado à mão')
+resendFalha = false
+const antesVolta = enviados.length
+assert.equal((await runRadarNotify()).repassados, 2, 'nova chance na rodada seguinte')
+const volta = enviados.slice(antesVolta)
+const naoEntregue = volta.find((e) => /^⚠️ Aviso não entregue — /.test(e.subject))
+assert.ok(naoEntregue, 'aviso imediato que falhou é repassado, sem esperar o SLA')
+assert.equal(naoEntregue.to, MEM)
+assert.match(naoEntregue.html, /não pôde ser entregue a cliente@exemplo\.com/)
+assert.equal(volta.find((e) => /^⚠️ Sem resposta — /.test(e.subject))?.to, MEM2, 'indicado à mão vem antes do membro mais antigo')
+assert.equal((await query<{ t: number }>(`SELECT tentativas AS t FROM radar_notificacoes WHERE id = $1`, [`esc:${indicado}`]))[0].t, 2)
+est = await info([naoChegou, indicado])
+assert.equal(est[indicado].escalonado_para, MEM2)
+
+// A página do "Vi" depois do repasse não promete o que já aconteceu.
+const tkRep = tokenVi(indicado)
+assert.match(await (await GET(new NextRequest(`http://localhost/api/radar/vi?t=${encodeURIComponent(tkRep)}`))).text(),
+  /a equipe fica sabendo que alguém está cuidando/)
+const fd5 = new FormData(); fd5.set('t', tkRep)
+assert.match(await (await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd5 }))).text(),
+  /já tinha sido repassado para membro2@exemplo\.com/)
+assert.equal((await query(`SELECT 1 FROM pg_indexes WHERE indexname = 'idx_radar_notif_repasse'`)).length, 1, 'índice do repasse')
 
 console.log(`OK: ${enviados.length} e-mails gerados, todos interceptados`)
 process.exit(0)
