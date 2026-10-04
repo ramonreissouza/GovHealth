@@ -36,6 +36,7 @@
     "radar:link-processo:teste": "node --test scripts/radar/link-processo.teste.mjs",
     "radar:entrega:teste": "tsx --test scripts/radar/entrega.teste.ts",
     "radar:entrega:e2e": "tsx scripts/radar/entrega-e2e.teste.mts",
+    "push:teste": "tsx --test scripts/push.teste.ts",
     "radar:link-idx:migrate": "node scripts/radar/migrate-link-externo-idx.mjs",
     "radar:ciclo:teste": "node --test scripts/radar/ciclo-cobertura.teste.mjs",
     "trgm:migrate": "node scripts/migrate-trgm.mjs",
@@ -148,6 +149,7 @@
     "swr": "^2.2.5",
     "tailwind-merge": "^2.4.0",
     "tsx": "^4.23.13",
+    "web-push": "3.6.7",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8",
     "zustand": "^4.5.4"
@@ -158,6 +160,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/web-push": "3.6.4",
     "autoprefixer": "^10.0.1",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.2.6",

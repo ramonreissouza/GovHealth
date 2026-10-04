@@ -32,6 +32,7 @@ import {
   type AlvoEmpresa, type MembroEquipe,
 } from '@/lib/radar/entrega'
 import { tokenVi } from '@/lib/radar/vi-token'
+import { enviarPushPara, pessoasComPush, pushConfigurado } from '@/lib/push'
 
 const LOTE = 500
 /** Por destinatário e rodada. O que sobrar sai na próxima rodada, 5 min depois. */
@@ -85,35 +86,53 @@ function linkVi(notificacaoId: string): string | null {
 }
 
 /**
- * Manda o aviso de `n` para `para`, registrando o resultado na linha `idLinha` (o próprio
- * aviso, ou a linha do repasse). Mesmo e-mail nos dois casos; o repasse só acrescenta a
- * faixa que explica por que chegou.
+ * Manda o aviso de `n` para `para`, por e-mail e por push (os aparelhos que a pessoa
+ * ativou), registrando o resultado na linha `idLinha` (o próprio aviso, ou a linha do
+ * repasse). Mesmo aviso nos dois casos; o repasse só acrescenta o porquê.
+ *
+ * Conta como entregue se QUALQUER canal entregou: com o push no celular, a pessoa pode
+ * dar "Vi" pela notificação, e repassar na hora por causa do e-mail seria alarme falso.
+ * A falha do e-mail fica em `erro` mesmo assim.
  */
 async function enviarAviso(
   n: Aviso, idLinha: string, para: string,
   extra: { repassa?: boolean; repasse?: { de: string; minutos: number; falhou: boolean } },
-): Promise<boolean> {
-  let ok = false
+): Promise<{ ok: boolean; push: number }> {
+  const processo = n.proc_titulo ?? 'Processo monitorado'
+  const vi = linkVi(idLinha)
+  let emailOk = false
   let motivo: string | undefined
   try {
     const r = await enviarAlertaRadar({
-      to: para, processo: n.proc_titulo ?? 'Processo monitorado',
+      to: para, processo,
       autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
       categorias: n.categorias ?? [],
       quando: horaBrasilia(n.horario_origem),
       // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
       // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
       fonte: leituraDoConector(n.conector_id),
-      vi: linkVi(idLinha),
+      vi,
       ...extra,
     })
-    ok = r.enviado; motivo = r.motivo
+    emailOk = r.enviado; motivo = r.motivo
   } catch (e) { motivo = String(e) }
+
+  const r = extra.repasse
+  const push = await enviarPushPara(para, {
+    titulo: r ? `${r.falhou ? '⚠️ Aviso não entregue' : '⚠️ Sem resposta'}: ${processo}` : `🔔 ${processo}`,
+    corpo: `${n.autor ? `${n.autor}: ` : ''}${n.texto ?? ''}`,
+    url: n.link || `${siteUrl()}/radar`,
+    vi,
+    tag: `radar-${idLinha}`,
+    urgente: true,
+  })
+
+  const ok = emailOk || push.enviados > 0
   await query(
     `UPDATE radar_notificacoes SET status = $2, tentativas = tentativas + 1, erro = $3 WHERE id = $1`,
-    [idLinha, ok ? 'enviado' : 'falha', ok ? null : (motivo ?? 'falha')],
+    [idLinha, ok ? 'enviado' : 'falha', emailOk ? null : (motivo ?? 'falha')],
   )
-  return ok
+  return { ok, push: push.enviados }
 }
 
 /**
@@ -168,11 +187,14 @@ async function carregarEquipes(titulares: string[]): Promise<Map<string, MembroE
 }
 
 export async function runRadarNotify() {
-  // Sem chave de e-mail o job não mexe na fila. Antes, cada envio virava 'falha' sem
-  // tentativa nova: a fila inteira se perdia numa noite sem RESEND_API_KEY.
-  if (!process.env.RESEND_API_KEY) {
-    console.warn('[cron:radar-notify] RESEND_API_KEY não configurada — fila intacta')
-    return { ok: true as const, skipped: true, motivo: 'RESEND_API_KEY não configurada' }
+  // Cada canal vale por si. Sem NENHUM (nem RESEND_API_KEY nem chaves VAPID), o job não
+  // mexe na fila: antes, cada envio virava 'falha' sem tentativa nova e a fila inteira se
+  // perdia numa noite sem chave. Só com push, sai por push quem tem aparelho ativo; o
+  // aviso de quem não tem continua na fila, à espera do e-mail.
+  const emailAtivo = !!process.env.RESEND_API_KEY
+  if (!emailAtivo && !pushConfigurado()) {
+    console.warn('[cron:radar-notify] sem RESEND_API_KEY e sem chaves VAPID — fila intacta')
+    return { ok: true as const, skipped: true, motivo: 'nenhum canal configurado (e-mail ou push)' }
   }
   const inicio = Date.now()
 
@@ -225,91 +247,116 @@ export async function runRadarNotify() {
   // saem de uma consulta só. O que for enviado nesta rodada ainda está dentro do SLA.
   //   'enviado' sem "Vi" depois do SLA, dentro da janela; 'falha' de imediato (tem
   //   enviado_em) dentro da janela, sem esperar: ninguém recebeu.
-  // O limite em criado_em é o que usa o índice idx_radar_notif_repasse.
+  // O ESTADO DO REPASSE MORA NA LINHA esc:<id>, não num "desfazer" em memória: um aviso já
+  // marcado (escalonado_em) volta a ser candidato enquanto o repasse dele não chegou —
+  // linha esc ausente (a rodada caiu antes de criá-la) ou em 'falha' com tentativa
+  // sobrando. Assim qualquer queda no meio (exceção, worker reiniciado) é retomada na
+  // rodada seguinte; o 'enviando' que ficou para trás vira 'falha' no passo 0.
+  // Equipe de uma pessoa marca escalonado_em sem escalonado_para e não volta.
+  // O limite em criado_em é o que usa o índice idx_radar_notif_sem_vi.
   const semVi = await query<SemVi>(
     `SELECT ${COLUNAS_AVISO}, n.status, n.escalonado_para,
             round(EXTRACT(EPOCH FROM now() - n.enviado_em) / 60)::int AS minutos
        FROM radar_notificacoes n
        LEFT JOIN radar_mensagens m ON m.id = n.mensagem_id
        LEFT JOIN radar_processos p ON p.id = n.processo_id
-      WHERE n.canal = 'email' AND n.evento = 'nova_mensagem'
-        AND n.confirmado_em IS NULL AND n.escalonado_em IS NULL
+      WHERE n.canal = 'email' AND n.evento = 'nova_mensagem' AND n.confirmado_em IS NULL
         AND n.criado_em > now() - ($3 || ' hours')::interval
         AND n.enviado_em > now() - ($2 || ' hours')::interval
         AND (n.status = 'falha' OR (n.status = 'enviado' AND n.enviado_em < now() - ($1 || ' minutes')::interval))
+        AND (n.escalonado_em IS NULL
+             OR (n.escalonado_para IS NOT NULL AND NOT EXISTS (
+                   SELECT 1 FROM radar_notificacoes e
+                    WHERE e.id = 'esc:' || n.id AND (e.status <> 'falha' OR e.tentativas >= ${TENTATIVAS_REPASSE}))))
       ORDER BY n.enviado_em
       LIMIT ${LOTE}`,
     [String(SLA_ESCALONA_MIN), String(ESCALONA_JANELA_H), String(ESCALONA_JANELA_H + IMEDIATO_MAX_H)],
   )
   const equipes = await carregarEquipes([...new Set([...agora, ...semVi].map((n) => n.titular_id))])
+  // Sem e-mail, só dá para avisar quem tem push: o resto espera na fila (imediato) ou
+  // não é escolhido para o repasse.
+  const comPush = emailAtivo ? null : await pessoasComPush([...new Set([
+    ...agora.map((n) => n.destinatario),
+    ...[...equipes.values()].flat().map((m) => m.email),
+  ])])
+  const alcancavel = (pessoa: string) => comPush == null || comPush.has(pessoa.trim().toLowerCase())
 
-  let enviados = 0, falhas = 0
+  let enviados = 0, falhas = 0, push = 0, semCanal = 0
   const porDestinatario = new Map<string, number>()
   for (const n of agora) {
     const ja = porDestinatario.get(n.destinatario) ?? 0
     if (ja >= TETO_AGORA_POR_DESTINATARIO) continue
-    // Reivindica a linha antes de enviar: a rota manual pode rodar junto com o worker.
-    const meu = await query<{ id: string }>(
-      `UPDATE radar_notificacoes SET status = 'enviando', enviado_em = now()
-        WHERE id = $1 AND status = 'pendente' RETURNING id`,
-      [n.id],
-    )
-    if (!meu.length) continue
-    porDestinatario.set(n.destinatario, ja + 1)
-    const repassa = quemEscala({ destinatario: n.destinatario, responsavel: n.responsavel, equipe: equipes.get(n.titular_id) ?? [] }) != null
-    if (await enviarAviso(n, n.id, n.destinatario, { repassa })) enviados++; else falhas++
+    if (!alcancavel(n.destinatario)) { semCanal++; continue } // fica 'pendente' até o e-mail voltar
+    try {
+      // Reivindica a linha antes de enviar: a rota manual pode rodar junto com o worker.
+      const meu = await query<{ id: string }>(
+        `UPDATE radar_notificacoes SET status = 'enviando', enviado_em = now()
+          WHERE id = $1 AND status = 'pendente' RETURNING id`,
+        [n.id],
+      )
+      if (!meu.length) continue
+      porDestinatario.set(n.destinatario, ja + 1)
+      const repassa = quemEscala({ destinatario: n.destinatario, responsavel: n.responsavel, equipe: equipes.get(n.titular_id) ?? [] }) != null
+      const e = await enviarAviso(n, n.id, n.destinatario, { repassa })
+      if (e.ok) enviados++; else falhas++
+      push += e.push
+    } catch (e) {
+      // Uma linha com problema não derruba a rodada. Se ficou 'enviando', o passo 0 a
+      // transforma em 'falha' e o repasse a pega.
+      falhas++
+      console.warn(`[cron:radar-notify] aviso ${n.id} interrompido:`, e instanceof Error ? e.message : e)
+    }
   }
 
   // 3) Repasse.
   let repassados = 0, semEquipe = 0
   for (const n of semVi) {
-    const para = quemEscala({
-      destinatario: n.destinatario, preferido: n.escalonado_para, responsavel: n.responsavel,
-      equipe: equipes.get(n.titular_id) ?? [],
-    })
-    // Reivindica antes de enviar (a rota manual pode rodar junto): um repasse por aviso.
-    const meu = await query<{ id: string }>(
-      `UPDATE radar_notificacoes SET escalonado_em = now(), escalonado_para = $2
-        WHERE id = $1 AND escalonado_em IS NULL AND confirmado_em IS NULL RETURNING id`,
-      [n.id, para?.email ?? null],
-    )
-    if (!meu.length) continue
-    if (!para) { semEquipe++; continue } // equipe de uma pessoa: só marca
+    const equipe = equipes.get(n.titular_id) ?? []
+    const base = { destinatario: n.destinatario, preferido: n.escalonado_para, responsavel: n.responsavel }
+    const qualquer = quemEscala({ ...base, equipe })
+    const para = comPush ? quemEscala({ ...base, equipe: equipe.filter((m) => alcancavel(m.email) || alcancavel(m.id)) }) : qualquer
+    // Há para quem repassar, mas sem e-mail ninguém dali tem push: espera o canal voltar,
+    // sem marcar nada.
+    if (qualquer && !para) { semCanal++; continue }
+    try {
+      // Reivindica antes de enviar (a rota manual pode rodar junto). Quem cria a linha
+      // esc:<id> abaixo é quem envia; a outra rodada não consegue e pula.
+      const meu = await query<{ id: string }>(
+        `UPDATE radar_notificacoes SET escalonado_em = coalesce(escalonado_em, now()), escalonado_para = $2
+          WHERE id = $1 AND confirmado_em IS NULL RETURNING id`,
+        [n.id, para?.email ?? null],
+      )
+      if (!meu.length) continue
+      if (!para) { semEquipe++; continue } // equipe de uma pessoa: só marca
 
-    // A linha do repasse é criada uma vez; se o envio dela falhou numa rodada anterior,
-    // volta para 'enviando' aqui, até TENTATIVAS_REPASSE.
-    const idRepasse = `esc:${n.id}`
-    const vez = await query<{ id: string; tentativas: number }>(
-      `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status, enviado_em)
-       SELECT $1, titular_id, 'escalonamento', mensagem_id, processo_id, $2, 'email', assunto, link, 'enviando', now()
-         FROM radar_notificacoes WHERE id = $3
-       ON CONFLICT (id) DO UPDATE SET status = 'enviando', enviado_em = now(), destinatario = EXCLUDED.destinatario
-         WHERE radar_notificacoes.status = 'falha' AND radar_notificacoes.tentativas < ${TENTATIVAS_REPASSE}
-       RETURNING id, tentativas`,
-      [idRepasse, para.email, n.id],
-    )
-    if (!vez.length) continue
+      // Criada uma vez; se o envio falhou numa rodada anterior, volta a 'enviando' aqui,
+      // até TENTATIVAS_REPASSE. Linha em 'enviando' ou já 'enviado': não retorna nada.
+      const idRepasse = `esc:${n.id}`
+      const vez = await query<{ id: string }>(
+        `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status, enviado_em)
+         SELECT $1, titular_id, 'escalonamento', mensagem_id, processo_id, $2, 'email', assunto, link, 'enviando', now()
+           FROM radar_notificacoes WHERE id = $3
+         ON CONFLICT (id) DO UPDATE SET status = 'enviando', enviado_em = now(), destinatario = EXCLUDED.destinatario
+           WHERE radar_notificacoes.status = 'falha' AND radar_notificacoes.tentativas < ${TENTATIVAS_REPASSE}
+         RETURNING id`,
+        [idRepasse, para.email, n.id],
+      )
+      if (!vez.length) continue
 
-    const ok = await enviarAviso(n, idRepasse, para.email, {
-      repasse: { de: n.destinatario, minutos: n.minutos, falhou: n.status === 'falha' },
-    })
-    if (ok) repassados++
-    else {
+      const { ok, push: p } = await enviarAviso(n, idRepasse, para.email, {
+        repasse: { de: n.destinatario, minutos: n.minutos, falhou: n.status === 'falha' },
+      })
+      push += p
+      if (ok) repassados++; else falhas++ // 'falha' com tentativa sobrando: a seleção pega de novo
+      await query(
+        `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
+         VALUES ($1, 'escalonamento', 'radar_notificacoes', $2, $3::jsonb)`,
+        [n.titular_id, n.id, JSON.stringify({ para: para.email, automatico: true, enviado: ok, original_falhou: n.status === 'falha' })],
+      ).catch((e) => console.warn('[cron:radar-notify] auditoria do repasse:', e instanceof Error ? e.message : e))
+    } catch (e) {
       falhas++
-      // Sem nova chance esgotada, devolve o aviso à fila do repasse para a próxima rodada
-      // (a janela de ESCALONA_JANELA_H ainda limita). Mantém quem foi indicado à mão.
-      if (vez[0].tentativas + 1 < TENTATIVAS_REPASSE) {
-        await query(
-          `UPDATE radar_notificacoes SET escalonado_em = NULL, escalonado_para = $2 WHERE id = $1`,
-          [n.id, n.escalonado_para],
-        )
-      }
+      console.warn(`[cron:radar-notify] repasse de ${n.id} interrompido (retomado na próxima rodada):`, e instanceof Error ? e.message : e)
     }
-    await query(
-      `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
-       VALUES ($1, 'escalonamento', 'radar_notificacoes', $2, $3::jsonb)`,
-      [n.titular_id, n.id, JSON.stringify({ para: para.email, automatico: true, enviado: ok, original_falhou: n.status === 'falha' })],
-    )
   }
 
   const resultado = {
@@ -320,6 +367,7 @@ export async function runRadarNotify() {
     imediatos: agora.length,
     enviados, falhas,
     repassados, semEquipe,
+    push, semCanal,
   }
   if (resultado.expirados || resultado.pendentes || semVi.length) {
     console.log(`[cron:radar-notify] ${JSON.stringify(resultado)} em ${Date.now() - inicio}ms`)

@@ -168,10 +168,32 @@ CREATE TABLE IF NOT EXISTS radar_notificacoes (
 CREATE INDEX IF NOT EXISTS idx_radar_notif_pendente ON radar_notificacoes (status) WHERE status = 'pendente';
 CREATE INDEX IF NOT EXISTS idx_radar_notif_dest     ON radar_notificacoes (destinatario, status);
 CREATE INDEX IF NOT EXISTS idx_radar_notif_resumo   ON radar_notificacoes (destinatario) WHERE status = 'aguardando_resumo';
--- Repasse do aviso sem "Vi" (src/jobs/radarNotify.ts, passo 3), a cada 5 min: só os
--- avisos de e-mail ainda não confirmados nem repassados.
-CREATE INDEX IF NOT EXISTS idx_radar_notif_repasse  ON radar_notificacoes (criado_em)
-  WHERE canal = 'email' AND evento = 'nova_mensagem' AND confirmado_em IS NULL AND escalonado_em IS NULL;
+-- Aviso no celular (Web Push): uma linha por aparelho/navegador em que a pessoa ativou
+-- (src/lib/push.ts). O endpoint é a URL do serviço de push do navegador e identifica o
+-- aparelho. 404/410 do serviço = inscrição vencida: MARCA vencida_em e para de enviar,
+-- sem apagar — a renovação que o navegador fizer depois (substitui = este endpoint)
+-- precisa achá-la. Apagar é só quando a pessoa remove o aparelho.
+CREATE TABLE IF NOT EXISTS push_inscricoes (
+  endpoint      TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL,              -- usuarios.id de quem ativou
+  titular_id    TEXT NOT NULL,
+  p256dh        TEXT NOT NULL,
+  auth          TEXT NOT NULL,
+  aparelho      TEXT,                       -- "Chrome no Android", para a pessoa reconhecer
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ultimo_ok_em  TIMESTAMPTZ,
+  falhas        INT NOT NULL DEFAULT 0,
+  vencida_em    TIMESTAMPTZ                 -- 404/410 do serviço de push
+);
+CREATE INDEX IF NOT EXISTS idx_push_inscricoes_user ON push_inscricoes (user_id);
+
+-- Repasse do aviso sem "Vi" (src/jobs/radarNotify.ts, passo 3), a cada 5 min: os avisos
+-- de e-mail ainda não confirmados. Inclui os já marcados (escalonado_em), porque o
+-- repasse interrompido é retomado. Substitui idx_radar_notif_repasse (#55), que só
+-- cobria os não marcados.
+DROP INDEX IF EXISTS idx_radar_notif_repasse;
+CREATE INDEX IF NOT EXISTS idx_radar_notif_sem_vi   ON radar_notificacoes (criado_em)
+  WHERE canal = 'email' AND evento = 'nova_mensagem' AND confirmado_em IS NULL;
 
 -- Saúde do conector (requisito 4.2): distingue "verificado OK" de "não deu p/ verificar".
 -- `verificado_em` só avança em sync bem-sucedido; `tentado_em` marca toda tentativa.

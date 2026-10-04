@@ -15,6 +15,7 @@ import Topbar from '@/components/layout/Topbar'
 import { clsx } from 'clsx'
 import { ChevronLeft, X, Plus, Loader2, Check, AlertTriangle, Bell, Volume2, Mail, Monitor } from 'lucide-react'
 import { CONFIG_PADRAO, type ConfigRadar, type EscopoNotificacao } from '@/lib/radar/config'
+import AvisoCelular from '../components/AvisoCelular'
 
 interface Chave { id: string; padrao: string; prioridade: string }
 
@@ -236,7 +237,7 @@ export default function RadarConfiguracoesPage() {
                     <div>
                       <Marcar icone={<Monitor size={13} />} label="Notificação na área de trabalho (Push notification)"
                         checked={config.push} onChange={(v) => set('push', v)}
-                        dica="Aviso do sistema operacional, mesmo com a aba em segundo plano." />
+                        dica="Aviso do sistema com esta tela do Radar aberta, mesmo em segundo plano. Com o GovHealth fechado, use o Aviso no celular, abaixo." />
                       {config.push && permPush !== 'granted' && (
                         <div className="mt-1.5 ml-6 inline-flex items-center gap-1.5 bg-amber/10 border border-amber/30 rounded-md px-2.5 py-1.5">
                           <AlertTriangle size={12} className="text-amber flex-shrink-0" />
@@ -265,6 +266,8 @@ export default function RadarConfiguracoesPage() {
                   </div>
                 </div>
               </section>
+
+              <AvisoCelular />
 
               <p className="text-[11px] text-faint flex items-start gap-1.5">
                 <Bell size={12} className="flex-shrink-0 mt-0.5" />

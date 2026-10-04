@@ -38,6 +38,22 @@ globalThis.fetch = (async (url: string | URL | Request, init: RequestInit = {}) 
   return new Response(JSON.stringify({ id: `t${enviados.length}` }), { status: 200, headers: { 'content-type': 'application/json' } })
 }) as typeof fetch
 
+// Push: chaves VAPID de mentira e o envio trocado por um gravador. Nada sai da máquina.
+const webpush = (await import('web-push')).default
+const vapid = webpush.generateVAPIDKeys()
+process.env.VAPID_PUBLIC_KEY = vapid.publicKey
+process.env.VAPID_PRIVATE_KEY = vapid.privateKey
+const pushes: { endpoint: string; aviso: { titulo: string; corpo: string; vi?: string; url: string } }[] = []
+let pushFora = false
+let tentouVencido = 0
+webpush.sendNotification = (async (sub: { endpoint: string }, payload?: string | Buffer | null) => {
+  if (sub.endpoint.includes('vencido')) { tentouVencido++; throw Object.assign(new Error('gone'), { statusCode: 410 }) }
+  if (pushFora) throw Object.assign(new Error('falha simulada'), { statusCode: 500 })
+  pushes.push({ endpoint: sub.endpoint, aviso: JSON.parse(String(payload)) })
+  return { statusCode: 201, body: '', headers: {} }
+}) as unknown as typeof webpush.sendNotification
+const EP_MEMBRO = 'https://fcm.googleapis.com/fcm/send/membro'
+
 // Banco limpo + schema real.
 const admin = new pg.Client({ connectionString: URL_E2E })
 await admin.connect()
@@ -63,6 +79,11 @@ await query(`INSERT INTO usuarios (id, email, nome, senha_hash, empresa, cnpj)
 // A equipe do cliente tem mais uma pessoa (o repasse vai para ela); a do OUT é só ele.
 const MEM = 'membro@exemplo.com'
 await query(`INSERT INTO usuarios (id, email, nome, senha_hash, titular_id) VALUES ($1, $1, 'Membro', 'x', $2)`, [MEM, CLI])
+// O membro ativou o aviso no celular; o cliente tem uma inscrição que o navegador já descartou.
+await query(
+  `INSERT INTO push_inscricoes (endpoint, user_id, titular_id, p256dh, auth, aparelho)
+   VALUES ($1, $2, $3, 'k', 'a', 'Chrome no Android'), ('https://fcm.googleapis.com/fcm/send/vencido', $3, $3, 'k', 'a', 'antigo')`,
+  [EP_MEMBRO, MEM, CLI])
 const conector = (await query<{ id: string }>(`SELECT id FROM radar_conectores ORDER BY id LIMIT 1`))[0].id
 const proc = (id: string, titular: string, participando = false) =>
   query(`INSERT INTO radar_processos (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, participando, link_portal)
@@ -122,6 +143,10 @@ assert.equal(enviados.length, 5)
 assert.match(enviados[0].html, /Publicada no portal em \d{2}\/\d{2} às \d{2}:\d{2}/, 'o aviso diz quando a mensagem saiu')
 assert.match(enviados[0].html, /\/api\/radar\/vi\?t=[\w.-]+/, 'o aviso traz o botão "Vi"')
 assert.match(enviados[0].html, /vai para outra pessoa da equipe/, 'e avisa que repassa: a equipe tem mais alguém')
+assert.equal(pushes.length, 0, 'o cliente não tem aparelho válido')
+assert.equal((await query(`SELECT 1 FROM push_inscricoes WHERE endpoint LIKE '%vencido' AND vencida_em IS NOT NULL`)).length, 1,
+  'inscrição vencida (410) é marcada, não apagada: a renovação do navegador ainda precisa achá-la')
+assert.equal(tentouVencido, 1)
 
 await runRadarNotify()
 s = await status()
@@ -184,6 +209,11 @@ assert.equal(rr.semEquipe, 1, 'equipe de uma pessoa: marca, não manda')
 const repasse = enviados.slice(antesRepasse)
 assert.equal(repasse.length, 1)
 assert.equal(repasse[0].to, MEM, 'vai para o outro membro, não para quem já recebeu')
+assert.equal(pushes.length, 1, 'e chega no celular do membro')
+assert.equal(pushes[0].endpoint, EP_MEMBRO)
+assert.match(pushes[0].aviso.titulo, /^⚠️ Sem resposta: Pregão p-auto$/)
+assert.match(pushes[0].aviso.vi ?? '', /\/api\/radar\/vi\?t=/, 'a notificação tem o botão "Vi"')
+assert.equal(rr.push, 1)
 assert.match(repasse[0].subject, /^⚠️ Sem resposta — /)
 assert.match(repasse[0].html, /Ninguém confirmou este aviso em 2\d min\. Ele foi para cliente@exemplo\.com/)
 assert.match(repasse[0].html, /\/api\/radar\/vi\?t=/, 'o repasse também tem "Vi"')
@@ -212,13 +242,17 @@ await query(`UPDATE radar_notificacoes SET escalonado_para = $2 WHERE id = $1`, 
 const info = async (ids: string[]) => Object.fromEntries((await query<{ id: string; escalonado_em: string | null; escalonado_para: string | null }>(
   `SELECT id, escalonado_em, escalonado_para FROM radar_notificacoes WHERE id = ANY($1::text[])`, [ids])).map((r) => [r.id, r]))
 
-resendFalha = true // Resend fora do ar: os dois repasses falham
+resendFalha = true; pushFora = true // e-mail e push fora do ar: os dois repasses falham
 const fora = await runRadarNotify()
+pushFora = false
 assert.equal(fora.repassados, 0)
 assert.equal(fora.falhas, 2)
 let est = await info([naoChegou, indicado])
-assert.equal(est[naoChegou].escalonado_em, null, 'repasse que falhou volta para a fila')
-assert.equal(est[indicado].escalonado_em, null)
+// O estado do repasse mora na linha esc:<id>: 'falha' com tentativa sobrando = candidato de novo.
+const escEst = async (id: string) => (await query<{ status: string; tentativas: number }>(
+  `SELECT status, tentativas FROM radar_notificacoes WHERE id = $1`, [`esc:${id}`]))[0]
+assert.deepEqual(await escEst(naoChegou), { status: 'falha', tentativas: 1 }, 'repasse que falhou fica para a próxima rodada')
+assert.deepEqual(await escEst(indicado), { status: 'falha', tentativas: 1 })
 assert.equal(est[indicado].escalonado_para, MEM2, 'e guarda quem foi indicado à mão')
 resendFalha = false
 const antesVolta = enviados.length
@@ -240,7 +274,102 @@ assert.match(await (await GET(new NextRequest(`http://localhost/api/radar/vi?t=$
 const fd5 = new FormData(); fd5.set('t', tkRep)
 assert.match(await (await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd5 }))).text(),
   /já tinha sido repassado para membro2@exemplo\.com/)
-assert.equal((await query(`SELECT 1 FROM pg_indexes WHERE indexname = 'idx_radar_notif_repasse'`)).length, 1, 'índice do repasse')
+const indices = (await query<{ n: string }>(`SELECT indexname AS n FROM pg_indexes WHERE indexname LIKE 'idx_radar_notif_%'`)).map((r) => r.n)
+assert.ok(indices.includes('idx_radar_notif_sem_vi'), 'índice do repasse')
+assert.ok(!indices.includes('idx_radar_notif_repasse'), 'o índice antigo (#55) é trocado')
+
+// ── e-mail fora, push no ar: o aviso chegou, não é repassado na hora ──────────────
+await query(`INSERT INTO push_inscricoes (endpoint, user_id, titular_id, p256dh, auth) VALUES ('https://fcm.googleapis.com/fcm/send/cliente', $1, $1, 'k', 'a')`, [CLI])
+const soPush = await notif({ titular: CLI, proc: 'p-auto', texto: CITA })
+resendFalha = true
+const antesPush = pushes.length
+await runRadarNotify()
+resendFalha = false
+const linhaPush = (await query<{ status: string; erro: string | null }>(`SELECT status, erro FROM radar_notificacoes WHERE id = $1`, [soPush]))[0]
+assert.equal(linhaPush.status, 'enviado', 'push entregou: conta como enviado')
+assert.ok(linhaPush.erro, 'mas a falha do e-mail fica registrada')
+assert.equal(pushes.slice(antesPush).filter((p) => p.endpoint.endsWith('/cliente')).length, 1)
+assert.match(pushes[pushes.length - 1].aviso.titulo, /^🔔 Pregão p-auto$/)
+
+// ── repasse interrompido no meio é retomado (revisão da #56) ──────────────────────
+// a) a rodada caiu depois de marcar o aviso e antes de criar a linha do repasse
+const caiuAntes = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 30 })
+await query(`UPDATE radar_notificacoes SET escalonado_em = now() - interval '10 minutes', escalonado_para = $2 WHERE id = $1`, [caiuAntes, MEM])
+// b) caiu com o repasse em 'enviando' (worker reiniciado no meio do envio)
+const caiuEnviando = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 40 })
+await query(`UPDATE radar_notificacoes SET escalonado_em = now() - interval '20 minutes', escalonado_para = $2 WHERE id = $1`, [caiuEnviando, MEM])
+const linhaEsc = (id: string, status: string, haMin: number) => query(
+  `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, status, enviado_em)
+   SELECT 'esc:' || id, titular_id, 'escalonamento', mensagem_id, processo_id, $2, 'email', $3, now() - ($4 || ' minutes')::interval
+     FROM radar_notificacoes WHERE id = $1`, [id, MEM, status, String(haMin)])
+await linhaEsc(caiuEnviando, 'enviando', 20)
+// c) já repassado com sucesso: não repete
+const jaFoi = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 50 })
+await query(`UPDATE radar_notificacoes SET escalonado_em = now() - interval '30 minutes', escalonado_para = $2 WHERE id = $1`, [jaFoi, MEM])
+await linhaEsc(jaFoi, 'enviado', 30)
+const antesRet = enviados.length
+const ret = await runRadarNotify()
+assert.equal(ret.repassados, 2, 'os dois interrompidos são retomados; o que já foi, não')
+assert.deepEqual(enviados.slice(antesRet).map((e) => e.to), [MEM, MEM])
+assert.equal((await escEst(caiuAntes)).status, 'enviado')
+assert.equal((await escEst(caiuEnviando)).status, 'enviado')
+assert.equal((await runRadarNotify()).repassados, 0, 'e não repetem')
+
+// ── conta suspensa não recebe push (revisão da #56) ───────────────────────────────
+const { enviarPushPara } = await import('../../src/lib/push')
+const teste = { titulo: 't', corpo: 'c', url: '/' }
+await query(`UPDATE usuarios SET suspenso = true WHERE id = $1`, [MEM])
+assert.equal((await enviarPushPara(MEM, teste)).enviados, 0, 'suspensa: nada sai, na hora')
+await query(`UPDATE usuarios SET suspenso = false WHERE id = $1`, [MEM])
+assert.equal((await enviarPushPara(MEM, teste)).enviados, 1, 'reativada: volta a receber')
+
+// ── só push, sem e-mail (revisão da #56) ──────────────────────────────────────────
+await proc('p-out2', OUT, true)
+const comAparelho = await notif({ titular: CLI, proc: 'p-auto', texto: CITA })
+const semAparelho = await notif({ titular: OUT, proc: 'p-out2', texto: 'Prazo de 2 horas para a proposta ajustada' })
+const chaveResend = process.env.RESEND_API_KEY
+delete process.env.RESEND_API_KEY
+const emailsAntes = enviados.length, pushAntes = pushes.length
+const sp = await runRadarNotify()
+assert.ok(!('skipped' in sp), 'com push ligado, o job roda sem o e-mail')
+assert.equal(sp.semCanal, 1, 'quem não tem aparelho espera o e-mail voltar')
+const st2 = await status()
+assert.equal(st2[comAparelho], 'enviado', 'saiu por push')
+assert.equal(st2[semAparelho], 'pendente', 'continua na fila, intacto')
+assert.equal(enviados.length, emailsAntes, 'nenhum e-mail sem a chave')
+assert.equal(pushes.slice(pushAntes).filter((p) => p.endpoint.endsWith('/cliente')).length, 1)
+const vapidPub = process.env.VAPID_PUBLIC_KEY
+delete process.env.VAPID_PUBLIC_KEY
+assert.equal((await runRadarNotify() as { skipped?: boolean }).skipped, true, 'sem nenhum canal, nada é tocado')
+process.env.VAPID_PUBLIC_KEY = vapidPub
+process.env.RESEND_API_KEY = chaveResend
+assert.equal((await runRadarNotify()).enviados, 1, 'com o e-mail de volta, o que esperava sai')
+
+// ── renovação da inscrição pela rota, com sessão de verdade (revisão da #56) ─────
+const { encode } = await import('next-auth/jwt')
+const sessao = await encode({ token: { id: MEM, sub: MEM, email: MEM }, secret: process.env.NEXTAUTH_SECRET! })
+const rotaPush = await import('../../src/app/api/push/route')
+const pedido = (metodo: string, corpo: object, comSessao = true) => new NextRequest('http://localhost/api/push', {
+  method: metodo, body: JSON.stringify(corpo),
+  headers: { 'content-type': 'application/json', ...(comSessao ? { cookie: `next-auth.session-token=${sessao}` } : {}) },
+})
+const inscr = (ep: string) => ({ endpoint: ep, keys: { p256dh: 'BPkx', auth: 'autz' } })
+const FCM = 'https://fcm.googleapis.com/fcm/send/'
+const doMembro = async () => (await query<{ endpoint: string }>(
+  `SELECT endpoint FROM push_inscricoes WHERE user_id = $1 AND vencida_em IS NULL ORDER BY endpoint`, [MEM])).map((r) => r.endpoint)
+assert.equal((await rotaPush.POST(pedido('POST', { subscription: inscr(`${FCM}m2`), substitui: EP_MEMBRO }))).status, 200, 'renova a partir da conhecida')
+assert.deepEqual(await doMembro(), [`${FCM}m2`], 'a antiga sai, a nova entra')
+assert.equal((await rotaPush.POST(pedido('POST', { subscription: inscr(`${FCM}m2`), substitui: EP_MEMBRO }))).status, 200,
+  'o service worker chegou antes: a conferência do app não falha')
+await rotaPush.DELETE(pedido('DELETE', { endpoint: `${FCM}m2` }))
+assert.equal((await rotaPush.POST(pedido('POST', { subscription: inscr(`${FCM}m3`), substitui: `${FCM}m2` }))).status, 409,
+  'aparelho removido pela lista não volta sozinho')
+await query(`INSERT INTO push_inscricoes (endpoint, user_id, titular_id, p256dh, auth, vencida_em) VALUES ($1, $2, $3, 'k', 'a', now())`, [`${FCM}velho`, MEM, CLI])
+assert.equal((await rotaPush.POST(pedido('POST', { subscription: inscr(`${FCM}m4`), substitui: `${FCM}velho` }))).status, 200,
+  'renovação depois do 410 é aceita')
+assert.deepEqual(await doMembro(), [`${FCM}m4`])
+assert.equal((await rotaPush.POST(pedido('POST', { subscription: inscr('https://atacante.com/x') }))).status, 400, 'só serviço de push')
+assert.equal((await rotaPush.POST(pedido('POST', { subscription: inscr(`${FCM}m5`) }, false))).status, 401, 'sem sessão')
 
 console.log(`OK: ${enviados.length} e-mails gerados, todos interceptados`)
 process.exit(0)

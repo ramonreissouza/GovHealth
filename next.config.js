@@ -83,6 +83,9 @@ const nextConfig = {
     ]
     return [
       { source: '/:path*', headers: securityHeaders },
+      // Service worker do aviso por push: o navegador precisa ver a versão nova a cada
+      // deploy, não a do cache.
+      { source: '/sw.js', headers: [{ key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' }] },
       {
         // CORS restrito à própria origem da app (antes era "*", permissivo demais).
         // As rotas já são protegidas por auth (middleware); isto reforça a fronteira.

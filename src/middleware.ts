@@ -47,7 +47,9 @@ export async function middleware(req: NextRequest) {
   // ── Arquivos estáticos públicos (logo, screenshots, fontes, etc.) ────────────
   // Devem ser acessíveis SEM auth — inclusive por crawlers sociais (OG) e clientes
   // de e-mail (logo). Sem isso, o middleware os redireciona para /login.
-  if (/\.(png|jpe?g|svg|gif|webp|avif|ico|bmp|woff2?|ttf|otf|txt|xml|json|map|css|js)$/i.test(pathname)) {
+  // O manifesto do app instalável (/manifest.webmanifest) e o service worker (/sw.js)
+  // entram aqui: o navegador os pede sem sessão.
+  if (/\.(png|jpe?g|svg|gif|webp|avif|ico|bmp|woff2?|ttf|otf|txt|xml|json|map|css|js|webmanifest)$/i.test(pathname)) {
     return NextResponse.next()
   }
 
