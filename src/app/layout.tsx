@@ -5,6 +5,7 @@ import './globals.css'
 import SessionProvider from '@/components/providers/SessionProvider'
 import QueryProvider from '@/components/providers/QueryProvider'
 import NotificationsWatcher from '@/components/NotificationsWatcher'
+import PushReconcilia from '@/components/PushReconcilia'
 import PageViewTracker from '@/components/PageViewTracker'
 import FeedbackWidget from '@/components/feedback/FeedbackWidget'
 
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <QueryProvider>
           <SessionProvider>
           <NotificationsWatcher />
+          <PushReconcilia />
           <PageViewTracker />
           {children}
           <FeedbackWidget />

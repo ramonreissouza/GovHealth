@@ -57,6 +57,32 @@ export interface AvisoPush {
 
 interface Inscricao { endpoint: string; p256dh: string; auth: string }
 
+/** A conta (alias `u`) pode receber aviso, nem apagada nem suspensa, e a inscrição
+ *  (alias `p`) não venceu. */
+const CONTA_ATIVA = 'u.deleted_at IS NULL AND NOT u.suspenso AND p.vencida_em IS NULL'
+
+/**
+ * Quem, dentre `pessoas` (e-mails ou ids de conta), tem ao menos um aparelho com push
+ * e conta ativa. Devolve as chaves em minúsculas (e-mail e id). Serve ao job para saber
+ * quem ainda pode ser avisado quando o e-mail está fora.
+ */
+export async function pessoasComPush(pessoas: string[]): Promise<Set<string>> {
+  const r = new Set<string>()
+  if (!pushConfigurado() || !pessoas.length) return r
+  try {
+    const rows = await query<{ id: string; email: string }>(
+      `SELECT DISTINCT u.id, u.email
+         FROM push_inscricoes p JOIN usuarios u ON u.id = p.user_id
+        WHERE (lower(u.email) = ANY($1::text[]) OR u.id = ANY($1::text[])) AND ${CONTA_ATIVA}`,
+      [pessoas.map((p) => p.trim().toLowerCase())],
+    )
+    for (const x of rows) { r.add(x.id.toLowerCase()); r.add(x.email.toLowerCase()) }
+  } catch (e) {
+    console.warn('[push] inscrições indisponíveis:', e instanceof Error ? e.message : e)
+  }
+  return r
+}
+
 let vapidPronto = false
 function prepararVapid() {
   if (vapidPronto) return
@@ -69,7 +95,7 @@ function prepararVapid() {
 
 /**
  * Manda o aviso para todos os aparelhos de uma pessoa (pelo e-mail ou id da conta).
- * Inscrição vencida (404/410) é apagada; outra falha só conta, para a tela mostrar.
+ * Inscrição vencida (404/410) é marcada e sai dos envios; outra falha só conta.
  * Nunca lança: push é canal a mais, não pode derrubar o envio do e-mail.
  */
 export async function enviarPushPara(pessoa: string, aviso: AvisoPush): Promise<{ enviados: number; removidos: number; falhas: number }> {
@@ -77,10 +103,12 @@ export async function enviarPushPara(pessoa: string, aviso: AvisoPush): Promise<
   if (!pushConfigurado()) return r
   let inscricoes: Inscricao[]
   try {
+    // Conta suspensa ou apagada não recebe mais nada, na hora: o aviso leva texto do
+    // pregão. As inscrições ficam no banco e voltam a valer se a conta for reativada.
     inscricoes = await query<Inscricao>(
       `SELECT p.endpoint, p.p256dh, p.auth
          FROM push_inscricoes p JOIN usuarios u ON u.id = p.user_id
-        WHERE (lower(u.email) = lower($1) OR u.id = lower($1)) AND u.deleted_at IS NULL`,
+        WHERE (lower(u.email) = lower($1) OR u.id = lower($1)) AND ${CONTA_ATIVA}`,
       [pessoa],
     )
   } catch (e) {
@@ -103,8 +131,9 @@ export async function enviarPushPara(pessoa: string, aviso: AvisoPush): Promise<
     } catch (e) {
       const status = (e as { statusCode?: number }).statusCode
       if (status === 404 || status === 410) {
+        // Marca, não apaga: a renovação do navegador ainda precisa achar este endpoint.
         r.removidos++
-        await query(`DELETE FROM push_inscricoes WHERE endpoint = $1`, [s.endpoint]).catch(() => {})
+        await query(`UPDATE push_inscricoes SET vencida_em = now() WHERE endpoint = $1`, [s.endpoint]).catch(() => {})
       } else {
         r.falhas++
         console.warn('[push] falha no envio:', status ?? (e instanceof Error ? e.message : e))

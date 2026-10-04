@@ -10,29 +10,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { clsx } from 'clsx'
 import { Smartphone, Loader2, Check, AlertTriangle, Send } from 'lucide-react'
+import { chaveBytes, registrarNoServidor, salvarEndpoint } from '@/lib/push-cliente'
 
 type Estado = 'carregando' | 'sem-suporte' | 'iphone-instalar' | 'servidor-desligado' | 'bloqueado' | 'inativo' | 'ativo'
 
 interface Aparelho { endpoint: string; aparelho: string | null; criado_em: string; ultimo_ok_em: string | null }
-
-/** Chave VAPID (base64url) → bytes, como o PushManager pede. */
-function chaveBytes(b64: string): Uint8Array<ArrayBuffer> {
-  const pad = '='.repeat((4 - (b64.length % 4)) % 4)
-  const bruto = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'))
-  const out = new Uint8Array(new ArrayBuffer(bruto.length))
-  for (let i = 0; i < bruto.length; i++) out[i] = bruto.charCodeAt(i)
-  return out
-}
-
-/** "Chrome no Android": para a pessoa reconhecer o aparelho na lista. */
-function nomeAparelho(): string {
-  const ua = navigator.userAgent
-  const so = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
-    : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'aparelho'
-  const nav = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
-    : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Navegador'
-  return `${nav} no ${so}`
-}
 
 const data = (v: string) => new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
@@ -75,11 +57,10 @@ export default function AvisoCelular() {
       await navigator.serviceWorker.ready
       const sub = await reg.pushManager.getSubscription()
         ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chaveBytes(chave) })
-      const r = await fetch('/api/push', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription: sub.toJSON(), aparelho: nomeAparelho() }),
-      })
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'falha')
+      // Ativar é explícito: sem `substitui`, o servidor aceita mesmo um aparelho que
+      // tinha sido removido. A partir daqui o aparelho guarda o endpoint, e a conferência
+      // ao abrir o app (PushReconcilia) acompanha as renovações do navegador.
+      if (await registrarNoServidor(sub) !== 'ok') throw new Error('o servidor não aceitou a inscrição')
       setMsg({ ok: true, texto: 'Ativado. Mande um aviso de teste para conferir.' })
       await atualizar()
     } catch (e) {
@@ -93,6 +74,7 @@ export default function AvisoCelular() {
       if (endpoint === endpointAqui) {
         const reg = await navigator.serviceWorker.getRegistration('/')
         await (await reg?.pushManager.getSubscription())?.unsubscribe()
+        salvarEndpoint(null)
       }
       await fetch('/api/push', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint }) })
       await atualizar()

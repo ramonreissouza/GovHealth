@@ -43,21 +43,30 @@ self.addEventListener('notificationclick', (e) => {
   e.waitUntil(self.clients.openWindow(vi || url || '/radar'))
 })
 
-// O navegador pode trocar a inscrição sozinho (chave renovada, dados limpos). Sem isto,
-// o aparelho para de receber sem ninguém saber.
+// O navegador pode trocar a inscrição sozinho (chave renovada, dados limpos). Aqui é a
+// tentativa rápida: avisa o servidor da troca, mandando a antiga em `substitui` (o
+// servidor só aceita se a antiga ainda for da pessoa). Se não der — sessão vencida
+// (401), sem rede, navegador que não informa a antiga —, nada se perde: ao abrir o app
+// logado, src/components/PushReconcilia.tsx compara a inscrição do navegador com a que
+// o servidor conhece e refaz o registro.
 self.addEventListener('pushsubscriptionchange', (e) => {
   e.waitUntil((async () => {
-    const r = await fetch('/api/push')
-    if (!r.ok) return
-    const { chave } = await r.json()
-    if (!chave) return
-    const pad = '='.repeat((4 - (chave.length % 4)) % 4)
-    const bruto = atob((chave + pad).replace(/-/g, '+').replace(/_/g, '/'))
-    const applicationServerKey = Uint8Array.from(bruto, (c) => c.charCodeAt(0))
-    const sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })
+    const antiga = e.oldSubscription ? e.oldSubscription.endpoint : null
+    if (!antiga) return
+    let sub = e.newSubscription
+    if (!sub) {
+      const r = await fetch('/api/push')
+      if (!r.ok) return
+      const { chave } = await r.json()
+      if (!chave) return
+      const pad = '='.repeat((4 - (chave.length % 4)) % 4)
+      const bruto = atob((chave + pad).replace(/-/g, '+').replace(/_/g, '/'))
+      const applicationServerKey = Uint8Array.from(bruto, (c) => c.charCodeAt(0))
+      sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })
+    }
     await fetch('/api/push', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subscription: sub.toJSON(), aparelho: 'renovado pelo navegador' }),
+      body: JSON.stringify({ subscription: sub.toJSON(), aparelho: 'renovado pelo navegador', substitui: antiga }),
     })
-  })())
+  })().catch(() => {}))
 })
