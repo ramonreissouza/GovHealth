@@ -54,9 +54,9 @@
 //     página — o risco de duplicar vale mais do que o que se ganha. Com a flag, a
 //     ferramenta avisa em voz alta antes de tocar nelas.
 //
-// NÃO DISPARA E-MAIL. As notificações vão com o status que tinham. Hoje isso é inócuo
-// porque ninguém agenda `/api/cron/radar-notify`; se um dia agendarem, os pendentes
-// deste delta entram na fila junto com os do dia.
+// NÃO DISPARA E-MAIL. As notificações vão com o status que tinham. Desde 02/10/2026 o
+// worker entrega a fila (src/jobs/radarNotify.ts), mas pendente com mais de 48 h expira
+// sem envio — um delta antigo chega à fila e morre lá, sem virar e-mail atrasado.
 
 import { novoPool } from './lib/pg-ssl.mjs'
 

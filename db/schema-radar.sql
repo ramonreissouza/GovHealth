@@ -153,7 +153,10 @@ CREATE TABLE IF NOT EXISTS radar_notificacoes (
   assunto         TEXT,
   corpo           TEXT,
   link            TEXT,
-  status          TEXT NOT NULL DEFAULT 'pendente',  -- pendente|enviado|entregue|falha
+  status          TEXT NOT NULL DEFAULT 'pendente',
+    -- pendente|enviando|enviado|falha (imediato) · aguardando_resumo|resumindo|resumido
+    -- (resumo do dia) · expirado (>48 h na fila) · entregue (lido na tela).
+    -- Quem decide o caminho é src/jobs/radarNotify.ts.
   tentativas      INT NOT NULL DEFAULT 0,
   enviado_em      TIMESTAMPTZ,
   confirmado_em   TIMESTAMPTZ,              -- leitura confirmada
@@ -164,6 +167,7 @@ CREATE TABLE IF NOT EXISTS radar_notificacoes (
 );
 CREATE INDEX IF NOT EXISTS idx_radar_notif_pendente ON radar_notificacoes (status) WHERE status = 'pendente';
 CREATE INDEX IF NOT EXISTS idx_radar_notif_dest     ON radar_notificacoes (destinatario, status);
+CREATE INDEX IF NOT EXISTS idx_radar_notif_resumo   ON radar_notificacoes (destinatario) WHERE status = 'aguardando_resumo';
 
 -- Saúde do conector (requisito 4.2): distingue "verificado OK" de "não deu p/ verificar".
 -- `verificado_em` só avança em sync bem-sucedido; `tentado_em` marca toda tentativa.

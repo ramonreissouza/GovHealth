@@ -54,34 +54,6 @@ function brl(v?: number | null): string {
 }
 
 /**
- * RADAR — Alerta de NOVA LICITAÇÃO relevante ao perfil do fornecedor.
- * Disparado pela seleção automática (lib/radar/selecao) quando surge um processo
- * que casa com as preferências (UFs/categorias/termos/portfólio).
- */
-export async function enviarNovaLicitacaoRadar(params: {
-  to: string; nome?: string | null; objeto: string; uf?: string | null; municipio?: string | null;
-  valor?: number | null; motivo?: string | null; link: string
-}): Promise<{ enviado: boolean; motivo?: string }> {
-  // TUDO que vem de terceiro passa por `escaparHtml`. Este é o e-mail de MAIOR volume
-  // do Radar — sai a cada licitação nova que casa com o perfil, para todo tenant — e
-  // interpolava `objeto_compra` cru, texto livre publicado pelo órgão. Medido: 41
-  // contratações já têm `<` no objeto, e um `<a href="…">` ali chega como link clicável
-  // pelo mesmo caminho que o alerta de mensagem acabou de fechar.
-  const local = [params.municipio, params.uf].filter(Boolean).join(' / ')
-  const corpo = `
-    <p style="font-size:14px;color:#334155;margin:0 0 12px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}o Radar encontrou uma <strong>nova licitação</strong> que combina com o seu perfil:</p>
-    <table style="width:100%;font-size:13px;color:#334155;border-collapse:collapse;margin:0 0 8px;">
-      <tr><td style="padding:4px 0;color:#64748b;width:90px;">Objeto</td><td style="padding:4px 0;font-weight:600;">${escaparHtml(params.objeto) || '—'}</td></tr>
-      ${local ? `<tr><td style="padding:4px 0;color:#64748b;">Local</td><td style="padding:4px 0;">${escaparHtml(local)}</td></tr>` : ''}
-      <tr><td style="padding:4px 0;color:#64748b;">Valor est.</td><td style="padding:4px 0;">${brl(params.valor)}</td></tr>
-      ${params.motivo ? `<tr><td style="padding:4px 0;color:#64748b;">Combinou por</td><td style="padding:4px 0;">${escaparHtml(params.motivo)}</td></tr>` : ''}
-    </table>
-    ${btn(params.link, 'Ver a licitação')}
-    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Você recebe este alerta porque a licitação corresponde às preferências do seu perfil no GovHealth. Ajuste-as em Perfil & Preferências.</p>`
-  return enviar(params.to, `📡 Nova licitação para o seu perfil`, moldura('Nova licitação no Radar', corpo))
-}
-
-/**
  * Escapa texto para interpolação segura em HTML de e-mail.
  *
  * A REGRA, para não voltar a viver só na cabeça de quem escreveu: TODO conteúdo de
@@ -109,7 +81,8 @@ function escaparHtml(s: string): string {
 
 /**
  * RADAR — Alerta de novidade em processo monitorado.
- * Disparado pela captura (worker) → cron radar-notify.
+ * Enfileirado pela captura, entregue pelo job radar-notify (src/jobs/radarNotify.ts)
+ * só quando a mensagem cita a empresa do cliente; o resto vai em `enviarResumoRadar`.
  *
  * `fonte` escolhe o SUJEITO da frase. Nem todo portal tem chat: o Licitações-e não tem
  * mensageria pública, e o que monitoramos nele é o dossiê. Dizer "nova mensagem no
@@ -119,6 +92,9 @@ function escaparHtml(s: string): string {
 export async function enviarAlertaRadar(params: {
   to: string; nome?: string | null; processo: string; autor?: string | null; trecho: string;
   categorias?: string[]; link: string; fonte?: 'chat' | 'dossie'
+  /** "02/10 às 14:05" (Brasília): quando a mensagem saiu no portal, para ninguém tratar
+   *  um aviso atrasado como prazo correndo agora. */
+  quando?: string | null
 }): Promise<{ enviado: boolean; motivo?: string }> {
   const dossie = params.fonte === 'dossie'
   const oQue = dossie ? 'nova peça' : 'nova mensagem'
@@ -134,6 +110,7 @@ export async function enviarAlertaRadar(params: {
   const corpo = `
     <p style="font-size:14px;color:#334155;margin:0 0 10px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}há uma <strong>${oQue}</strong> ${onde} <strong>${escaparHtml(params.processo)}</strong>${params.autor ? ` (${escaparHtml(params.autor)})` : ''}:</p>
     ${tags}
+    ${params.quando ? `<p style="font-size:12px;color:#64748b;margin:0 0 6px;">Publicada no portal em ${escaparHtml(params.quando)} (horário de Brasília).</p>` : ''}
     <blockquote style="margin:0 0 12px;padding:10px 14px;background:#f8fafc;border-left:3px solid #2f80ed;font-size:13px;color:#334155;">${escaparHtml(params.trecho)}</blockquote>
     ${btn(params.link, 'Abrir no Radar')}
     <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">${rodape}</p>`
@@ -142,6 +119,62 @@ export async function enviarAlertaRadar(params: {
   // Medido na base: 3.196 objetos com `"`, 1.143 com `'`, 503 com `&` chegariam como
   // `&quot;`, `&#39;`, `&amp;`. O corpo continua precisando do escape; o assunto, não.
   return enviar(params.to, `🔔 ${dossie ? 'Nova peça' : 'Nova mensagem'} — ${params.processo}`, moldura(titulo, corpo))
+}
+
+export interface ResumoRadarProcesso {
+  titulo: string; link: string; total: number
+  mensagens: { autor?: string | null; trecho: string; urgente: boolean }[]
+}
+export interface ResumoRadarLicitacao { objeto: string; local?: string | null; valor?: number | null; link: string }
+
+/**
+ * RADAR — Resumo do dia: UM e-mail por destinatário com tudo o que não precisava sair
+ * na hora (ver src/lib/radar/entrega.ts). Substitui o e-mail-por-mensagem, que daria
+ * 81 e-mails por dia a cada pessoa.
+ *
+ * Todo texto de terceiro passa por `escaparHtml`, como nos outros alertas do Radar.
+ */
+export async function enviarResumoRadar(params: {
+  to: string
+  processos: ResumoRadarProcesso[]; processosOmitidos: number; mensagensTotal: number
+  licitacoes: ResumoRadarLicitacao[]; licitacoesOmitidas: number
+}): Promise<{ enviado: boolean; motivo?: string }> {
+  const { processos, licitacoes } = params
+  const blocoProcessos = processos.length ? `
+    <h2 style="font-size:15px;color:#0f172a;margin:4px 0 8px;">Mensagens nos pregões que o Radar acompanha</h2>
+    ${processos.map((p) => `
+      <div style="margin:0 0 14px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:10px;">
+        <p style="margin:0 0 6px;font-size:13px;color:#0f172a;font-weight:600;">${escaparHtml(p.titulo)}
+          <span style="font-weight:400;color:#64748b;">· ${p.total} ${p.total === 1 ? 'mensagem' : 'mensagens'}</span></p>
+        ${p.mensagens.map((m) => `
+          <p style="margin:0 0 6px;font-size:12.5px;color:#334155;">${m.urgente ? '<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:999px;margin-right:4px;">urgente</span>' : ''}${m.autor ? `<span style="color:#64748b;">${escaparHtml(m.autor)}:</span> ` : ''}${escaparHtml(m.trecho)}</p>`).join('')}
+        ${p.link ? `<a href="${escaparHtml(p.link)}" style="font-size:12px;color:#2f80ed;text-decoration:none;">Abrir no portal</a>` : ''}
+      </div>`).join('')}
+    ${params.processosOmitidos ? `<p style="font-size:12px;color:#64748b;margin:0 0 12px;">E mais ${params.processosOmitidos} ${params.processosOmitidos === 1 ? 'pregão' : 'pregões'} com mensagens novas no Radar.</p>` : ''}` : ''
+
+  const blocoLicitacoes = licitacoes.length ? `
+    <h2 style="font-size:15px;color:#0f172a;margin:18px 0 8px;">Licitações novas para o seu perfil</h2>
+    <table style="width:100%;font-size:12.5px;color:#334155;border-collapse:collapse;">
+      ${licitacoes.map((l) => `
+        <tr><td style="padding:6px 0;border-bottom:1px solid #eef2f7;">
+          <a href="${escaparHtml(l.link)}" style="color:#0f172a;font-weight:600;text-decoration:none;">${escaparHtml(l.objeto) || '—'}</a>
+          <br><span style="color:#64748b;">${[l.local ? escaparHtml(l.local) : '', l.valor != null ? brl(l.valor) : ''].filter(Boolean).join(' · ')}</span>
+        </td></tr>`).join('')}
+    </table>
+    ${params.licitacoesOmitidas ? `<p style="font-size:12px;color:#64748b;margin:8px 0 0;">E mais ${params.licitacoesOmitidas} no Radar.</p>` : ''}` : ''
+
+  const corpo = `
+    <p style="font-size:14px;color:#334155;margin:0 0 14px;">O que chegou ao Radar nas últimas 24 horas e não precisava de aviso imediato. Mensagens que citam a sua empresa, e as urgentes dos pregões em que você marcou "Estou participando", chegam na hora, em e-mail separado.</p>
+    ${blocoProcessos}
+    ${blocoLicitacoes}
+    ${btn(`${appUrl()}/radar`, 'Abrir o Radar')}
+    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Você recebe este resumo uma vez por dia porque o Radar acompanha pregões do seu perfil no GovHealth.</p>`
+
+  const partes = [
+    params.mensagensTotal ? `${params.mensagensTotal} ${params.mensagensTotal === 1 ? 'mensagem' : 'mensagens'}` : '',
+    licitacoes.length + params.licitacoesOmitidas ? `${licitacoes.length + params.licitacoesOmitidas} ${licitacoes.length + params.licitacoesOmitidas === 1 ? 'licitação nova' : 'licitações novas'}` : '',
+  ].filter(Boolean)
+  return enviar(params.to, `📡 Radar — resumo do dia: ${partes.join(' e ')}`, moldura('Resumo do dia no Radar', corpo))
 }
 
 /** Formata 'YYYY-MM-DD' → 'DD/MM/YYYY'. */
