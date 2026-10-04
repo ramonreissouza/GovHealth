@@ -20,6 +20,8 @@ export const dynamic = 'force-dynamic'
 interface Notif {
   id: string; titular_id: string; mensagem_id: number | null; destinatario: string
   assunto: string | null; link: string | null; confirmado_em: string | null
+  /** O aviso desta mensagem já foi repassado, e para quem. */
+  repassado_para: string | null
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -56,8 +58,20 @@ async function carregar(token: string | null): Promise<Notif | null> {
   const id = lerTokenVi(token)
   if (!id) return null
   return queryOne<Notif>(
-    `SELECT id, titular_id, mensagem_id, destinatario, assunto, link, confirmado_em FROM radar_notificacoes WHERE id = $1`, [id],
+    `SELECT n.id, n.titular_id, n.mensagem_id, n.destinatario, n.assunto, n.link, n.confirmado_em,
+            (SELECT o.escalonado_para FROM radar_notificacoes o
+              WHERE o.titular_id = n.titular_id AND o.mensagem_id = n.mensagem_id
+                AND o.escalonado_em IS NOT NULL AND o.escalonado_para IS NOT NULL
+              LIMIT 1) AS repassado_para
+       FROM radar_notificacoes n WHERE n.id = $1`, [id],
   )
+}
+
+/** O que dizer sobre o repasse depois do "Vi": não prometer o que já aconteceu. */
+function sobreRepasse(n: Notif): string {
+  if (!n.repassado_para) return 'O aviso não vai ser repassado para outra pessoa da equipe.'
+  if (n.repassado_para.toLowerCase() === n.destinatario.toLowerCase()) return 'A equipe fica sabendo que você está cuidando.'
+  return `Ele já tinha sido repassado para ${esc(n.repassado_para)}; agora a equipe sabe que alguém está cuidando.`
 }
 
 const linkPortal = (n: Notif) => n.link
@@ -69,11 +83,11 @@ export async function GET(req: NextRequest) {
   const n = await carregar(token)
   if (!n) return invalido()
   if (n.confirmado_em) {
-    return pagina('Já confirmado', `<p style="font-size:14px;color:#334155;margin:0;">Este aviso já foi confirmado em ${esc(hora(n.confirmado_em))} (horário de Brasília). Ninguém mais da equipe vai receber o repasse.</p>${linkPortal(n)}`)
+    return pagina('Já confirmado', `<p style="font-size:14px;color:#334155;margin:0;">Este aviso já foi confirmado em ${esc(hora(n.confirmado_em))} (horário de Brasília).${n.repassado_para ? ` Antes disso, ele tinha sido repassado para ${esc(n.repassado_para)}.` : ''}</p>${linkPortal(n)}`)
   }
   return pagina('Confirmar que você viu', `
 <p style="font-size:14px;color:#334155;margin:0 0 6px;">${esc(n.assunto ?? 'Aviso do Radar')}</p>
-<p style="font-size:13px;color:#64748b;margin:0 0 16px;">Confirmando, o aviso não é repassado para outra pessoa da equipe.</p>
+<p style="font-size:13px;color:#64748b;margin:0 0 16px;">${n.repassado_para ? 'Confirmando, a equipe fica sabendo que alguém está cuidando.' : 'Confirmando, o aviso não é repassado para outra pessoa da equipe.'}</p>
 <form method="post" action="/api/radar/vi">
 <input type="hidden" name="t" value="${esc(token ?? '')}"/>
 <button type="submit" style="background:#2f80ed;color:#fff;border:0;font-size:15px;font-weight:600;padding:12px 22px;border-radius:9px;cursor:pointer;">Vi, estou cuidando</button>
@@ -111,5 +125,5 @@ export async function POST(req: NextRequest) {
       [n.titular_id, quem?.id ?? null, String(n.mensagem_id ?? n.id), JSON.stringify({ via: 'email', notificacao: n.id })],
     )
   }
-  return pagina('Confirmado', `<p style="font-size:14px;color:#334155;margin:0;">Obrigado. O aviso não vai ser repassado para outra pessoa da equipe.</p>${linkPortal(n)}`)
+  return pagina('Confirmado', `<p style="font-size:14px;color:#334155;margin:0;">Obrigado. ${sobreRepasse(n)}</p>${linkPortal(n)}`)
 }

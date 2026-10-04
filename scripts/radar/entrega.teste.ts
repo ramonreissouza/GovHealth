@@ -102,6 +102,11 @@ test('sem responsável: o titular; se foi o titular quem recebeu, o membro mais 
   assert.equal(quemEscala({ destinatario: 'Dono@Empresa.com', equipe: [titular, ana, bia] })?.email, 'ana@empresa.com')
 })
 
+test('quem foi indicado à mão vem primeiro, por id ou e-mail, mas só se for da equipe', () => {
+  assert.equal(quemEscala({ destinatario: 'dono@empresa.com', preferido: 'BIA@empresa.com', responsavel: 'ana@empresa.com', equipe: [titular, ana, bia] })?.email, 'bia@empresa.com')
+  assert.equal(quemEscala({ destinatario: 'dono@empresa.com', preferido: 'estranho@fora.com', responsavel: 'ana@empresa.com', equipe: [titular, ana, bia] })?.email, 'ana@empresa.com')
+})
+
 test('nunca para quem já recebeu, e equipe de uma pessoa não tem repasse', () => {
   assert.equal(quemEscala({ destinatario: 'dono@empresa.com', responsavel: 'dono@empresa.com', equipe: [titular, ana] })?.email, 'ana@empresa.com')
   assert.equal(quemEscala({ destinatario: 'dono@empresa.com', equipe: [titular] }), null)

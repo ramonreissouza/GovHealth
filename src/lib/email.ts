@@ -100,8 +100,9 @@ export async function enviarAlertaRadar(params: {
   vi?: string | null
   /** Há alguém na equipe para receber o repasse. Equipe de uma pessoa: o e-mail não promete. */
   repassa?: boolean
-  /** Repasse: ninguém confirmou o aviso original. Quem recebeu e há quantos minutos. */
-  repasse?: { de: string; minutos: number } | null
+  /** Repasse: o aviso original não foi confirmado (ou nem chegou, `falhou`). Para quem
+   *  foi e há quantos minutos. */
+  repasse?: { de: string; minutos: number; falhou?: boolean } | null
 }): Promise<{ enviado: boolean; motivo?: string }> {
   const dossie = params.fonte === 'dossie'
   const oQue = dossie ? 'nova peça' : 'nova mensagem'
@@ -114,8 +115,11 @@ export async function enviarAlertaRadar(params: {
   const tags = (params.categorias ?? []).length
     ? `<p style="margin:0 0 10px;">${params.categorias!.map((c) => `<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-right:6px;">${escaparHtml(c)}</span>`).join('')}</p>`
     : ''
-  const repasse = params.repasse
-    ? `<p style="font-size:13px;color:#92400e;background:#fef3c7;border-radius:8px;padding:8px 12px;margin:0 0 12px;">Ninguém confirmou este aviso em ${params.repasse.minutos} min. Ele foi para ${escaparHtml(params.repasse.de)} e agora vem para você.</p>`
+  const r = params.repasse
+  const repasse = r
+    ? `<p style="font-size:13px;color:#92400e;background:#fef3c7;border-radius:8px;padding:8px 12px;margin:0 0 12px;">${r.falhou
+        ? `O aviso não pôde ser entregue a ${escaparHtml(r.de)}. Por isso ele vem para você.`
+        : `Ninguém confirmou este aviso em ${r.minutos} min. Ele foi para ${escaparHtml(r.de)} e agora vem para você.`}</p>`
     : ''
   // O "Vi" é o botão principal: é ele que impede o repasse. "Abrir" vira link de texto.
   const acoes = params.vi
@@ -134,7 +138,7 @@ export async function enviarAlertaRadar(params: {
   // puro — escapar aqui não protege nada e estraga o que o fornecedor lê na caixa.
   // Medido na base: 3.196 objetos com `"`, 1.143 com `'`, 503 com `&` chegariam como
   // `&quot;`, `&#39;`, `&amp;`. O corpo continua precisando do escape; o assunto, não.
-  const prefixo = params.repasse ? '⚠️ Sem resposta' : `🔔 ${dossie ? 'Nova peça' : 'Nova mensagem'}`
+  const prefixo = r ? (r.falhou ? '⚠️ Aviso não entregue' : '⚠️ Sem resposta') : `🔔 ${dossie ? 'Nova peça' : 'Nova mensagem'}`
   return enviar(params.to, `${prefixo} — ${params.processo}`, moldura(titulo, corpo))
 }
 

@@ -86,7 +86,8 @@ const CITA = 'Convoco a REMORA PRODUTOS PARA SAUDE LTDA'
 const ids = {
   velho: await notif({ titular: CLI, proc: 'p-auto', texto: CITA, idadeMin: 3 * 24 * 60 }),
   citaMasParada: await notif({ titular: CLI, proc: 'p-auto', texto: CITA, idadeMin: 8 * 60 }),
-  orfao: await notif({ titular: CLI, proc: 'p-auto', texto: 'qualquer', status: 'enviando', enviadoHaMin: 20 }),
+  // Envio interrompido há 3 h: fora da janela do repasse (o mais novo seria repassado).
+  orfao: await notif({ titular: CLI, proc: 'p-auto', texto: 'qualquer', status: 'enviando', enviadoHaMin: 180 }),
   lida: await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'entregue' }),
   terceiro: await notif({ titular: CLI, proc: 'p-auto', texto: 'Convoco a empresa D. GOMES DA SILVA para habilitação' }),
   participando: await notif({ titular: CLI, proc: 'p-part', texto: 'Ficam os licitantes convocados em 2 horas' }),
@@ -200,6 +201,46 @@ const fd3 = new FormData(); fd3.set('t', tokenVi(`esc:${semVi}`))
 await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd3 }))
 assert.ok(await confirmado(semVi), '"Vi" do repasse confirma o original')
 assert.equal((await runRadarNotify()).repassados, 0, 'um repasse por aviso')
+
+// ── aviso que não chegou, repasse que falha, indicação à mão ────────────────────
+const MEM2 = 'membro2@exemplo.com'
+await query(`INSERT INTO usuarios (id, email, nome, senha_hash, titular_id, criado_em)
+             VALUES ($1, $1, 'Membro 2', 'x', $2, now() + interval '1 minute')`, [MEM2, CLI])
+const naoChegou = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'falha', enviadoHaMin: 2 })
+const indicado = await notif({ titular: CLI, proc: 'p-auto', texto: CITA, status: 'enviado', enviadoHaMin: 20 })
+await query(`UPDATE radar_notificacoes SET escalonado_para = $2 WHERE id = $1`, [indicado, MEM2])
+const info = async (ids: string[]) => Object.fromEntries((await query<{ id: string; escalonado_em: string | null; escalonado_para: string | null }>(
+  `SELECT id, escalonado_em, escalonado_para FROM radar_notificacoes WHERE id = ANY($1::text[])`, [ids])).map((r) => [r.id, r]))
+
+resendFalha = true // Resend fora do ar: os dois repasses falham
+const fora = await runRadarNotify()
+assert.equal(fora.repassados, 0)
+assert.equal(fora.falhas, 2)
+let est = await info([naoChegou, indicado])
+assert.equal(est[naoChegou].escalonado_em, null, 'repasse que falhou volta para a fila')
+assert.equal(est[indicado].escalonado_em, null)
+assert.equal(est[indicado].escalonado_para, MEM2, 'e guarda quem foi indicado à mão')
+resendFalha = false
+const antesVolta = enviados.length
+assert.equal((await runRadarNotify()).repassados, 2, 'nova chance na rodada seguinte')
+const volta = enviados.slice(antesVolta)
+const naoEntregue = volta.find((e) => /^⚠️ Aviso não entregue — /.test(e.subject))
+assert.ok(naoEntregue, 'aviso imediato que falhou é repassado, sem esperar o SLA')
+assert.equal(naoEntregue.to, MEM)
+assert.match(naoEntregue.html, /não pôde ser entregue a cliente@exemplo\.com/)
+assert.equal(volta.find((e) => /^⚠️ Sem resposta — /.test(e.subject))?.to, MEM2, 'indicado à mão vem antes do membro mais antigo')
+assert.equal((await query<{ t: number }>(`SELECT tentativas AS t FROM radar_notificacoes WHERE id = $1`, [`esc:${indicado}`]))[0].t, 2)
+est = await info([naoChegou, indicado])
+assert.equal(est[indicado].escalonado_para, MEM2)
+
+// A página do "Vi" depois do repasse não promete o que já aconteceu.
+const tkRep = tokenVi(indicado)
+assert.match(await (await GET(new NextRequest(`http://localhost/api/radar/vi?t=${encodeURIComponent(tkRep)}`))).text(),
+  /a equipe fica sabendo que alguém está cuidando/)
+const fd5 = new FormData(); fd5.set('t', tkRep)
+assert.match(await (await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd5 }))).text(),
+  /já tinha sido repassado para membro2@exemplo\.com/)
+assert.equal((await query(`SELECT 1 FROM pg_indexes WHERE indexname = 'idx_radar_notif_repasse'`)).length, 1, 'índice do repasse')
 
 console.log(`OK: ${enviados.length} e-mails gerados, todos interceptados`)
 process.exit(0)

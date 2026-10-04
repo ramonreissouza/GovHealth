@@ -1,5 +1,6 @@
 // src/app/api/radar/mensagens/[id]/route.ts — ações sobre uma mensagem.
-// PATCH: marcar lida (confirma a notificação), atribuir responsável, escalonar.
+// PATCH: marcar lida (confirma a notificação), atribuir responsável, indicar para quem
+// escalonar (o repasse em si é do job radar-notify).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne } from '@/lib/db'
@@ -23,9 +24,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   if (!msg) return NextResponse.json({ error: 'não encontrada' }, { status: 404 })
 
   if (body.acao === 'escalonar') {
+    // Só INDICA para quem repassar: o job radar-notify faz o repasse (e-mail de verdade)
+    // e prefere esta pessoa. Gravar escalonado_em aqui, como antes, marcava o aviso como
+    // já repassado sem mandar nada, e desligava o repasse automático.
     await query(
-      `UPDATE radar_notificacoes SET escalonado_em = now(), escalonado_para = $3
-        WHERE mensagem_id = $1 AND titular_id = $2`,
+      `UPDATE radar_notificacoes SET escalonado_para = $3
+        WHERE mensagem_id = $1 AND titular_id = $2 AND canal = 'email'
+          AND evento = 'nova_mensagem' AND escalonado_em IS NULL`,
       [msgId, t.titularId, body.para ?? null],
     )
     await query(

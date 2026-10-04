@@ -131,15 +131,21 @@ export interface MembroEquipe {
 }
 
 /**
- * Para quem o aviso vai quando ninguém confirmou. Em ordem: o responsável pelo pregão
- * (radar_processos.responsavel), o titular da conta, e então o primeiro outro membro.
- * Nunca quem já recebeu. null = equipe de uma pessoa só: não há para quem repassar.
+ * Para quem o aviso vai quando ninguém confirmou. Em ordem: quem foi indicado à mão
+ * (PATCH "escalonar" da mensagem), o responsável pelo pregão (radar_processos.responsavel),
+ * o titular da conta, e então o primeiro outro membro. Só gente da equipe, e nunca quem
+ * já recebeu. null = equipe de uma pessoa só: não há para quem repassar.
  * `equipe` vem ordenada pela entrada na equipe (o mais antigo primeiro).
  */
-export function quemEscala(p: { destinatario: string; responsavel?: string | null; equipe: MembroEquipe[] }): MembroEquipe | null {
-  const ja = p.destinatario.trim().toLowerCase()
-  const outros = p.equipe.filter((m) => m.email && m.email.trim().toLowerCase() !== ja && m.id.toLowerCase() !== ja)
-  return outros.find((m) => p.responsavel && m.id === p.responsavel)
+export function quemEscala(p: {
+  destinatario: string; preferido?: string | null; responsavel?: string | null; equipe: MembroEquipe[]
+}): MembroEquipe | null {
+  const chave = (s: string | null | undefined) => String(s ?? '').trim().toLowerCase()
+  const ja = chave(p.destinatario)
+  const outros = p.equipe.filter((m) => m.email && chave(m.email) !== ja && chave(m.id) !== ja)
+  const eh = (alvo: string | null | undefined) => (m: MembroEquipe) => !!chave(alvo) && (chave(m.id) === chave(alvo) || chave(m.email) === chave(alvo))
+  return outros.find(eh(p.preferido))
+    ?? outros.find(eh(p.responsavel))
     ?? outros.find((m) => m.titular)
     ?? outros[0]
     ?? null

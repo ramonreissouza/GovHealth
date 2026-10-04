@@ -10,22 +10,25 @@
 //      que ele está, sai agora, sozinho; o resto fica 'aguardando_resumo' para o
 //      e-mail único do dia (src/jobs/radarResumo.ts).
 //      A regra é src/lib/radar/entrega.ts, com o porquê medido;
-//   3. REPASSA o imediato que ninguém confirmou ("Vi" no e-mail ou leitura na tela) em
-//      SLA_ESCALONA_MIN: um e-mail para OUTRA pessoa da equipe (quemEscala), uma vez só.
+//   3. REPASSA para OUTRA pessoa da equipe (quemEscala) o imediato que ninguém
+//      confirmou ("Vi" no e-mail ou leitura na tela) em SLA_ESCALONA_MIN, e na hora o
+//      imediato cujo envio falhou. Um repasse por aviso, com até TENTATIVAS_REPASSE.
 //
 // Estados de radar_notificacoes.status no e-mail:
 //   pendente → enviando → enviado | falha          (imediato; também o repasse, evento 'escalonamento')
 //   pendente → aguardando_resumo → resumindo → resumido   (resumo do dia)
 //   pendente | aguardando_resumo → expirado         (passou de 48 h)
 //   qualquer um → entregue                          (lido na tela antes; rota de mensagens)
+// enviado_em no imediato é a hora da TENTATIVA, mesmo quando falha: é por ela que o
+// repasse distingue o imediato que falhou do item do resumo que falhou (que não tem).
 // confirmado_em é o "Vi" (src/app/api/radar/vi/route.ts) ou a leitura na tela.
 
 import { query } from '@/lib/db'
 import { enviarAlertaRadar } from '@/lib/email'
-import { appUrl } from '@/lib/stripe'
+import { siteUrl } from '@/lib/site'
 import { leituraDoConector } from '@/lib/radar/conectores'
 import {
-  entregaDe, quemEscala, JANELA_FILA_H, SLA_ESCALONA_MIN, ESCALONA_JANELA_H,
+  entregaDe, quemEscala, IMEDIATO_MAX_H, JANELA_FILA_H, SLA_ESCALONA_MIN, ESCALONA_JANELA_H,
   type AlvoEmpresa, type MembroEquipe,
 } from '@/lib/radar/entrega'
 import { tokenVi } from '@/lib/radar/vi-token'
@@ -35,39 +38,34 @@ const LOTE = 500
 const TETO_AGORA_POR_DESTINATARIO = 5
 /** Envio que morreu no meio (worker reiniciado) não é refeito: vira falha, não duplica. */
 const ENVIANDO_ORFAO_MIN = 15
+/** Repasse que falha no envio é tentado de novo nas rodadas seguintes, até este total. */
+const TENTATIVAS_REPASSE = 3
 
-interface Pendente {
-  id: string; titular_id: string; evento: string; destinatario: string; link: string | null
+/** O que o e-mail de aviso precisa: a notificação, a mensagem e o pregão. */
+interface Aviso {
+  id: string; titular_id: string; destinatario: string; link: string | null
   texto: string | null; autor: string | null; conector_id: string | null
-  categorias: string[] | null; prioridade: string | null
-  proc_titulo: string | null; origem: string | null; participando: boolean | null
-  responsavel: string | null
-  idade_h: number; horario_origem: string | Date | null
+  categorias: string[] | null; horario_origem: string | Date | null
+  proc_titulo: string | null; responsavel: string | null
 }
 
-/** Link do botão "Vi". Sem NEXTAUTH_SECRET não há como assinar: o e-mail sai sem o botão. */
-function linkVi(notificacaoId: string): string | null {
-  try { return `${appUrl()}/api/radar/vi?t=${tokenVi(notificacaoId)}` } catch { return null }
+interface Pendente extends Aviso {
+  evento: string; prioridade: string | null; origem: string | null; participando: boolean | null
+  idade_h: number
 }
 
-/** As pessoas de cada conta (titular + membros), ativas, da mais antiga para a mais nova. */
-async function carregarEquipes(titulares: string[]): Promise<Map<string, MembroEquipe[]>> {
-  const equipes = new Map<string, MembroEquipe[]>()
-  if (!titulares.length) return equipes
-  const rows = await query<{ id: string; email: string; titular: boolean; dono: string }>(
-    `SELECT id, email, titular_id IS NULL AS titular, coalesce(titular_id, id) AS dono
-       FROM usuarios
-      WHERE (id = ANY($1::text[]) OR titular_id = ANY($1::text[]))
-        AND deleted_at IS NULL AND NOT suspenso
-      ORDER BY criado_em, id`,
-    [titulares],
-  )
-  for (const r of rows) {
-    if (!equipes.has(r.dono)) equipes.set(r.dono, [])
-    equipes.get(r.dono)!.push({ id: r.id, email: r.email, titular: r.titular })
-  }
-  return equipes
+/** Imediato sem "Vi" (status 'enviado') ou que não chegou (status 'falha'). */
+interface SemVi extends Aviso {
+  status: 'enviado' | 'falha'
+  /** Minutos desde a tentativa de envio. */
+  minutos: number
+  /** Pessoa indicada à mão (PATCH escalonar), preferida no repasse. */
+  escalonado_para: string | null
 }
+
+const COLUNAS_AVISO = `n.id, n.titular_id, n.destinatario, n.link,
+            m.texto, m.autor, m.conector_id, m.categorias, m.horario_origem,
+            p.titulo AS proc_titulo, p.responsavel`
 
 /** "02/10 às 14:05", no horário de Brasília: o e-mail diz QUANDO o pregoeiro escreveu. */
 function horaBrasilia(valor: string | Date | null): string | null {
@@ -79,6 +77,43 @@ function horaBrasilia(valor: string | Date | null): string | null {
   }).formatToParts(d)
   const v = (k: string) => p.find((x) => x.type === k)?.value ?? ''
   return `${v('day')}/${v('month')} às ${v('hour')}:${v('minute')}`
+}
+
+/** Link do botão "Vi". Sem NEXTAUTH_SECRET não há como assinar: o e-mail sai sem o botão. */
+function linkVi(notificacaoId: string): string | null {
+  try { return `${siteUrl()}/api/radar/vi?t=${tokenVi(notificacaoId)}` } catch { return null }
+}
+
+/**
+ * Manda o aviso de `n` para `para`, registrando o resultado na linha `idLinha` (o próprio
+ * aviso, ou a linha do repasse). Mesmo e-mail nos dois casos; o repasse só acrescenta a
+ * faixa que explica por que chegou.
+ */
+async function enviarAviso(
+  n: Aviso, idLinha: string, para: string,
+  extra: { repassa?: boolean; repasse?: { de: string; minutos: number; falhou: boolean } },
+): Promise<boolean> {
+  let ok = false
+  let motivo: string | undefined
+  try {
+    const r = await enviarAlertaRadar({
+      to: para, processo: n.proc_titulo ?? 'Processo monitorado',
+      autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
+      categorias: n.categorias ?? [],
+      quando: horaBrasilia(n.horario_origem),
+      // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
+      // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
+      fonte: leituraDoConector(n.conector_id),
+      vi: linkVi(idLinha),
+      ...extra,
+    })
+    ok = r.enviado; motivo = r.motivo
+  } catch (e) { motivo = String(e) }
+  await query(
+    `UPDATE radar_notificacoes SET status = $2, tentativas = tentativas + 1, erro = $3 WHERE id = $1`,
+    [idLinha, ok ? 'enviado' : 'falha', ok ? null : (motivo ?? 'falha')],
+  )
+  return ok
 }
 
 /**
@@ -113,6 +148,25 @@ async function carregarAlvos(titulares: string[]): Promise<Map<string, AlvoEmpre
   return alvos
 }
 
+/** As pessoas de cada conta (titular + membros), ativas, da mais antiga para a mais nova. */
+async function carregarEquipes(titulares: string[]): Promise<Map<string, MembroEquipe[]>> {
+  const equipes = new Map<string, MembroEquipe[]>()
+  if (!titulares.length) return equipes
+  const rows = await query<{ id: string; email: string; titular: boolean; dono: string }>(
+    `SELECT id, email, titular_id IS NULL AS titular, coalesce(titular_id, id) AS dono
+       FROM usuarios
+      WHERE (id = ANY($1::text[]) OR titular_id = ANY($1::text[]))
+        AND deleted_at IS NULL AND NOT suspenso
+      ORDER BY criado_em, id`,
+    [titulares],
+  )
+  for (const r of rows) {
+    if (!equipes.has(r.dono)) equipes.set(r.dono, [])
+    equipes.get(r.dono)!.push({ id: r.id, email: r.email, titular: r.titular })
+  }
+  return equipes
+}
+
 export async function runRadarNotify() {
   // Sem chave de e-mail o job não mexe na fila. Antes, cada envio virava 'falha' sem
   // tentativa nova: a fila inteira se perdia numa noite sem RESEND_API_KEY.
@@ -141,9 +195,7 @@ export async function runRadarNotify() {
 
   // 2) Separa o pendente.
   const pendentes = await query<Pendente>(
-    `SELECT n.id, n.titular_id, n.evento, n.destinatario, n.link,
-            m.texto, m.autor, m.conector_id, m.categorias, m.prioridade,
-            p.titulo AS proc_titulo, p.origem, p.participando, p.responsavel, m.horario_origem,
+    `SELECT ${COLUNAS_AVISO}, n.evento, m.prioridade, p.origem, p.participando,
             EXTRACT(EPOCH FROM now() - n.criado_em)::float8 / 3600 AS idade_h
        FROM radar_notificacoes n
        LEFT JOIN radar_mensagens m ON m.id = n.mensagem_id
@@ -169,9 +221,30 @@ export async function runRadarNotify() {
     )
   }
 
+  // Candidatos ao repasse (passo 3), lidos ANTES dos envios de agora: assim as equipes
+  // saem de uma consulta só. O que for enviado nesta rodada ainda está dentro do SLA.
+  //   'enviado' sem "Vi" depois do SLA, dentro da janela; 'falha' de imediato (tem
+  //   enviado_em) dentro da janela, sem esperar: ninguém recebeu.
+  // O limite em criado_em é o que usa o índice idx_radar_notif_repasse.
+  const semVi = await query<SemVi>(
+    `SELECT ${COLUNAS_AVISO}, n.status, n.escalonado_para,
+            round(EXTRACT(EPOCH FROM now() - n.enviado_em) / 60)::int AS minutos
+       FROM radar_notificacoes n
+       LEFT JOIN radar_mensagens m ON m.id = n.mensagem_id
+       LEFT JOIN radar_processos p ON p.id = n.processo_id
+      WHERE n.canal = 'email' AND n.evento = 'nova_mensagem'
+        AND n.confirmado_em IS NULL AND n.escalonado_em IS NULL
+        AND n.criado_em > now() - ($3 || ' hours')::interval
+        AND n.enviado_em > now() - ($2 || ' hours')::interval
+        AND (n.status = 'falha' OR (n.status = 'enviado' AND n.enviado_em < now() - ($1 || ' minutes')::interval))
+      ORDER BY n.enviado_em
+      LIMIT ${LOTE}`,
+    [String(SLA_ESCALONA_MIN), String(ESCALONA_JANELA_H), String(ESCALONA_JANELA_H + IMEDIATO_MAX_H)],
+  )
+  const equipes = await carregarEquipes([...new Set([...agora, ...semVi].map((n) => n.titular_id))])
+
   let enviados = 0, falhas = 0
   const porDestinatario = new Map<string, number>()
-  const equipesAgora = await carregarEquipes([...new Set(agora.map((n) => n.titular_id))])
   for (const n of agora) {
     const ja = porDestinatario.get(n.destinatario) ?? 0
     if (ja >= TETO_AGORA_POR_DESTINATARIO) continue
@@ -183,57 +256,17 @@ export async function runRadarNotify() {
     )
     if (!meu.length) continue
     porDestinatario.set(n.destinatario, ja + 1)
-
-    let ok = false
-    let motivo: string | undefined
-    try {
-      const r = await enviarAlertaRadar({
-        to: n.destinatario, processo: n.proc_titulo ?? 'Processo monitorado',
-        autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
-        categorias: n.categorias ?? [],
-        quando: horaBrasilia(n.horario_origem),
-        // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
-        // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
-        fonte: leituraDoConector(n.conector_id),
-        vi: linkVi(n.id),
-        repassa: quemEscala({ destinatario: n.destinatario, responsavel: n.responsavel, equipe: equipesAgora.get(n.titular_id) ?? [] }) != null,
-      })
-      ok = r.enviado; motivo = r.motivo
-    } catch (e) { motivo = String(e) }
-
-    if (ok) enviados++; else falhas++
-    await query(
-      `UPDATE radar_notificacoes
-          SET status = $2, tentativas = tentativas + 1,
-              enviado_em = CASE WHEN $2 = 'enviado' THEN enviado_em ELSE NULL END, erro = $3
-        WHERE id = $1`,
-      [n.id, ok ? 'enviado' : 'falha', ok ? null : (motivo ?? 'falha')],
-    )
+    const repassa = quemEscala({ destinatario: n.destinatario, responsavel: n.responsavel, equipe: equipes.get(n.titular_id) ?? [] }) != null
+    if (await enviarAviso(n, n.id, n.destinatario, { repassa })) enviados++; else falhas++
   }
 
-  // 3) Repasse: aviso imediato enviado e sem "Vi" dentro do SLA vai para outra pessoa da
-  // equipe. Só o que saiu nas últimas ESCALONA_JANELA_H (ver entrega.ts).
-  const semVi = await query<Pendente & { enviado_ha_min: number }>(
-    `SELECT n.id, n.titular_id, n.evento, n.destinatario, n.link,
-            m.texto, m.autor, m.conector_id, m.categorias, m.prioridade,
-            p.titulo AS proc_titulo, p.origem, p.participando, p.responsavel, m.horario_origem,
-            0::float8 AS idade_h,
-            round(EXTRACT(EPOCH FROM now() - n.enviado_em) / 60)::int AS enviado_ha_min
-       FROM radar_notificacoes n
-       LEFT JOIN radar_mensagens m ON m.id = n.mensagem_id
-       LEFT JOIN radar_processos p ON p.id = n.processo_id
-      WHERE n.evento = 'nova_mensagem' AND n.canal = 'email' AND n.status = 'enviado'
-        AND n.confirmado_em IS NULL AND n.escalonado_em IS NULL
-        AND n.enviado_em < now() - ($1 || ' minutes')::interval
-        AND n.enviado_em > now() - ($2 || ' hours')::interval
-      ORDER BY n.enviado_em
-      LIMIT ${LOTE}`,
-    [String(SLA_ESCALONA_MIN), String(ESCALONA_JANELA_H)],
-  )
-  const equipesRepasse = await carregarEquipes([...new Set(semVi.map((n) => n.titular_id))])
+  // 3) Repasse.
   let repassados = 0, semEquipe = 0
   for (const n of semVi) {
-    const para = quemEscala({ destinatario: n.destinatario, responsavel: n.responsavel, equipe: equipesRepasse.get(n.titular_id) ?? [] })
+    const para = quemEscala({
+      destinatario: n.destinatario, preferido: n.escalonado_para, responsavel: n.responsavel,
+      equipe: equipes.get(n.titular_id) ?? [],
+    })
     // Reivindica antes de enviar (a rota manual pode rodar junto): um repasse por aviso.
     const meu = await query<{ id: string }>(
       `UPDATE radar_notificacoes SET escalonado_em = now(), escalonado_para = $2
@@ -243,42 +276,39 @@ export async function runRadarNotify() {
     if (!meu.length) continue
     if (!para) { semEquipe++; continue } // equipe de uma pessoa: só marca
 
+    // A linha do repasse é criada uma vez; se o envio dela falhou numa rodada anterior,
+    // volta para 'enviando' aqui, até TENTATIVAS_REPASSE.
     const idRepasse = `esc:${n.id}`
-    const criado = await query<{ id: string }>(
+    const vez = await query<{ id: string; tentativas: number }>(
       `INSERT INTO radar_notificacoes (id, titular_id, evento, mensagem_id, processo_id, destinatario, canal, assunto, link, status, enviado_em)
        SELECT $1, titular_id, 'escalonamento', mensagem_id, processo_id, $2, 'email', assunto, link, 'enviando', now()
          FROM radar_notificacoes WHERE id = $3
-       ON CONFLICT (id) DO NOTHING RETURNING id`,
+       ON CONFLICT (id) DO UPDATE SET status = 'enviando', enviado_em = now(), destinatario = EXCLUDED.destinatario
+         WHERE radar_notificacoes.status = 'falha' AND radar_notificacoes.tentativas < ${TENTATIVAS_REPASSE}
+       RETURNING id, tentativas`,
       [idRepasse, para.email, n.id],
     )
-    if (!criado.length) continue
+    if (!vez.length) continue
 
-    let ok = false
-    let motivo: string | undefined
-    try {
-      const r = await enviarAlertaRadar({
-        to: para.email, processo: n.proc_titulo ?? 'Processo monitorado',
-        autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
-        categorias: n.categorias ?? [],
-        quando: horaBrasilia(n.horario_origem),
-        fonte: leituraDoConector(n.conector_id),
-        vi: linkVi(idRepasse),
-        repasse: { de: n.destinatario, minutos: n.enviado_ha_min },
-      })
-      ok = r.enviado; motivo = r.motivo
-    } catch (e) { motivo = String(e) }
-    if (ok) repassados++; else falhas++
-    await query(
-      `UPDATE radar_notificacoes
-          SET status = $2, tentativas = tentativas + 1,
-              enviado_em = CASE WHEN $2 = 'enviado' THEN enviado_em ELSE NULL END, erro = $3
-        WHERE id = $1`,
-      [idRepasse, ok ? 'enviado' : 'falha', ok ? null : (motivo ?? 'falha')],
-    )
+    const ok = await enviarAviso(n, idRepasse, para.email, {
+      repasse: { de: n.destinatario, minutos: n.minutos, falhou: n.status === 'falha' },
+    })
+    if (ok) repassados++
+    else {
+      falhas++
+      // Sem nova chance esgotada, devolve o aviso à fila do repasse para a próxima rodada
+      // (a janela de ESCALONA_JANELA_H ainda limita). Mantém quem foi indicado à mão.
+      if (vez[0].tentativas + 1 < TENTATIVAS_REPASSE) {
+        await query(
+          `UPDATE radar_notificacoes SET escalonado_em = NULL, escalonado_para = $2 WHERE id = $1`,
+          [n.id, n.escalonado_para],
+        )
+      }
+    }
     await query(
       `INSERT INTO radar_auditoria (titular_id, acao, entidade, entidade_id, detalhe)
        VALUES ($1, 'escalonamento', 'radar_notificacoes', $2, $3::jsonb)`,
-      [n.titular_id, n.id, JSON.stringify({ para: para.email, automatico: true, enviado: ok })],
+      [n.titular_id, n.id, JSON.stringify({ para: para.email, automatico: true, enviado: ok, original_falhou: n.status === 'falha' })],
     )
   }
 
