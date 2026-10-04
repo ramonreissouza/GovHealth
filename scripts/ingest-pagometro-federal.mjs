@@ -17,8 +17,9 @@
 // PULAR_APOS_DIAS: a carga para ali e tenta de novo na próxima rodada. Mais velho que
 // isso: é pulado (registrado com contagem nula) e a série segue.
 //
-// Volume: um ZIP de ~10 MB por dia útil (fim de semana ~20 KB). Baixado em memória, uma
-// pausa entre um e outro, nada fica no disco.
+// Volume: um ZIP de ~10 MB por dia útil (fim de semana ~20 KB). Baixado em memória, 15 s
+// de pausa entre um e outro (o servidor freia rajadas), nada fica no disco. A série
+// inicial (~460 dias) leva ~2 h; a rodada diária baixa 1 ou 2 arquivos.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -35,7 +36,8 @@ const DRY = tem('--dry')
 const SO_RESUMO = tem('--so-resumo')
 const SO_SCHEMA = tem('--so-schema')
 const MAX_MIN = Number(arg('--max-min') ?? process.env.PAGOMETRO_MAX_MIN ?? 300)
-const PAUSA_MS = Number(arg('--pausa-ms') ?? 3000)
+// 15 s: o servidor da CGU freia o IP depois de ~20–25 downloads seguidos (ver baixarDia).
+const PAUSA_MS = Number(arg('--pausa-ms') ?? 15_000)
 const PULAR_APOS_DIAS = 15
 const DESDE_PADRAO = '2025-07-01'
 
@@ -84,8 +86,10 @@ class ServidorRecusou extends Error {}
 /**
  * O ZIP do dia, ou null se a CGU ainda não publicou (403/404).
  * 405/408/429/5xx são recusa passageira: medido em 05/10/2026, o servidor respondeu 405
- * à VPS depois de ~23 downloads seguidos com 1,5 s de pausa, e o mesmo arquivo baixou
- * normal minutos depois. Espera crescente (30 s → 4 min) e, persistindo, ServidorRecusou.
+ * ao IP da VPS depois de ~20–25 downloads seguidos (duas vezes, com 1,5 s e com 3 s de
+ * pausa), enquanto o MESMO arquivo baixava normal de outro IP. É freio por volume: daí a
+ * pausa padrão de 15 s entre downloads e a espera crescente (30 s → 15 min) antes de
+ * desistir; persistindo, ServidorRecusou e a rodada seguinte continua do mesmo dia.
  */
 async function baixarDia(dia) {
   const url = `${URL_BASE}/${dia.replace(/-/g, '')}_Despesas.zip`
@@ -100,8 +104,8 @@ async function baixarDia(dia) {
     } catch (e) {
       if (/acima do teto|passou de/.test(String(e?.message))) throw e // grande demais: não adianta repetir
     }
-    if (tentativa >= 4) throw new ServidorRecusou(`${dia}: servidor recusou ${tentativa} vezes (último HTTP ${status || 'sem resposta'})`)
-    const espera = 30_000 * 2 ** (tentativa - 1)
+    if (tentativa >= 7) throw new ServidorRecusou(`${dia}: servidor recusou ${tentativa} vezes (último HTTP ${status || 'sem resposta'})`)
+    const espera = Math.min(15 * 60_000, 30_000 * 2 ** (tentativa - 1)) // 30 s, 1, 2, 4, 8, 15 min
     console.log(`  ${dia}: HTTP ${status || 'sem resposta'}, nova tentativa em ${espera / 1000}s`)
     await dormir(espera)
   }
