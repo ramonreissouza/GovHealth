@@ -1,5 +1,7 @@
 // src/lib/types.ts
 
+import type { PagometroInfo } from './pagometro-texto'
+
 export interface Convenio {
   id: string
   numero: string
@@ -74,6 +76,9 @@ export interface Oportunidade {
     nota: 'A' | 'B' | 'C' | 'D' | null
     label: string
   }
+  // Pagômetro: dias que o ente pagador leva para pagar depois de reconhecer a nota.
+  // Ausente/null = sem dado (federal, consórcio ou ente sem contabilidade suficiente).
+  pagometro?: PagometroInfo | null
   valorEstimado: number
   janelaEmDias: number
   urgencia: 'urgente' | 'alta' | 'media' | 'normal'

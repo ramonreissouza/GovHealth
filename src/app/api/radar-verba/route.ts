@@ -7,6 +7,7 @@ import { buscarEmendasSaudeAno, type EmendaParlamentar } from '@/lib/emendas'
 import { lerEmendasSaude, lerEmendasEstaduais } from '@/lib/emendas-ingest'
 import { toEmendaRadar, toEmendaRadarEstadual, type EmendaRadar } from '@/lib/radar-verba'
 import { carregarIndiceCapag, carregarComportamentoPagamento, orgaoKey } from '@/lib/capacidade-pagamento'
+import { carregarIndicePagometro } from '@/lib/pagometro'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
 export const runtime = 'nodejs'
@@ -77,6 +78,20 @@ export async function GET(req: NextRequest) {
         }
         return toEmendaRadarEstadual(e, cap)
       }))
+    }
+
+    // Pagômetro do ente que recebe: a emenda federal vai para o município (ou para o
+    // estado, quando a localidade é a UF); a estadual é paga pelo governo do estado.
+    try {
+      const pagIdx = await carregarIndicePagometro()
+      emendas = emendas.map((e) => ({
+        ...e,
+        pagometro: e.esfera === 'estadual'
+          ? pagIdx.resolver(e.uf, null, 'GOVERNO DO ESTADO')
+          : pagIdx.resolver(e.uf, e.municipio, null),
+      }))
+    } catch (pagErr) {
+      console.warn('[radar-verba] pagômetro indisponível:', String(pagErr))
     }
 
     // Filtros
