@@ -1,9 +1,16 @@
 // src/jobs/radarResumo.ts — o e-mail ÚNICO do dia do Radar, por destinatário (worker
-// pg-boss, 07:30 de Brasília; ver src/worker/index.ts).
+// pg-boss, de hora em hora das 07:30 às 20:30 de Brasília; ver src/worker/index.ts).
 //
 // Leva o que o radar-notify separou como 'aguardando_resumo': mensagens de chat que não
 // citam a empresa do cliente e licitações novas para o perfil. Antes eram um e-mail por
 // item — 81 por dia por pessoa, medido em 02/10/2026 (ver src/lib/radar/entrega.ts).
+//
+// UM POR DIA, MAS COM NOVA CHANCE NA HORA SEGUINTE. A primeira versão rodava só às 07:30
+// e, numa falha do Resend, deixava para amanhã; só que o radar-notify expira em 48 h o
+// que espera o resumo, então a terceira tentativa nunca chegava e o erro real era
+// sobrescrito por "48 h na fila" (revisão da #53). Agora cada rodada só manda para quem
+// AINDA NÃO recebeu resumo hoje: às 07:30 vai para todo mundo; às 08:30 em diante, só
+// para quem falhou (ou para quem não tinha nada às 07:30 e passou a ter).
 
 import { query } from '@/lib/db'
 import { enviarResumoRadar, type ResumoRadarLicitacao, type ResumoRadarProcesso } from '@/lib/email'
@@ -72,16 +79,21 @@ export async function runRadarResumo() {
   }
   const inicio = Date.now()
 
-  // Roda uma vez por dia: 'resumindo' aqui é de uma rodada que morreu no meio do envio.
-  // Não sabemos se o e-mail saiu; reenviar arriscaria um resumo duplicado.
+  // Uma rodada por vez (política `stately`): 'resumindo' aqui é de uma rodada que morreu
+  // no meio do envio. Não sabemos se o e-mail saiu; reenviar arriscaria um duplicado.
   await query(
     `UPDATE radar_notificacoes SET status = 'falha', erro = 'resumo interrompido (worker reiniciado)'
       WHERE canal = 'email' AND status = 'resumindo'`,
   )
 
+  // Só quem tem o que receber E ainda não recebeu resumo hoje (dia de Brasília).
   const destinatarios = await query<{ destinatario: string }>(
-    `SELECT DISTINCT destinatario FROM radar_notificacoes
-      WHERE canal = 'email' AND status = 'aguardando_resumo'`,
+    `SELECT DISTINCT a.destinatario FROM radar_notificacoes a
+      WHERE a.canal = 'email' AND a.status = 'aguardando_resumo'
+        AND NOT EXISTS (
+          SELECT 1 FROM radar_notificacoes r
+           WHERE r.destinatario = a.destinatario AND r.canal = 'email' AND r.status = 'resumido'
+             AND (r.enviado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)`,
   )
 
   let enviados = 0, falhas = 0, itens = 0
@@ -119,7 +131,8 @@ export async function runRadarResumo() {
       )
     } else {
       falhas++
-      // Volta para a fila e tenta amanhã; depois de MAX_TENTATIVAS, desiste.
+      // Volta para a fila e tenta na próxima hora; depois de MAX_TENTATIVAS, desiste e
+      // guarda o erro do Resend (que é o que alguém vai querer ler).
       await query(
         `UPDATE radar_notificacoes
             SET status = CASE WHEN tentativas + 1 >= $2 THEN 'falha' ELSE 'aguardando_resumo' END,
@@ -131,6 +144,6 @@ export async function runRadarResumo() {
   }
 
   const resultado = { ok: true as const, destinatarios: destinatarios.length, enviados, falhas, itens }
-  console.log(`[cron:radar-resumo] ${JSON.stringify(resultado)} em ${Date.now() - inicio}ms`)
+  if (destinatarios.length) console.log(`[cron:radar-resumo] ${JSON.stringify(resultado)} em ${Date.now() - inicio}ms`)
   return resultado
 }

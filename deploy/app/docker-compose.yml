@@ -25,7 +25,7 @@
 #
 # `worker` é quem agenda, via pg-boss, os 4 jobs que antes eram crons da Vercel
 # (sync-pncp, sync-emendas, alertas-email, trial-reminders) e a entrega dos e-mails
-# do Radar (radar-notify a cada 5 min, radar-resumo às 7h30) — ver src/worker/index.ts.
+# do Radar (radar-notify a cada 5 min, radar-resumo, um por pessoa por dia a partir das 7h30) — ver src/worker/index.ts.
 # Suba-o só DEPOIS de desativar os crons na Vercel, para não rodar em duplicidade.
 #
 # O Postgres NÃO é publicado na internet: `127.0.0.1:5432` só aceita conexão da

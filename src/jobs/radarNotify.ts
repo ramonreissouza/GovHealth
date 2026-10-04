@@ -10,7 +10,8 @@
 //      que ele está, sai agora, sozinho; o resto fica 'aguardando_resumo' para o
 //      e-mail único do dia (src/jobs/radarResumo.ts).
 //      A regra é src/lib/radar/entrega.ts, com o porquê medido;
-//   3. escalona o imediato que ninguém confirmou em 30 min.
+//   3. MARCA (escalonado_em) o imediato que ninguém confirmou em 30 min. Só marca:
+//      avisar um segundo membro da equipe é a Fase 3 do plano, ainda não feita.
 //
 // Estados de radar_notificacoes.status no e-mail:
 //   pendente → enviando → enviado | falha          (imediato)
@@ -35,6 +36,19 @@ interface Pendente {
   texto: string | null; autor: string | null; conector_id: string | null
   categorias: string[] | null; prioridade: string | null
   proc_titulo: string | null; origem: string | null; participando: boolean | null
+  idade_h: number; horario_origem: string | Date | null
+}
+
+/** "02/10 às 14:05", no horário de Brasília: o e-mail diz QUANDO o pregoeiro escreveu. */
+function horaBrasilia(valor: string | Date | null): string | null {
+  if (!valor) return null
+  const d = new Date(valor)
+  if (Number.isNaN(d.getTime())) return null
+  const p = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(d)
+  const v = (k: string) => p.find((x) => x.type === k)?.value ?? ''
+  return `${v('day')}/${v('month')} às ${v('hour')}:${v('minute')}`
 }
 
 /**
@@ -99,7 +113,8 @@ export async function runRadarNotify() {
   const pendentes = await query<Pendente>(
     `SELECT n.id, n.titular_id, n.evento, n.destinatario, n.link,
             m.texto, m.autor, m.conector_id, m.categorias, m.prioridade,
-            p.titulo AS proc_titulo, p.origem, p.participando
+            p.titulo AS proc_titulo, p.origem, p.participando, m.horario_origem,
+            EXTRACT(EPOCH FROM now() - n.criado_em)::float8 / 3600 AS idade_h
        FROM radar_notificacoes n
        LEFT JOIN radar_mensagens m ON m.id = n.mensagem_id
        LEFT JOIN radar_processos p ON p.id = n.processo_id
@@ -113,7 +128,7 @@ export async function runRadarNotify() {
   const agora: Pendente[] = []
   for (const n of pendentes) {
     const alvo = alvos.get(n.titular_id) ?? { cnpj: null, nomes: [] }
-    if (entregaDe(n, alvo) === 'agora') agora.push(n)
+    if (entregaDe({ ...n, idadeHoras: n.idade_h }, alvo) === 'agora') agora.push(n)
     else paraResumo.push(n.id)
   }
   if (paraResumo.length) {
@@ -145,6 +160,7 @@ export async function runRadarNotify() {
         to: n.destinatario, processo: n.proc_titulo ?? 'Processo monitorado',
         autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
         categorias: n.categorias ?? [],
+        quando: horaBrasilia(n.horario_origem),
         // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
         // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
         fonte: leituraDoConector(n.conector_id),

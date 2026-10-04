@@ -25,6 +25,21 @@ test('CNPJ citado no texto conta, com ou sem pontuação', () => {
   assert.equal(mencionaEmpresa('Empresa 12.345.678/0001-91 convocada', cliente), false)
 })
 
+test('números soltos que, juntos, formariam o CNPJ não contam (revisão da #53)', () => {
+  assert.equal(mencionaEmpresa('Processo 12345678, item 0001-90, lote 3', cliente), false)
+  assert.equal(mencionaEmpresa('Protocolo 912345678000190', cliente), false)   // dígito colado antes
+  assert.equal(mencionaEmpresa('Ref. 123456780001901', cliente), false)        // dígito colado depois
+  assert.equal(mencionaEmpresa('CNPJ 12.345.678/0001-90.', cliente), true)     // pontuação depois é ok
+})
+
+test('aviso parado na fila há mais de 6 h vai para o resumo, mesmo citando o cliente', () => {
+  const t = 'Convoco a REMORA PRODUTOS PARA SAUDE LTDA para envio da proposta em 2 horas'
+  assert.equal(entregaDe({ ...msg(t), idadeHoras: 0.1 }, cliente), 'agora')
+  assert.equal(entregaDe({ ...msg(t), idadeHoras: 6 }, cliente), 'agora')
+  assert.equal(entregaDe({ ...msg(t), idadeHoras: 7 }, cliente), 'resumo')
+  assert.equal(entregaDe({ ...msg(t), idadeHoras: 47 }, cliente), 'resumo')
+})
+
 test('acento, caixa e sufixo societário não atrapalham', () => {
   assert.equal(mencionaEmpresa('a remora saúde enviou a proposta', cliente), true)
   assert.equal(mencionaEmpresa('REMORA PRODUTOS PARA SAÚDE EIRELI - ME foi habilitada', cliente), true)

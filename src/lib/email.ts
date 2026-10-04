@@ -54,34 +54,6 @@ function brl(v?: number | null): string {
 }
 
 /**
- * RADAR — Alerta de NOVA LICITAÇÃO relevante ao perfil do fornecedor.
- * Disparado pela seleção automática (lib/radar/selecao) quando surge um processo
- * que casa com as preferências (UFs/categorias/termos/portfólio).
- */
-export async function enviarNovaLicitacaoRadar(params: {
-  to: string; nome?: string | null; objeto: string; uf?: string | null; municipio?: string | null;
-  valor?: number | null; motivo?: string | null; link: string
-}): Promise<{ enviado: boolean; motivo?: string }> {
-  // TUDO que vem de terceiro passa por `escaparHtml`. Este é o e-mail de MAIOR volume
-  // do Radar — sai a cada licitação nova que casa com o perfil, para todo tenant — e
-  // interpolava `objeto_compra` cru, texto livre publicado pelo órgão. Medido: 41
-  // contratações já têm `<` no objeto, e um `<a href="…">` ali chega como link clicável
-  // pelo mesmo caminho que o alerta de mensagem acabou de fechar.
-  const local = [params.municipio, params.uf].filter(Boolean).join(' / ')
-  const corpo = `
-    <p style="font-size:14px;color:#334155;margin:0 0 12px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}o Radar encontrou uma <strong>nova licitação</strong> que combina com o seu perfil:</p>
-    <table style="width:100%;font-size:13px;color:#334155;border-collapse:collapse;margin:0 0 8px;">
-      <tr><td style="padding:4px 0;color:#64748b;width:90px;">Objeto</td><td style="padding:4px 0;font-weight:600;">${escaparHtml(params.objeto) || '—'}</td></tr>
-      ${local ? `<tr><td style="padding:4px 0;color:#64748b;">Local</td><td style="padding:4px 0;">${escaparHtml(local)}</td></tr>` : ''}
-      <tr><td style="padding:4px 0;color:#64748b;">Valor est.</td><td style="padding:4px 0;">${brl(params.valor)}</td></tr>
-      ${params.motivo ? `<tr><td style="padding:4px 0;color:#64748b;">Combinou por</td><td style="padding:4px 0;">${escaparHtml(params.motivo)}</td></tr>` : ''}
-    </table>
-    ${btn(params.link, 'Ver a licitação')}
-    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Você recebe este alerta porque a licitação corresponde às preferências do seu perfil no GovHealth. Ajuste-as em Perfil & Preferências.</p>`
-  return enviar(params.to, `📡 Nova licitação para o seu perfil`, moldura('Nova licitação no Radar', corpo))
-}
-
-/**
  * Escapa texto para interpolação segura em HTML de e-mail.
  *
  * A REGRA, para não voltar a viver só na cabeça de quem escreveu: TODO conteúdo de
@@ -120,6 +92,9 @@ function escaparHtml(s: string): string {
 export async function enviarAlertaRadar(params: {
   to: string; nome?: string | null; processo: string; autor?: string | null; trecho: string;
   categorias?: string[]; link: string; fonte?: 'chat' | 'dossie'
+  /** "02/10 às 14:05" (Brasília): quando a mensagem saiu no portal, para ninguém tratar
+   *  um aviso atrasado como prazo correndo agora. */
+  quando?: string | null
 }): Promise<{ enviado: boolean; motivo?: string }> {
   const dossie = params.fonte === 'dossie'
   const oQue = dossie ? 'nova peça' : 'nova mensagem'
@@ -135,6 +110,7 @@ export async function enviarAlertaRadar(params: {
   const corpo = `
     <p style="font-size:14px;color:#334155;margin:0 0 10px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}há uma <strong>${oQue}</strong> ${onde} <strong>${escaparHtml(params.processo)}</strong>${params.autor ? ` (${escaparHtml(params.autor)})` : ''}:</p>
     ${tags}
+    ${params.quando ? `<p style="font-size:12px;color:#64748b;margin:0 0 6px;">Publicada no portal em ${escaparHtml(params.quando)} (horário de Brasília).</p>` : ''}
     <blockquote style="margin:0 0 12px;padding:10px 14px;background:#f8fafc;border-left:3px solid #2f80ed;font-size:13px;color:#334155;">${escaparHtml(params.trecho)}</blockquote>
     ${btn(params.link, 'Abrir no Radar')}
     <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">${rodape}</p>`

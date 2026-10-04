@@ -16,8 +16,9 @@ const JOBS: { name: string; cron: string; run: () => Promise<unknown>; policy?: 
   // A cada 5 min. `stately`: no máximo uma rodada ativa e uma na fila — uma rodada lenta
   // não empilha outras atrás dela, e duas nunca enviam a mesma linha ao mesmo tempo.
   { name: 'radar-notify', cron: '*/5 * * * *', run: runRadarNotify, policy: 'stately', silencioso: true },
-  // O e-mail único do dia, antes do expediente.
-  { name: 'radar-resumo', cron: '30 7 * * *', run: runRadarResumo, policy: 'stately' },
+  // O e-mail único do dia: às 07:30 para todos; nas horas seguintes, só para quem ainda
+  // não recebeu hoje (nova chance para quem falhou). Ver src/jobs/radarResumo.ts.
+  { name: 'radar-resumo', cron: '30 7-20 * * *', run: runRadarResumo, policy: 'stately', silencioso: true },
 ]
 
 async function main() {
@@ -36,9 +37,16 @@ async function main() {
 
   for (const job of JOBS) {
     await boss.work(job.name, async () => {
-      // A rodada de 5 min loga só quando há o que contar (o próprio job decide).
+      // Os jobs frequentes logam só quando há o que contar (o próprio job decide).
       if (!job.silencioso) console.log(`[pg-boss] iniciando ${job.name}`)
-      await job.run()
+      try {
+        await job.run()
+      } catch (err) {
+        // O pg-boss marca o job como falho sem imprimir nada. Sem esta linha, um job
+        // silencioso que quebra toda rodada não deixa rastro no log do worker.
+        console.error(`[pg-boss] ${job.name} falhou:`, err)
+        throw err
+      }
       if (!job.silencioso) console.log(`[pg-boss] concluído ${job.name}`)
     })
   }

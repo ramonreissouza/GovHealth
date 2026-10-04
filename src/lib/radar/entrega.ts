@@ -17,8 +17,17 @@
 // ou o que é urgente num pregão em que ele está: marcado como "Estou participando" ou
 // adicionado à mão ao Radar (origem 'manual'). Todo o resto vai num resumo único por dia.
 
+import { normalizeKey } from '../text'
+
 /** Mais velho que isto na fila não sai mais: chegaria como notícia velha. */
 export const JANELA_FILA_H = 48
+
+/**
+ * Aviso IMEDIATO só enquanto é notícia. Depois de um tempo parado na fila (worker fora,
+ * chave de e-mail ausente), a convocação vai para o resumo: chegar dois dias depois
+ * com cara de "nova mensagem" faria o cliente correr atrás de um prazo que já passou.
+ */
+export const IMEDIATO_MAX_H = 6
 
 export type Entrega = 'agora' | 'resumo'
 
@@ -29,13 +38,15 @@ export interface AlvoEmpresa {
   nomes: (string | null | undefined)[]
 }
 
-/** Maiúsculas, sem acento, só letras e dígitos separados por um espaço, com bordas. */
+/** normalizeKey (sem acento, maiúsculas) + só letras e dígitos separados por um espaço, com bordas. */
 function normalizar(s: string | null | undefined): string {
-  const t = String(s ?? '')
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()
-  return ` ${t} `
+  return ` ${normalizeKey(String(s ?? '')).replace(/[^A-Z0-9]+/g, ' ').trim()} `
 }
+
+// Um CNPJ escrito como CNPJ: 14 dígitos seguidos, ou com a pontuação de sempre, sem
+// dígito colado antes nem depois. Juntar TODOS os dígitos da mensagem (como fazia a
+// primeira versão) deixava "processo 12345678, item 0001-90" virar um CNPJ.
+const CNPJ_NO_TEXTO = /(?<!\d)\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}(?!\d)/g
 
 // Sufixo societário no FIM do nome: "REMORA PRODUTOS PARA SAUDE EIRELI" e "REMORA
 // PRODUTOS PARA SAUDE LTDA" são a mesma empresa no chat.
@@ -64,11 +75,11 @@ export function nucleoNome(nome: string | null | undefined): string | null {
   return ` ${toks.join(' ')} `
 }
 
-/** O texto cita o cliente: o CNPJ (só dígitos) ou o núcleo de um dos nomes dele. */
+/** O texto cita o cliente: o CNPJ dele escrito como CNPJ, ou o núcleo de um dos nomes. */
 export function mencionaEmpresa(texto: string | null | undefined, alvo: AlvoEmpresa): boolean {
   if (!texto) return false
   const cnpj = String(alvo.cnpj ?? '').replace(/\D+/g, '')
-  if (cnpj.length === 14 && texto.replace(/\D+/g, '').includes(cnpj)) return true
+  if (cnpj.length === 14 && [...texto.matchAll(CNPJ_NO_TEXTO)].some((m) => m[0].replace(/\D+/g, '') === cnpj)) return true
   const t = normalizar(texto)
   return alvo.nomes.some((nome) => {
     const nuc = nucleoNome(nome)
@@ -85,11 +96,14 @@ export interface NotificacaoParaEntrega {
   origem: string | null
   /** radar_processos.participando: o cliente marcou que entrou neste pregão. */
   participando?: boolean | null
+  /** Horas desde que entrou na fila. Ausente = recém-chegada. */
+  idadeHoras?: number | null
 }
 
 export function entregaDe(n: NotificacaoParaEntrega, alvo: AlvoEmpresa): Entrega {
   // Licitação nova para o perfil nunca tem prazo de horas: o resumo basta.
   if (n.evento !== 'nova_mensagem') return 'resumo'
+  if ((n.idadeHoras ?? 0) > IMEDIATO_MAX_H) return 'resumo'
   if (mencionaEmpresa(n.texto, alvo)) return 'agora'
   const dele = n.participando === true || n.origem === 'manual'
   if (dele && n.prioridade === 'alta') return 'agora'
