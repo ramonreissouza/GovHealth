@@ -67,8 +67,9 @@ export async function middleware(req: NextRequest) {
 
   // ── NextAuth, cron e Stripe não passam pela auth de sessão do middleware ──────
   // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET; o
-  // webhook do Stripe é validado pela assinatura HMAC na própria rota.
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro') || pathname.startsWith('/api/senha') || pathname.startsWith('/api/equipe/aceitar')) {
+  // webhook do Stripe é validado pela assinatura HMAC na própria rota; o "Vi" do aviso
+  // do Radar, pelo token assinado do link (src/lib/radar/vi-token.ts).
+  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro') || pathname.startsWith('/api/senha') || pathname.startsWith('/api/equipe/aceitar') || pathname === '/api/radar/vi') {
     return NextResponse.next()
   }
 

@@ -1,6 +1,6 @@
 // src/lib/radar/entrega.ts — decide COMO cada alerta de e-mail do Radar sai: na hora,
-// sozinho, ou dentro do resumo do dia. Módulo puro (sem banco), testado em
-// scripts/radar/entrega.teste.ts.
+// sozinho, ou dentro do resumo do dia; e, sem "Vi", para quem ele é repassado. Módulo
+// puro (sem banco), testado em scripts/radar/entrega.teste.ts.
 //
 // POR QUE EXISTE (medido em 02/10/2026, banco da VM Oracle, 14 dias)
 //
@@ -108,4 +108,39 @@ export function entregaDe(n: NotificacaoParaEntrega, alvo: AlvoEmpresa): Entrega
   const dele = n.participando === true || n.origem === 'manual'
   if (dele && n.prioridade === 'alta') return 'agora'
   return 'resumo'
+}
+
+// ── Escalonamento ────────────────────────────────────────────────────────────────
+// O aviso imediato é sobre prazo de horas. Se quem recebeu não confirma ("Vi") em
+// SLA_ESCALONA_MIN, o aviso vai para OUTRA pessoa da equipe — uma só, para não virar
+// e-mail em massa a cada convocação.
+
+/** Minutos sem "Vi" até o aviso ir para a segunda pessoa. */
+export const SLA_ESCALONA_MIN = 15
+/**
+ * Só escala o que saiu há pouco. Sem isto, a primeira rodada depois do deploy (ou de um
+ * worker parado) repassaria de uma vez todo aviso antigo nunca confirmado.
+ */
+export const ESCALONA_JANELA_H = 2
+
+export interface MembroEquipe {
+  id: string
+  email: string
+  /** A conta que assinou (usuarios.titular_id NULL). */
+  titular: boolean
+}
+
+/**
+ * Para quem o aviso vai quando ninguém confirmou. Em ordem: o responsável pelo pregão
+ * (radar_processos.responsavel), o titular da conta, e então o primeiro outro membro.
+ * Nunca quem já recebeu. null = equipe de uma pessoa só: não há para quem repassar.
+ * `equipe` vem ordenada pela entrada na equipe (o mais antigo primeiro).
+ */
+export function quemEscala(p: { destinatario: string; responsavel?: string | null; equipe: MembroEquipe[] }): MembroEquipe | null {
+  const ja = p.destinatario.trim().toLowerCase()
+  const outros = p.equipe.filter((m) => m.email && m.email.trim().toLowerCase() !== ja && m.id.toLowerCase() !== ja)
+  return outros.find((m) => p.responsavel && m.id === p.responsavel)
+    ?? outros.find((m) => m.titular)
+    ?? outros[0]
+    ?? null
 }

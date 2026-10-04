@@ -3,6 +3,7 @@
 
 import { appUrl } from '@/lib/stripe'
 import { planoPorId } from '@/lib/planos'
+import { SLA_ESCALONA_MIN } from '@/lib/radar/entrega'
 
 /** Envia um HTML via Resend. Retorna se enviou (best-effort). */
 async function enviar(to: string, subject: string, html: string): Promise<{ enviado: boolean; motivo?: string }> {
@@ -95,6 +96,12 @@ export async function enviarAlertaRadar(params: {
   /** "02/10 às 14:05" (Brasília): quando a mensagem saiu no portal, para ninguém tratar
    *  um aviso atrasado como prazo correndo agora. */
   quando?: string | null
+  /** Link assinado do botão "Vi" (src/app/api/radar/vi/route.ts). Sem ele, sem botão. */
+  vi?: string | null
+  /** Há alguém na equipe para receber o repasse. Equipe de uma pessoa: o e-mail não promete. */
+  repassa?: boolean
+  /** Repasse: ninguém confirmou o aviso original. Quem recebeu e há quantos minutos. */
+  repasse?: { de: string; minutos: number } | null
 }): Promise<{ enviado: boolean; motivo?: string }> {
   const dossie = params.fonte === 'dossie'
   const oQue = dossie ? 'nova peça' : 'nova mensagem'
@@ -107,18 +114,28 @@ export async function enviarAlertaRadar(params: {
   const tags = (params.categorias ?? []).length
     ? `<p style="margin:0 0 10px;">${params.categorias!.map((c) => `<span style="display:inline-block;background:#fee2e2;color:#b91c1c;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-right:6px;">${escaparHtml(c)}</span>`).join('')}</p>`
     : ''
+  const repasse = params.repasse
+    ? `<p style="font-size:13px;color:#92400e;background:#fef3c7;border-radius:8px;padding:8px 12px;margin:0 0 12px;">Ninguém confirmou este aviso em ${params.repasse.minutos} min. Ele foi para ${escaparHtml(params.repasse.de)} e agora vem para você.</p>`
+    : ''
+  // O "Vi" é o botão principal: é ele que impede o repasse. "Abrir" vira link de texto.
+  const acoes = params.vi
+    ? `${btn(params.vi, 'Vi, estou cuidando')}
+       <p style="font-size:12px;color:#64748b;margin:10px 0 0;">${params.repassa ? `Sem confirmação em ${SLA_ESCALONA_MIN} min, o aviso vai para outra pessoa da equipe. ` : ''}<a href="${escaparHtml(params.link)}" style="color:#2f80ed;">Abrir no portal</a></p>`
+    : btn(params.link, 'Abrir no Radar')
   const corpo = `
+    ${repasse}
     <p style="font-size:14px;color:#334155;margin:0 0 10px;">${params.nome ? escaparHtml(params.nome) + ', ' : ''}há uma <strong>${oQue}</strong> ${onde} <strong>${escaparHtml(params.processo)}</strong>${params.autor ? ` (${escaparHtml(params.autor)})` : ''}:</p>
     ${tags}
     ${params.quando ? `<p style="font-size:12px;color:#64748b;margin:0 0 6px;">Publicada no portal em ${escaparHtml(params.quando)} (horário de Brasília).</p>` : ''}
     <blockquote style="margin:0 0 12px;padding:10px 14px;background:#f8fafc;border-left:3px solid #2f80ed;font-size:13px;color:#334155;">${escaparHtml(params.trecho)}</blockquote>
-    ${btn(params.link, 'Abrir no Radar')}
+    ${acoes}
     <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">${rodape}</p>`
   // O ASSUNTO NÃO É HTML. `enviar()` passa `subject` direto para o Resend, como texto
   // puro — escapar aqui não protege nada e estraga o que o fornecedor lê na caixa.
   // Medido na base: 3.196 objetos com `"`, 1.143 com `'`, 503 com `&` chegariam como
   // `&quot;`, `&#39;`, `&amp;`. O corpo continua precisando do escape; o assunto, não.
-  return enviar(params.to, `🔔 ${dossie ? 'Nova peça' : 'Nova mensagem'} — ${params.processo}`, moldura(titulo, corpo))
+  const prefixo = params.repasse ? '⚠️ Sem resposta' : `🔔 ${dossie ? 'Nova peça' : 'Nova mensagem'}`
+  return enviar(params.to, `${prefixo} — ${params.processo}`, moldura(titulo, corpo))
 }
 
 export interface ResumoRadarProcesso {

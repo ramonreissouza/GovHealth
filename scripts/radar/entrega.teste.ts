@@ -3,7 +3,8 @@
 // Os textos são do chat real (02/10/2026), com o nome da empresa trocado.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { entregaDe, mencionaEmpresa, nucleoNome } from '../../src/lib/radar/entrega'
+import { entregaDe, mencionaEmpresa, nucleoNome, quemEscala } from '../../src/lib/radar/entrega'
+import { tokenVi, lerTokenVi } from '../../src/lib/radar/vi-token'
 
 const cliente = { cnpj: '12.345.678/0001-90', nomes: ['REMORA PRODUTOS PARA SAUDE EIRELI', 'Remora Saúde'] }
 const msg = (texto: string, extra: Partial<{ evento: string; prioridade: string; origem: string; participando: boolean }> = {}) =>
@@ -85,4 +86,39 @@ test('conta sem empresa cadastrada: só a origem manual pode adiantar', () => {
   assert.equal(entregaDe(msg('Convocamos a empresa X LTDA'), vazio), 'resumo')
   assert.equal(entregaDe(msg('Convocamos a empresa X LTDA', { origem: 'manual' }), vazio), 'agora')
   assert.equal(entregaDe(msg(''), vazio), 'resumo')
+})
+
+// ── repasse sem "Vi" ─────────────────────────────────────────────────────────────
+const titular = { id: 'dono@empresa.com', email: 'dono@empresa.com', titular: true }
+const ana = { id: 'ana@empresa.com', email: 'ana@empresa.com', titular: false }
+const bia = { id: 'bia@empresa.com', email: 'bia@empresa.com', titular: false }
+
+test('repasse vai para o responsável pelo pregão, se for outra pessoa', () => {
+  assert.equal(quemEscala({ destinatario: 'dono@empresa.com', responsavel: 'bia@empresa.com', equipe: [titular, ana, bia] })?.email, 'bia@empresa.com')
+})
+
+test('sem responsável: o titular; se foi o titular quem recebeu, o membro mais antigo', () => {
+  assert.equal(quemEscala({ destinatario: 'ana@empresa.com', equipe: [titular, ana, bia] })?.email, 'dono@empresa.com')
+  assert.equal(quemEscala({ destinatario: 'Dono@Empresa.com', equipe: [titular, ana, bia] })?.email, 'ana@empresa.com')
+})
+
+test('nunca para quem já recebeu, e equipe de uma pessoa não tem repasse', () => {
+  assert.equal(quemEscala({ destinatario: 'dono@empresa.com', responsavel: 'dono@empresa.com', equipe: [titular, ana] })?.email, 'ana@empresa.com')
+  assert.equal(quemEscala({ destinatario: 'dono@empresa.com', equipe: [titular] }), null)
+  assert.equal(quemEscala({ destinatario: 'dono@empresa.com', equipe: [] }), null)
+})
+
+test('link "Vi": volta o id; adulterado, de outra chave ou vencido não vale', () => {
+  process.env.NEXTAUTH_SECRET = 'segredo-de-teste'
+  const t = tokenVi('nm:42:email')
+  assert.equal(lerTokenVi(t), 'nm:42:email')
+  const [id, exp, sig] = t.split('.')
+  assert.equal(lerTokenVi(`${Buffer.from('nm:43:email').toString('base64url')}.${exp}.${sig}`), null, 'outro id')
+  assert.equal(lerTokenVi(`${id}.${(parseInt(exp, 36) + 999).toString(36)}.${sig}`), null, 'validade esticada')
+  assert.equal(lerTokenVi(`${id}.${exp}.${sig.slice(0, -2)}xx`), null, 'assinatura trocada')
+  assert.equal(lerTokenVi(t, Date.now() + 8 * 86400_000), null, 'passou de 7 dias')
+  assert.equal(lerTokenVi(''), null)
+  assert.equal(lerTokenVi('a.b'), null)
+  process.env.NEXTAUTH_SECRET = 'outro-segredo'
+  assert.equal(lerTokenVi(t), null, 'assinado com outra chave')
 })
