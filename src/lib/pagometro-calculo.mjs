@@ -160,3 +160,20 @@ export function classificarPagador(orgao) {
   if (RE_ESTADUAL.test(o)) return 'estado'
   return 'outro'
 }
+
+/**
+ * Quem paga, com a esfera do PNCP (orgaoEntidade.esferaId) quando ela veio: ela é dita
+ * pelo próprio órgão e vence o nome. Medido em 04/10/2026: o Grupo Hospitalar Conceição
+ * (federal) e 183 compras federais em 90 dias não tinham nome de federal. Sem esfera (as
+ * contratações anteriores à coluna) ou 'N' (não se aplica), vale o nome.
+ * @param {string | null | undefined} orgao
+ * @param {string | null | undefined} esfera  'F' | 'E' | 'M' | 'D' | 'N'
+ * @returns {'municipio' | 'estado' | 'federal' | 'outro'}
+ */
+export function pagadorDe(orgao, esfera) {
+  const e = String(esfera ?? '').trim().toUpperCase()
+  if (e === 'F') return 'federal'
+  if (e === 'E' || e === 'D') return 'estado'
+  if (e === 'M') return 'municipio'
+  return classificarPagador(orgao)
+}

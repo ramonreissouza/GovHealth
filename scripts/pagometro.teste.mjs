@@ -2,7 +2,10 @@
 // Uso: npm run pagometro:teste (tsx --test: alguns casos importam os módulos .ts do app)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ehFornecedor, somarMsc, resumirDias, faixaDias, classificarPagador, normalizeKey } from '../src/lib/pagometro-calculo.mjs'
+import zlib from 'node:zlib'
+import { ehFornecedor, somarMsc, resumirDias, faixaDias, classificarPagador, normalizeKey, pagadorDe } from '../src/lib/pagometro-calculo.mjs'
+import { lerCsv, eventosDoDia, aplicarDia, resumirUg, AQUECIMENTO_DIAS } from '../src/lib/pagometro-federal.mjs'
+import { lerDoZip, entradasZip } from './lib/zip.mjs'
 
 test('só compra de fornecedor entra: folha e transferência ficam de fora', () => {
   assert.equal(ehFornecedor('33903000'), true)   // material de consumo
@@ -161,4 +164,127 @@ test('frase do selo: com e sem período, sempre com a ressalva', async () => {
   assert.match(semPeriodo, /Não inclui o tempo até o órgão atestar a entrega\.$/)
   assert.equal(diasSelo(0.4), '<1d')
   assert.equal(diasSelo(12.4), '~12d')
+  assert.match(textoPagometro({ ...p, fonte: 'portal', pagador: 'HOSPITAL NAVAL MARCILIO DIAS (UG 765720)' }),
+    /pelos pagamentos registrados no Portal da Transparência \(CGU\)\. Não inclui/)
+})
+
+// ── Fase 2: federal ─────────────────────────────────────────────────────────────────
+
+test('a esfera do PNCP vence o nome; sem esfera (ou N), vale o nome', () => {
+  assert.equal(pagadorDe('HOSPITAL NOSSA SENHORA DA CONCEICAO S/A', 'F'), 'federal')
+  assert.equal(pagadorDe('SECRETARIA DE SAUDE', 'E'), 'estado')
+  assert.equal(pagadorDe('SECRETARIA DE SAUDE', 'M'), 'municipio')
+  assert.equal(pagadorDe('SECRETARIA DE ESTADO DE SAUDE', 'D'), 'estado')
+  assert.equal(pagadorDe('MUNICIPIO DE SALVADOR', null), 'municipio')
+  assert.equal(pagadorDe('CONSELHO REGIONAL DE FARMACIA', 'N'), 'outro')
+})
+
+test('CSV do Portal: ponto e vírgula e aspas dentro do campo', () => {
+  const r = lerCsv('"A";"B"\r\n"1";"texto; com ""aspas"""\r\n"curta"\r\n')
+  assert.deepEqual(r, [{ A: '1', B: 'texto; com "aspas"' }])
+})
+
+// Um dia de arquivos, como a CGU publica (só as colunas que o cálculo lê).
+const csvDia = ({ liqs = [], pags = [] }) => ({
+  liquidacao: '"Código Liquidação";"Data Emissão";"Código Unidade Gestora";"Unidade Gestora";"Órgão"\n'
+    + liqs.map((l) => `"${l.cod}";"${l.data}";"${l.ug}";"HOSPITAL ${l.ug}";"MS"`).join('\n'),
+  liquidacaoEmpenhos: '"Código Liquidação";"Código Empenho";"Código Natureza Despesa Completa";"Valor Liquidado (R$)"\n'
+    + liqs.map((l) => `"${l.cod}";"${l.emp}";"${l.nd ?? '33903000'}";"${l.valor}"`).join('\n'),
+  pagamento: '"Código Pagamento";"Data Emissão";"Código Unidade Gestora";"Unidade Gestora";"Órgão"\n'
+    + pags.map((p) => `"${p.cod}";"${p.data}";"${p.ug}";"HOSPITAL ${p.ug}";"MS"`).join('\n'),
+  pagamentoEmpenhos: '"Código Pagamento";"Código Empenho";"Código Natureza Despesa Completa";"Valor Pago (R$)"\n'
+    + pags.map((p) => `"${p.cod}";"${p.emp}";"${p.nd ?? '33903000'}";"${p.valor}"`).join('\n'),
+})
+
+test('federal: o pagamento quita a liquidação mais antiga do empenho (fila), dias ponderados pelo valor', () => {
+  const filas = new Map()
+  aplicarDia(filas, eventosDoDia(csvDia({ liqs: [{ cod: 'L1', data: '01/09/2026', ug: '250052', emp: 'E1', valor: '100,00' }] })))
+  aplicarDia(filas, eventosDoDia(csvDia({ liqs: [
+    { cod: 'L2', data: '05/09/2026', ug: '250052', emp: 'E1', valor: '50,00' },
+    { cod: 'L3', data: '05/09/2026', ug: '250052', emp: 'E2', valor: '1.000,00', nd: '31901131' }, // folha: fora
+  ] })))
+  const m = aplicarDia(filas, eventosDoDia(csvDia({ pags: [
+    { cod: 'P1', data: '10/09/2026', ug: '250052', emp: 'E1', valor: '120,00' },
+    { cod: 'P2', data: '10/09/2026', ug: '250052', emp: 'E9', valor: '40,00' },   // sem liquidação conhecida
+  ] })))
+  const set = m.get('250052|2026-09')
+  // 100 liquidados em 01/09 pagos em 10/09 (9 dias) + 20 dos de 05/09 (5 dias).
+  assert.equal(set.pago, 120)
+  assert.equal(set.pagoXdias, 100 * 9 + 20 * 5)
+  assert.equal(set.semLiquidacao, 40)
+  assert.deepEqual(filas.get('E1'), [{ data: '2026-09-05', saldo: 30, ug: '250052' }], 'sobram 30 da segunda')
+  assert.equal(filas.has('E2'), false, 'folha não entra na fila')
+})
+
+test('federal: estorno de liquidação tira do fim da fila; pago no mesmo dia da liquidação = 0 dias', () => {
+  const filas = new Map()
+  aplicarDia(filas, eventosDoDia(csvDia({ liqs: [
+    { cod: 'L1', data: '01/09/2026', ug: '1', emp: 'E1', valor: '100,00' },
+    { cod: 'L2', data: '02/09/2026', ug: '1', emp: 'E1', valor: '50,00' },
+    { cod: 'L3', data: '02/09/2026', ug: '1', emp: 'E1', valor: '-50,00' },
+  ] })))
+  assert.deepEqual(filas.get('E1'), [{ data: '2026-09-01', saldo: 100, ug: '1' }])
+  const m = aplicarDia(filas, eventosDoDia(csvDia({
+    liqs: [{ cod: 'L4', data: '03/09/2026', ug: '1', emp: 'E3', valor: '10,00' }],
+    pags: [{ cod: 'P1', data: '03/09/2026', ug: '1', emp: 'E3', valor: '10,00' }],
+  })))
+  assert.equal(m.get('1|2026-09').pagoXdias, 0)
+  assert.equal(filas.has('E3'), false)
+})
+
+test('federal: resumo descarta os meses do aquecimento e exige volume', () => {
+  const mes = (ano, m, pago, pagoXdias, n = 30) => ({ ano, mes: m, pago, pagoXdias, semLiquidacao: 0, pagamentos: n })
+  assert.equal(AQUECIMENTO_DIAS, 90)
+  // Série começa em 01/07: julho, agosto e setembro (até 29/09) são aquecimento.
+  const r = resumirUg([mes(2025, 7, 1e6, 1e6), mes(2025, 10, 300e3, 300e3 * 6), mes(2025, 11, 300e3, 300e3 * 4)], { inicioSerie: '2025-07-01' })
+  assert.equal(r.dias, 5, 'só outubro e novembro: (6+4)/2')
+  assert.equal(r.inicio, '2025-10-01')
+  assert.equal(resumirUg([mes(2025, 10, 100e3, 100e3)], { inicioSerie: '2025-07-01' }).dias, null, 'pouco pago')
+  assert.equal(resumirUg([mes(2025, 10, 900e3, 900e3, 5)], { inicioSerie: '2025-07-01' }).dias, null, 'poucos pagamentos')
+})
+
+test('na tela: compra federal acha a UG pela UASG; sem UASG, sem selo; esfera decide antes do nome', async () => {
+  const { IndicePagometro } = await import('../src/lib/pagometro.ts')
+  const idx = new IndicePagometro()
+  idx.addFederal({ ug: '250052', nome: 'INSTITUTO NACIONAL DO CANCER - RJ', dias: 4.8, meses: 9, mes_inicio: '2026-01-01', mes_fim: '2026-09-01' })
+  idx.add({ ente_tipo: 'municipio', uf: 'RJ', municipio_key: 'RIO DE JANEIRO', municipio_nome: 'Rio de Janeiro', dias: 30, dias_saude: null, meses: 6, mes_inicio: null, mes_fim: null })
+  const fed = idx.resolver('RJ', 'Rio de Janeiro', 'MINISTERIO DA SAUDE', { esfera: 'F', ug: '250052' })
+  assert.equal(fed?.dias, 4.8)
+  assert.equal(fed?.fonte, 'portal')
+  assert.equal(fed?.pagador, 'INSTITUTO NACIONAL DO CANCER - RJ (UG 250052)')
+  assert.equal(idx.resolver('RJ', 'Rio de Janeiro', 'MINISTERIO DA SAUDE', {}), null, 'federal sem UASG: sem selo, nunca o prazo da cidade')
+  assert.equal(idx.resolver('RJ', 'Rio de Janeiro', 'SECRETARIA DE SAUDE', { esfera: 'M' })?.dias, 30, 'esfera M: a prefeitura')
+})
+
+/** Um zip de verdade, montado aqui: uma entrada "deflate" e uma "stored". */
+function montarZip(arquivos) {
+  const locais = [], centrais = []
+  let ofs = 0
+  for (const [nome, texto, comprimir] of arquivos) {
+    const bruto = Buffer.from(texto, 'latin1')
+    const dados = comprimir ? zlib.deflateRawSync(bruto) : bruto
+    const n = Buffer.from(nome)
+    const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(comprimir ? 8 : 0, 8)
+    lh.writeUInt32LE(dados.length, 18); lh.writeUInt32LE(bruto.length, 22); lh.writeUInt16LE(n.length, 26)
+    const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(comprimir ? 8 : 0, 10)
+    ch.writeUInt32LE(dados.length, 20); ch.writeUInt32LE(bruto.length, 24); ch.writeUInt16LE(n.length, 28); ch.writeUInt32LE(ofs, 42)
+    locais.push(lh, n, dados); centrais.push(ch, n)
+    ofs += 30 + n.length + dados.length
+  }
+  const central = Buffer.concat(centrais)
+  const fim = Buffer.alloc(22); fim.writeUInt32LE(0x06054b50, 0); fim.writeUInt16LE(arquivos.length, 8)
+  fim.writeUInt16LE(arquivos.length, 10); fim.writeUInt32LE(central.length, 12); fim.writeUInt32LE(ofs, 16)
+  return Buffer.concat([...locais, central, fim])
+}
+
+test('zip: lê entrada comprimida e não comprimida; acha pelo fim do nome', () => {
+  const zip = montarZip([
+    ['20260930_Despesas_Liquidacao.csv', '"a";"b"\n"ção";"2"\n'.repeat(50), true],
+    ['20260930_Despesas_Liquidacao_EmpenhosImpactados.csv', '"x"\n"1"\n', false],
+  ])
+  assert.equal(entradasZip(zip).length, 2)
+  const r = lerDoZip(zip, ['_Despesas_Liquidacao.csv', '_Despesas_Liquidacao_EmpenhosImpactados.csv'])
+  assert.equal(r.get('_Despesas_Liquidacao.csv').toString('latin1'), '"a";"b"\n"ção";"2"\n'.repeat(50))
+  assert.equal(r.get('_Despesas_Liquidacao_EmpenhosImpactados.csv').toString('latin1'), '"x"\n"1"\n')
+  assert.throws(() => entradasZip(Buffer.from('não é zip, só texto qualquer com mais de vinte e dois bytes')), /não é um arquivo zip/)
 })

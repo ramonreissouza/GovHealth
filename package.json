@@ -75,6 +75,7 @@
     "capag:migrate": "node scripts/migrate-capag.mjs",
     "capag:ingest": "node scripts/ingest-capag.mjs",
     "pagometro:ingest": "node scripts/ingest-pagometro.mjs",
+    "pagometro:federal": "node scripts/ingest-pagometro-federal.mjs",
     "pagometro:teste": "tsx --test scripts/pagometro.teste.mjs",
     "feedback:migrate": "node scripts/migrate-feedback.mjs",
     "lgpd:migrate": "node scripts/migrate-lgpd.mjs",
