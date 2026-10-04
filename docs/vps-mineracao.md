@@ -14,6 +14,7 @@ namespace (`db:5432`, pelo `DATABASE_URL` do Secret `govhealth-secrets`).
 | Pipeline Noite | `mineracao-pipeline-noite` | 01:00 | 20 h |
 | CAPAG | `mineracao-capag` | sábado, 23:30 | 1 h |
 | Pagômetro (nova, sem tarefa no Windows) | `mineracao-pagometro` | domingo, 20:00 | 12 h |
+| Pagômetro federal (nova, sem tarefa no Windows) | `mineracao-pagometro-federal` | todo dia, 21:00 | 5 h |
 | Radar Sync | `mineracao-radar` | a cada 2 h, das 07:00 às 21:00 | 3 h |
 | Radar Urgente | `mineracao-radar-urgente` | a cada 20 min | 19 min |
 

@@ -14,6 +14,9 @@ export interface PagometroInfo {
   meses: number
   inicio: string | null
   fim: string | null
+  /** De onde vem o número: a contabilidade do ente (Siconfi/MSC, municípios e estados) ou
+   *  os pagamentos do Portal da Transparência (Unidades Gestoras federais). */
+  fonte?: 'siconfi' | 'portal'
 }
 
 const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
@@ -37,7 +40,9 @@ export function diasSelo(dias: number): string {
  */
 export function textoPagometro(p: PagometroInfo): string {
   const oQue = p.saude ? 'fornecedores da Saúde' : 'fornecedores'
-  const fonte = 'pela contabilidade que o ente entrega ao Tesouro (Siconfi/MSC)'
+  const fonte = p.fonte === 'portal'
+    ? 'pelos pagamentos registrados no Portal da Transparência (CGU)'
+    : 'pela contabilidade que o ente entrega ao Tesouro (Siconfi/MSC)'
   const base = p.inicio && p.fim
     ? `Média de ${mesAno(p.inicio)} a ${mesAno(p.fim)}, ${fonte}.`
     : `Calculado ${fonte}.`

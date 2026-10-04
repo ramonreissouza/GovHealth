@@ -27,7 +27,11 @@ export interface Licitacao {
     razaoSocial: string
     municipio?: string
     uf?: string
+    /** orgaoEntidade.esferaId do PNCP: F federal, E estadual, M municipal, D distrital. */
+    esferaId?: string | null
   }
+  /** unidadeOrgao.codigoUnidade do PNCP. Na esfera federal é a UASG = Unidade Gestora. */
+  codigoUnidade?: string | null
   modalidadeNome: string
   objetoCompra: string
   valorTotalEstimado: number

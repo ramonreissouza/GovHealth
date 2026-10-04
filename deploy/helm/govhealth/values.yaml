@@ -141,6 +141,14 @@ mineracao:
       agenda: '0 20 * * 0'
       tetoSegundos: 43200   # 12 h
       comando: [node, scripts/ingest-pagometro.mjs, '--meses', '13', '--max-min', '690']
+    # Pagômetro federal (Portal da Transparência, um ZIP de ~10 MB por dia útil): todo dia
+    # às 21:00, do último dia processado até anteontem. A primeira rodada começa a série em
+    # 2025-07-01 e leva vários dias de rodadas para alcançar hoje (retoma sozinha); depois,
+    # cada rodada pega 1 ou 2 dias.
+    pagometro-federal:
+      agenda: '0 21 * * *'
+      tetoSegundos: 18000   # 5 h
+      comando: [node, scripts/ingest-pagometro-federal.mjs, '--desde', '2025-07-01', '--max-min', '280']
     # Radar de Chat, passada completa a cada 2 h das 07:00 às 21:00. No Windows era a
     # mesma janela no relógio da Europa (madrugada no Brasil); aqui, horário de pregão.
     radar:

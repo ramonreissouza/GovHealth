@@ -147,6 +147,8 @@ interface ContratacaoRow {
   tipo_fornecimento: string | null
   fonte: string | null
   link_externo: string | null
+  esfera: string | null
+  codigo_unidade: string | null
   usuario_nome: string | null
   aberto: boolean
 }
@@ -457,7 +459,7 @@ async function buscarDoBanco(params: {
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
             situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo,
-            usuario_nome`
+            usuario_nome, esfera, codigo_unidade`
   const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
   const off = Math.max(0, Math.floor(params.offset ?? 0))
   // Sem coluna válida: mesmo default de sempre (score desc, data, e a PK no fim).
@@ -493,7 +495,10 @@ async function buscarDoBanco(params: {
         razaoSocial: r.razao_social_orgao ?? 'N/D',
         municipio: r.municipio ?? undefined,
         uf: r.uf ?? undefined,
+        esferaId: r.esfera,
       },
+      // Quem paga a compra federal (Pagômetro): a UASG é a Unidade Gestora do Portal.
+      codigoUnidade: r.codigo_unidade,
       modalidadeNome: r.modalidade_nome ?? 'N/D',
       objetoCompra: r.objeto_compra ?? '',
       valorTotalEstimado: r.valor_total_estimado ?? 0,
@@ -812,11 +817,18 @@ export async function GET(req: NextRequest) {
       } catch (capErr) {
         console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
       }
-      // Pagômetro: informação ao lado do CAPAG, fora do score nesta fase. Quem paga é
-      // decidido pelo nome do órgão (`hospital`): prefeitura ou estado; o resto fica sem.
-      // Sem a tabela, o índice vem vazio e o selo não aparece.
+      // Pagômetro: informação ao lado do CAPAG, fora do score nesta fase. Quem paga sai
+      // da esfera do PNCP quando ela veio, senão do nome do órgão (`hospital`); compra
+      // federal resolve pela Unidade Gestora. Sem a tabela, o índice vem vazio e o selo
+      // não aparece.
       const pagIdx = await carregarIndicePagometro()
-      oportunidades = oportunidades.map((o) => ({ ...o, pagometro: pagIdx.resolver(o.uf, o.municipio, o.hospital) }))
+      oportunidades = oportunidades.map((o) => ({
+        ...o,
+        pagometro: pagIdx.resolver(o.uf, o.municipio, o.hospital, {
+          esfera: o.licitacaoRelacionada?.orgaoEntidade.esferaId,
+          ug: o.licitacaoRelacionada?.codigoUnidade,
+        }),
+      }))
     }
 
     // Dedup pelo ID REAL da licitação (nº de controle PNCP). Antes deduplicava por

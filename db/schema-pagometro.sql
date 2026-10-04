@@ -38,3 +38,62 @@ CREATE TABLE IF NOT EXISTS pagometro (
   atualizado_em      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (ente_tipo, uf, municipio_key)
 );
+
+-- ── FEDERAL (Fase 2): por Unidade Gestora, dos arquivos diários de despesa do Portal da
+-- Transparência (CGU). Cálculo em src/lib/pagometro-federal.mjs; carga em
+-- scripts/ingest-pagometro-federal.mjs (npm run pagometro:federal), que aplica este arquivo.
+
+-- Dias já processados. A ordem importa (o pagamento quita a liquidação mais antiga do
+-- empenho), então a carga anda dia a dia e para no primeiro que falta.
+CREATE TABLE IF NOT EXISTS pagometro_fed_dias (
+  dia            date PRIMARY KEY,
+  liquidacoes    int,               -- eventos de fornecedor lidos; NULL = dia pulado (sem arquivo)
+  pagamentos     int,
+  processado_em  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Liquidações de fornecedor ainda não pagas: a fila de cada empenho, em ordem de chegada.
+CREATE TABLE IF NOT EXISTS pagometro_fed_abertas (
+  empenho  text    NOT NULL,
+  ordem    int     NOT NULL,
+  ug       text    NOT NULL,
+  data     date    NOT NULL,
+  saldo    numeric NOT NULL,
+  PRIMARY KEY (empenho, ordem)
+);
+CREATE INDEX IF NOT EXISTS idx_pagometro_fed_abertas_data ON pagometro_fed_abertas (data);
+
+-- Pago a fornecedor por UG e mês do pagamento: o casado com liquidação (e os dias), e o
+-- que não achou liquidação conhecida.
+CREATE TABLE IF NOT EXISTS pagometro_fed_mensal (
+  ug              text    NOT NULL,
+  ano             int     NOT NULL,
+  mes             int     NOT NULL,
+  pago            numeric NOT NULL DEFAULT 0,
+  pago_x_dias     numeric NOT NULL DEFAULT 0,
+  sem_liquidacao  numeric NOT NULL DEFAULT 0,
+  pagamentos      int     NOT NULL DEFAULT 0,   -- só os que casaram com alguma liquidação
+  PRIMARY KEY (ug, ano, mes)
+);
+
+-- Nome de cada UG como o Portal escreve (o último visto).
+CREATE TABLE IF NOT EXISTS pagometro_fed_ugs (
+  ug     text PRIMARY KEY,
+  nome   text,
+  orgao  text
+);
+
+-- O resumo que o app lê: um por UG (= UASG do PNCP na esfera federal).
+CREATE TABLE IF NOT EXISTS pagometro_federal (
+  ug             text PRIMARY KEY,
+  nome           text,
+  orgao          text,
+  dias           numeric,           -- NULL = dado insuficiente
+  pago_periodo   numeric,
+  pagamentos     int,
+  casado         numeric,           -- fração do pago que casou com liquidação conhecida
+  meses          int,
+  mes_inicio     date,
+  mes_fim        date,
+  atualizado_em  timestamptz NOT NULL DEFAULT now()
+);
