@@ -177,3 +177,49 @@ export function pagadorDe(orgao, esfera) {
   if (e === 'M') return 'municipio'
   return classificarPagador(orgao)
 }
+
+// ── Uma decisão só: quem paga a compra e qual número mostrar ─────────────────────────
+// Usada pela tela (src/lib/pagometro.ts) e pela gravação em contratacoes
+// (scripts/lib/pagometro-contratacoes.mjs), que alimenta o score, o filtro e o e-mail.
+// Duas cópias desta regra divergiriam: a tela diria um prazo e o filtro outro.
+
+/** Os dias que uma linha do resumo mostra: Saúde quando houve volume, senão o geral. */
+export function diasDoResumo(l) {
+  if (l?.dias_saude != null) return { dias: Number(l.dias_saude), saude: true }
+  if (l?.dias != null) return { dias: Number(l.dias), saude: false }
+  return null
+}
+
+/**
+ * Quem paga a compra `c` e a linha do resumo dele. `buscar` dá as linhas:
+ * estado(UF), municipio(UF, chave normalizeKey) e federal(UG). Sem linha, null.
+ * @param {{ uf?: string|null, municipio?: string|null, orgao?: string|null, esfera?: string|null, ug?: string|null }} c
+ * @param {{ estado: (uf: string) => any, municipio: (uf: string, chave: string) => any, federal: (ug: string) => any }} buscar
+ */
+export function acharPagador(c, buscar) {
+  const uf = String(c.uf ?? '').trim().toUpperCase()
+  const tipo = pagadorDe(c.orgao, c.esfera)
+  let linha
+  if (tipo === 'estado') linha = uf ? buscar.estado(uf) : null
+  else if (tipo === 'municipio') linha = uf && c.municipio ? buscar.municipio(uf, normalizeKey(c.municipio)) : null
+  else if (tipo === 'federal') linha = String(c.ug ?? '').trim() ? buscar.federal(String(c.ug).trim()) : null
+  if (!linha) return null
+  const d = diasDoResumo(linha)
+  if (!d || faixaDias(d.dias) == null) return null
+  return { tipo, uf, linha, ...d }
+}
+
+/** "Salvador/BA", "Governo do estado (BA)", "INSTITUTO NACIONAL DO CANCER - RJ (UG 250052)". */
+export function rotuloPagador(p, municipioPedido) {
+  if (p.tipo === 'estado') return p.uf === 'DF' ? 'Governo do Distrito Federal' : `Governo do estado (${p.uf})`
+  if (p.tipo === 'municipio') return `${p.linha.municipio_nome ?? municipioPedido}/${p.uf}`
+  // O nome como o Portal escreve: cheio de siglas (UFBA, HC-UFPE) que minúsculas estragariam.
+  return p.linha.nome ? `${String(p.linha.nome).trim()} (UG ${p.linha.ug})` : `Unidade Gestora ${p.linha.ug}`
+}
+
+/** Nota do prazo no sub-score de capacidade de pagamento (0–100), pela faixa. */
+export const SCORE_POR_FAIXA = { rapido: 100, medio: 60, lento: 20 }
+export function scorePagometro(dias) {
+  const f = faixaDias(dias)
+  return f ? SCORE_POR_FAIXA[f] : null
+}

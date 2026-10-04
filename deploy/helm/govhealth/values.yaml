@@ -149,6 +149,12 @@ mineracao:
       agenda: '0 21 * * *'
       tetoSegundos: 18000   # 5 h
       comando: [node, scripts/ingest-pagometro-federal.mjs, '--desde', '2025-07-01', '--max-min', '280']
+      # Cada dia é lido inteiro em memória (~70 MB de CSV). A leitura é linha a linha, mas
+      # o heap padrão do Node num pod pequeno já estourou com a versão anterior.
+      env: { NODE_OPTIONS: '--max-old-space-size=1024' }
+      resources:
+        requests: {cpu: 100m, memory: 512Mi}
+        limits: {cpu: '1', memory: 1536Mi}
     # Radar de Chat, passada completa a cada 2 h das 07:00 às 21:00. No Windows era a
     # mesma janela no relógio da Europa (madrugada no Brasil); aqui, horário de pregão.
     radar:

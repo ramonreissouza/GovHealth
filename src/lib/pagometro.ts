@@ -8,10 +8,9 @@
 // some — nunca um número inventado.
 
 import { query } from '@/lib/db'
-import { normalizeKey } from '@/lib/text'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { lerLocalidade } from '@/lib/capacidade-pagamento'
-import { faixaDias, pagadorDe } from '@/lib/pagometro-calculo.mjs'
+import { acharPagador, faixaDias, rotuloPagador } from '@/lib/pagometro-calculo.mjs'
 import type { FaixaPagometro, PagometroInfo } from '@/lib/pagometro-texto'
 
 export type { FaixaPagometro, PagometroInfo }
@@ -28,19 +27,33 @@ interface LinhaFederal {
   mes_inicio: string | null; mes_fim: string | null
 }
 
-function info(l: Linha, pagador: string): PagometroInfo | null {
-  // A Saúde primeiro: é o que o cliente vende. Sem volume suficiente na Saúde, o geral.
-  const saude = l.dias_saude != null
-  const dias = saude ? Number(l.dias_saude) : l.dias != null ? Number(l.dias) : null
-  const faixa = faixaDias(dias) as FaixaPagometro | null
-  if (dias == null || !faixa) return null
-  return { dias, saude, faixa, pagador, meses: l.meses, inicio: l.mes_inicio, fim: l.mes_fim, fonte: 'siconfi' }
+/** O que acharPagador devolve (src/lib/pagometro-calculo.mjs). */
+interface Achado { tipo: 'estado' | 'municipio' | 'federal'; uf: string; linha: Linha | LinhaFederal; dias: number; saude: boolean }
+
+function paraInfo(p: Achado, municipioPedido?: string | null): PagometroInfo {
+  const l = p.linha
+  return {
+    dias: p.dias, saude: p.saude, faixa: faixaDias(p.dias) as FaixaPagometro,
+    pagador: rotuloPagador(p, municipioPedido),
+    meses: l.meses ?? 0, inicio: l.mes_inicio, fim: l.mes_fim,
+    fonte: p.tipo === 'federal' ? 'portal' : 'siconfi',
+  }
 }
 
+/**
+ * A decisão de quem paga e qual número mostrar mora em acharPagador
+ * (pagometro-calculo.mjs), a MESMA que grava contratacoes.pagometro_dias para o score,
+ * o filtro e o e-mail. Aqui só as tabelas em memória e o texto do selo.
+ */
 export class IndicePagometro {
   private estados = new Map<string, Linha>()
   private municipios = new Map<string, Linha>()
   private federais = new Map<string, LinhaFederal>()
+  private buscar = {
+    estado: (uf: string) => this.estados.get(uf),
+    municipio: (uf: string, chave: string) => this.municipios.get(`${uf}:${chave}`),
+    federal: (ug: string) => this.federais.get(ug),
+  }
 
   add(l: Linha) {
     if (l.ente_tipo === 'estado') this.estados.set(l.uf, l)
@@ -51,25 +64,12 @@ export class IndicePagometro {
 
   /** Unidade Gestora federal como pagadora (pela UASG da compra). */
   federal(ug: string | null | undefined): PagometroInfo | null {
-    const l = ug ? this.federais.get(ug.trim()) : undefined
-    if (!l || l.dias == null) return null
-    const dias = Number(l.dias)
-    const faixa = faixaDias(dias) as FaixaPagometro | null
-    if (!faixa) return null
-    return {
-      dias, saude: false, faixa, fonte: 'portal',
-      // O nome como o Portal escreve: cheio de siglas (UFBA, HC-UFPE, EBSERH) que uma
-      // troca para minúsculas estragaria.
-      pagador: l.nome ? `${l.nome.trim()} (UG ${l.ug})` : `Unidade Gestora ${l.ug}`,
-      meses: l.meses ?? 0, inicio: l.mes_inicio, fim: l.mes_fim,
-    }
+    return this.resolver(null, null, null, { esfera: 'F', ug })
   }
 
   /** O governo do estado (ou do DF) como pagador. */
   estado(uf: string | null | undefined): PagometroInfo | null {
-    const UF = (uf ?? '').trim().toUpperCase()
-    const l = this.estados.get(UF)
-    return l ? info(l, UF === 'DF' ? 'Governo do Distrito Federal' : `Governo do estado (${UF})`) : null
+    return this.resolver(uf, null, null, { esfera: 'E' })
   }
 
   /**
@@ -78,10 +78,7 @@ export class IndicePagometro {
    * do estado diria outra coisa.
    */
   municipio(uf: string | null | undefined, municipio: string | null | undefined): PagometroInfo | null {
-    const UF = (uf ?? '').trim().toUpperCase()
-    if (!UF || !municipio) return null
-    const l = this.municipios.get(`${UF}:${normalizeKey(municipio)}`)
-    return l ? info(l, `${l.municipio_nome ?? municipio}/${UF}`) : null
+    return this.resolver(uf, municipio, null, { esfera: 'M' })
   }
 
   /**
@@ -92,11 +89,8 @@ export class IndicePagometro {
     uf: string | null | undefined, municipio: string | null | undefined, orgao: string | null | undefined,
     ctx: { esfera?: string | null; ug?: string | null } = {},
   ): PagometroInfo | null {
-    const pagador = pagadorDe(orgao, ctx.esfera)
-    if (pagador === 'estado') return this.estado(uf)
-    if (pagador === 'municipio') return this.municipio(uf, municipio)
-    if (pagador === 'federal') return this.federal(ctx.ug)
-    return null
+    const p = acharPagador({ uf, municipio, orgao, esfera: ctx.esfera, ug: ctx.ug }, this.buscar) as Achado | null
+    return p ? paraInfo(p, municipio) : null
   }
 
   /** Emenda federal: o ente que recebe sai da "localidade do gasto" do Portal, lida como

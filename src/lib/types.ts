@@ -83,6 +83,9 @@ export interface Oportunidade {
   // Pagômetro: dias que o ente pagador leva para pagar depois de reconhecer a nota.
   // Ausente/null = sem dado (federal, consórcio ou ente sem contabilidade suficiente).
   pagometro?: PagometroInfo | null
+  /** O prazo gravado na contratação (contratacoes.pagometro_dias) que entra no score;
+   *  o selo usa `pagometro`, do índice. Os dois saem da mesma regra (acharPagador). */
+  diasPagamento?: number | null
   valorEstimado: number
   janelaEmDias: number
   urgencia: 'urgente' | 'alta' | 'media' | 'normal'

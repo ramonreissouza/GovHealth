@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { novoPool } from './lib/pg-ssl.mjs'
 import { lerDoZip } from './lib/zip.mjs'
 import { aplicarDia, eventosDoDia, resumirUg } from '../src/lib/pagometro-federal.mjs'
+import { atualizarPagometroContratacoes } from './lib/pagometro-contratacoes.mjs'
 
 const argv = process.argv.slice(2)
 const arg = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
@@ -270,6 +271,9 @@ async function main() {
   if (SO_SCHEMA) { console.log('✓ schema do Pagômetro aplicado'); return }
   if (!SO_RESUMO) await coletar(ate)
   await resumir()
+  // Roda todo dia: é também o que dá prazo às contratações que a coleta do PNCP trouxe
+  // desde a rodada anterior (Fase 3: score, filtro e e-mail).
+  await atualizarPagometroContratacoes(pool)
 }
 
 try { await main() } catch (e) {

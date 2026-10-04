@@ -39,6 +39,28 @@ CREATE TABLE IF NOT EXISTS pagometro (
   PRIMARY KEY (ente_tipo, uf, municipio_key)
 );
 
+-- ── NO PRODUTO (Fase 3): o prazo de quem paga, gravado em cada contratação ───────────
+-- Preenchido por scripts/lib/pagometro-contratacoes.mjs (ao fim das cargas e em
+-- npm run pagometro:contratacoes) com a MESMA decisão do selo (acharPagador). É o que o
+-- score, o filtro "paga em até" e o e-mail de oportunidades leem: assim o SQL não
+-- precisa reproduzir a regra de quem paga. NULL = sem prazo medido para esse pagador.
+--
+-- ALTER em contratacoes pede bloqueio exclusivo. Este arquivo roda a cada carga, e com
+-- a coleta do PNCP no meio de uma transação longa o ALTER esperaria na fila e TRAVARIA
+-- atrás dele as consultas da tela. Então: só quando a coluna falta, e desistindo em 5 s
+-- (a carga falha e tenta de novo na próxima rodada, sem travar o app).
+DO $$
+BEGIN
+  IF to_regclass('contratacoes') IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name = 'contratacoes' AND column_name = 'pagometro_fonte') THEN
+    SET LOCAL lock_timeout = '5s';
+    ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagometro_dias    numeric;
+    ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagometro_pagador text;
+    ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagometro_fonte   text;   -- 'siconfi' | 'portal'
+  END IF;
+END $$;
+
 -- ── FEDERAL (Fase 2): por Unidade Gestora, dos arquivos diários de despesa do Portal da
 -- Transparência (CGU). Cálculo em src/lib/pagometro-federal.mjs; carga em
 -- scripts/ingest-pagometro-federal.mjs (npm run pagometro:federal), que aplica este arquivo.

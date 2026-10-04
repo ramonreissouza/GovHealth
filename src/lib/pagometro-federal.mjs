@@ -38,7 +38,23 @@ export function* linhasCsv(texto) {
   if (campo || linha.length) { linha.push(campo); yield linha }
 }
 
-/** Linhas como objetos pelo cabeçalho. Linha curta (quebrada) é descartada. */
+/**
+ * Percorre o CSV chamando `fn(campo)` para cada linha, onde `campo(nomeDaColuna)` devolve
+ * o valor. NÃO monta um objeto por linha: os CSVs diários têm ~100 mil linhas × 34
+ * colunas, e montar tudo de uma vez estourou a memória do pod na VPS (05/10/2026, um dia
+ * de julho/2025). Aqui só uma linha está viva por vez. Linha curta (quebrada) é pulada.
+ */
+export function porLinha(texto, fn) {
+  const it = linhasCsv(texto)
+  const cab = it.next().value ?? []
+  const idx = new Map(cab.map((c, i) => [c, i]))
+  for (const l of it) {
+    if (l.length < cab.length) continue
+    fn((nome) => { const i = idx.get(nome); return i == null ? undefined : l[i] })
+  }
+}
+
+/** Linhas como objetos pelo cabeçalho (para testes e tabelas pequenas). Linha curta é descartada. */
 export function lerCsv(texto) {
   const it = linhasCsv(texto)
   const cab = it.next().value ?? []
@@ -65,26 +81,26 @@ const diasEntre = (a, b) => Math.max(0, Math.round((Date.parse(b) - Date.parse(a
  */
 export function eventosDoDia(csv) {
   const ugs = new Map()
-  const cab = (tab) => {
+  // Do cabeçalho de cada documento só ficam data e UG (o resto das 30+ colunas, não).
+  const cab = (tab, colCodigo) => {
     const m = new Map()
-    for (const r of lerCsv(tab)) {
-      const cod = r['Código Liquidação'] ?? r['Código Pagamento']
-      const ug = r['Código Unidade Gestora']
-      m.set(cod, { data: dataBR(r['Data Emissão']), ug })
-      if (ug && !ugs.has(ug)) ugs.set(ug, { nome: r['Unidade Gestora'] ?? null, orgao: r['Órgão'] ?? null })
-    }
+    porLinha(tab, (campo) => {
+      const ug = campo('Código Unidade Gestora')
+      m.set(campo(colCodigo), { data: dataBR(campo('Data Emissão')), ug })
+      if (ug && !ugs.has(ug)) ugs.set(ug, { nome: campo('Unidade Gestora') ?? null, orgao: campo('Órgão') ?? null })
+    })
     return m
   }
-  const liqCab = cab(csv.liquidacao), pagCab = cab(csv.pagamento)
+  const liqCab = cab(csv.liquidacao, 'Código Liquidação'), pagCab = cab(csv.pagamento, 'Código Pagamento')
   const eventos = (tab, cabs, chave, colValor) => {
     const out = []
-    for (const r of lerCsv(tab)) {
-      if (!ehFornecedor(r['Código Natureza Despesa Completa'])) continue
-      const c = cabs.get(r[chave])
-      if (!c?.data || !c.ug) continue
-      const valor = numBR(r[colValor])
-      if (valor) out.push({ empenho: r['Código Empenho'], ug: c.ug, data: c.data, valor })
-    }
+    porLinha(tab, (campo) => {
+      if (!ehFornecedor(campo('Código Natureza Despesa Completa'))) return
+      const c = cabs.get(campo(chave))
+      if (!c?.data || !c.ug) return
+      const valor = numBR(campo(colValor))
+      if (valor) out.push({ empenho: campo('Código Empenho'), ug: c.ug, data: c.data, valor })
+    })
     return out
   }
   return {
