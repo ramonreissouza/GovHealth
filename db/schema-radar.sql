@@ -168,6 +168,22 @@ CREATE TABLE IF NOT EXISTS radar_notificacoes (
 CREATE INDEX IF NOT EXISTS idx_radar_notif_pendente ON radar_notificacoes (status) WHERE status = 'pendente';
 CREATE INDEX IF NOT EXISTS idx_radar_notif_dest     ON radar_notificacoes (destinatario, status);
 CREATE INDEX IF NOT EXISTS idx_radar_notif_resumo   ON radar_notificacoes (destinatario) WHERE status = 'aguardando_resumo';
+-- Aviso no celular (Web Push): uma linha por aparelho/navegador em que a pessoa ativou
+-- (src/lib/push.ts). O endpoint é a URL do serviço de push do navegador e identifica o
+-- aparelho. 404/410 do serviço = inscrição vencida: a linha é apagada no envio.
+CREATE TABLE IF NOT EXISTS push_inscricoes (
+  endpoint      TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL,              -- usuarios.id de quem ativou
+  titular_id    TEXT NOT NULL,
+  p256dh        TEXT NOT NULL,
+  auth          TEXT NOT NULL,
+  aparelho      TEXT,                       -- "Chrome no Android", para a pessoa reconhecer
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ultimo_ok_em  TIMESTAMPTZ,
+  falhas        INT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_push_inscricoes_user ON push_inscricoes (user_id);
+
 -- Repasse do aviso sem "Vi" (src/jobs/radarNotify.ts, passo 3), a cada 5 min: só os
 -- avisos de e-mail ainda não confirmados nem repassados.
 CREATE INDEX IF NOT EXISTS idx_radar_notif_repasse  ON radar_notificacoes (criado_em)

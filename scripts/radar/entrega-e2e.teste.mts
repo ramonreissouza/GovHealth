@@ -38,6 +38,21 @@ globalThis.fetch = (async (url: string | URL | Request, init: RequestInit = {}) 
   return new Response(JSON.stringify({ id: `t${enviados.length}` }), { status: 200, headers: { 'content-type': 'application/json' } })
 }) as typeof fetch
 
+// Push: chaves VAPID de mentira e o envio trocado por um gravador. Nada sai da máquina.
+const webpush = (await import('web-push')).default
+const vapid = webpush.generateVAPIDKeys()
+process.env.VAPID_PUBLIC_KEY = vapid.publicKey
+process.env.VAPID_PRIVATE_KEY = vapid.privateKey
+const pushes: { endpoint: string; aviso: { titulo: string; corpo: string; vi?: string; url: string } }[] = []
+let pushFora = false
+webpush.sendNotification = (async (sub: { endpoint: string }, payload?: string | Buffer | null) => {
+  if (sub.endpoint.includes('vencido')) throw Object.assign(new Error('gone'), { statusCode: 410 })
+  if (pushFora) throw Object.assign(new Error('falha simulada'), { statusCode: 500 })
+  pushes.push({ endpoint: sub.endpoint, aviso: JSON.parse(String(payload)) })
+  return { statusCode: 201, body: '', headers: {} }
+}) as unknown as typeof webpush.sendNotification
+const EP_MEMBRO = 'https://fcm.googleapis.com/fcm/send/membro'
+
 // Banco limpo + schema real.
 const admin = new pg.Client({ connectionString: URL_E2E })
 await admin.connect()
@@ -63,6 +78,11 @@ await query(`INSERT INTO usuarios (id, email, nome, senha_hash, empresa, cnpj)
 // A equipe do cliente tem mais uma pessoa (o repasse vai para ela); a do OUT é só ele.
 const MEM = 'membro@exemplo.com'
 await query(`INSERT INTO usuarios (id, email, nome, senha_hash, titular_id) VALUES ($1, $1, 'Membro', 'x', $2)`, [MEM, CLI])
+// O membro ativou o aviso no celular; o cliente tem uma inscrição que o navegador já descartou.
+await query(
+  `INSERT INTO push_inscricoes (endpoint, user_id, titular_id, p256dh, auth, aparelho)
+   VALUES ($1, $2, $3, 'k', 'a', 'Chrome no Android'), ('https://fcm.googleapis.com/fcm/send/vencido', $3, $3, 'k', 'a', 'antigo')`,
+  [EP_MEMBRO, MEM, CLI])
 const conector = (await query<{ id: string }>(`SELECT id FROM radar_conectores ORDER BY id LIMIT 1`))[0].id
 const proc = (id: string, titular: string, participando = false) =>
   query(`INSERT INTO radar_processos (id, titular_id, user_id, conector_id, cnpj, licitacao_id, titulo, participando, link_portal)
@@ -122,6 +142,8 @@ assert.equal(enviados.length, 5)
 assert.match(enviados[0].html, /Publicada no portal em \d{2}\/\d{2} às \d{2}:\d{2}/, 'o aviso diz quando a mensagem saiu')
 assert.match(enviados[0].html, /\/api\/radar\/vi\?t=[\w.-]+/, 'o aviso traz o botão "Vi"')
 assert.match(enviados[0].html, /vai para outra pessoa da equipe/, 'e avisa que repassa: a equipe tem mais alguém')
+assert.equal(pushes.length, 0, 'o cliente não tem aparelho válido')
+assert.equal((await query(`SELECT 1 FROM push_inscricoes WHERE endpoint LIKE '%vencido'`)).length, 0, 'inscrição vencida (410) é apagada')
 
 await runRadarNotify()
 s = await status()
@@ -184,6 +206,11 @@ assert.equal(rr.semEquipe, 1, 'equipe de uma pessoa: marca, não manda')
 const repasse = enviados.slice(antesRepasse)
 assert.equal(repasse.length, 1)
 assert.equal(repasse[0].to, MEM, 'vai para o outro membro, não para quem já recebeu')
+assert.equal(pushes.length, 1, 'e chega no celular do membro')
+assert.equal(pushes[0].endpoint, EP_MEMBRO)
+assert.match(pushes[0].aviso.titulo, /^⚠️ Sem resposta: Pregão p-auto$/)
+assert.match(pushes[0].aviso.vi ?? '', /\/api\/radar\/vi\?t=/, 'a notificação tem o botão "Vi"')
+assert.equal(rr.push, 1)
 assert.match(repasse[0].subject, /^⚠️ Sem resposta — /)
 assert.match(repasse[0].html, /Ninguém confirmou este aviso em 2\d min\. Ele foi para cliente@exemplo\.com/)
 assert.match(repasse[0].html, /\/api\/radar\/vi\?t=/, 'o repasse também tem "Vi"')
@@ -212,8 +239,9 @@ await query(`UPDATE radar_notificacoes SET escalonado_para = $2 WHERE id = $1`, 
 const info = async (ids: string[]) => Object.fromEntries((await query<{ id: string; escalonado_em: string | null; escalonado_para: string | null }>(
   `SELECT id, escalonado_em, escalonado_para FROM radar_notificacoes WHERE id = ANY($1::text[])`, [ids])).map((r) => [r.id, r]))
 
-resendFalha = true // Resend fora do ar: os dois repasses falham
+resendFalha = true; pushFora = true // e-mail e push fora do ar: os dois repasses falham
 const fora = await runRadarNotify()
+pushFora = false
 assert.equal(fora.repassados, 0)
 assert.equal(fora.falhas, 2)
 let est = await info([naoChegou, indicado])
@@ -241,6 +269,19 @@ const fd5 = new FormData(); fd5.set('t', tkRep)
 assert.match(await (await POST(new NextRequest('http://localhost/api/radar/vi', { method: 'POST', body: fd5 }))).text(),
   /já tinha sido repassado para membro2@exemplo\.com/)
 assert.equal((await query(`SELECT 1 FROM pg_indexes WHERE indexname = 'idx_radar_notif_repasse'`)).length, 1, 'índice do repasse')
+
+// ── e-mail fora, push no ar: o aviso chegou, não é repassado na hora ──────────────
+await query(`INSERT INTO push_inscricoes (endpoint, user_id, titular_id, p256dh, auth) VALUES ('https://fcm.googleapis.com/fcm/send/cliente', $1, $1, 'k', 'a')`, [CLI])
+const soPush = await notif({ titular: CLI, proc: 'p-auto', texto: CITA })
+resendFalha = true
+const antesPush = pushes.length
+await runRadarNotify()
+resendFalha = false
+const linhaPush = (await query<{ status: string; erro: string | null }>(`SELECT status, erro FROM radar_notificacoes WHERE id = $1`, [soPush]))[0]
+assert.equal(linhaPush.status, 'enviado', 'push entregou: conta como enviado')
+assert.ok(linhaPush.erro, 'mas a falha do e-mail fica registrada')
+assert.equal(pushes.slice(antesPush).filter((p) => p.endpoint.endsWith('/cliente')).length, 1)
+assert.match(pushes[pushes.length - 1].aviso.titulo, /^🔔 Pregão p-auto$/)
 
 console.log(`OK: ${enviados.length} e-mails gerados, todos interceptados`)
 process.exit(0)

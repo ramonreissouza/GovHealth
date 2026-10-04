@@ -39,6 +39,10 @@ export const metadata: Metadata = {
     description: 'Copiloto de inteligência comercial para vendas governamentais na saúde',
     type: 'website',
   },
+  // App instalável (src/app/manifest.ts): no iPhone, o aviso por push só chega com o
+  // GovHealth na Tela de Início, aberto como app.
+  icons: { icon: '/icon-192.png', apple: '/icon-192.png' },
+  appleWebApp: { capable: true, title: 'GovHealth', statusBarStyle: 'default' },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -32,6 +32,7 @@ import {
   type AlvoEmpresa, type MembroEquipe,
 } from '@/lib/radar/entrega'
 import { tokenVi } from '@/lib/radar/vi-token'
+import { enviarPushPara } from '@/lib/push'
 
 const LOTE = 500
 /** Por destinatário e rodada. O que sobrar sai na próxima rodada, 5 min depois. */
@@ -85,35 +86,53 @@ function linkVi(notificacaoId: string): string | null {
 }
 
 /**
- * Manda o aviso de `n` para `para`, registrando o resultado na linha `idLinha` (o próprio
- * aviso, ou a linha do repasse). Mesmo e-mail nos dois casos; o repasse só acrescenta a
- * faixa que explica por que chegou.
+ * Manda o aviso de `n` para `para`, por e-mail e por push (os aparelhos que a pessoa
+ * ativou), registrando o resultado na linha `idLinha` (o próprio aviso, ou a linha do
+ * repasse). Mesmo aviso nos dois casos; o repasse só acrescenta o porquê.
+ *
+ * Conta como entregue se QUALQUER canal entregou: com o push no celular, a pessoa pode
+ * dar "Vi" pela notificação, e repassar na hora por causa do e-mail seria alarme falso.
+ * A falha do e-mail fica em `erro` mesmo assim.
  */
 async function enviarAviso(
   n: Aviso, idLinha: string, para: string,
   extra: { repassa?: boolean; repasse?: { de: string; minutos: number; falhou: boolean } },
-): Promise<boolean> {
-  let ok = false
+): Promise<{ ok: boolean; push: number }> {
+  const processo = n.proc_titulo ?? 'Processo monitorado'
+  const vi = linkVi(idLinha)
+  let emailOk = false
   let motivo: string | undefined
   try {
     const r = await enviarAlertaRadar({
-      to: para, processo: n.proc_titulo ?? 'Processo monitorado',
+      to: para, processo,
       autor: n.autor, trecho: (n.texto ?? '').slice(0, 280), link: n.link ?? '',
       categorias: n.categorias ?? [],
       quando: horaBrasilia(n.horario_origem),
       // Do CATÁLOGO, não de um ternário aqui: cinco portais além do Licitações-e
       // leem peça e não conversa, e um id cravado aqui os deixaria prometendo chat.
       fonte: leituraDoConector(n.conector_id),
-      vi: linkVi(idLinha),
+      vi,
       ...extra,
     })
-    ok = r.enviado; motivo = r.motivo
+    emailOk = r.enviado; motivo = r.motivo
   } catch (e) { motivo = String(e) }
+
+  const r = extra.repasse
+  const push = await enviarPushPara(para, {
+    titulo: r ? `${r.falhou ? '⚠️ Aviso não entregue' : '⚠️ Sem resposta'}: ${processo}` : `🔔 ${processo}`,
+    corpo: `${n.autor ? `${n.autor}: ` : ''}${n.texto ?? ''}`,
+    url: n.link || `${siteUrl()}/radar`,
+    vi,
+    tag: `radar-${idLinha}`,
+    urgente: true,
+  })
+
+  const ok = emailOk || push.enviados > 0
   await query(
     `UPDATE radar_notificacoes SET status = $2, tentativas = tentativas + 1, erro = $3 WHERE id = $1`,
-    [idLinha, ok ? 'enviado' : 'falha', ok ? null : (motivo ?? 'falha')],
+    [idLinha, ok ? 'enviado' : 'falha', emailOk ? null : (motivo ?? 'falha')],
   )
-  return ok
+  return { ok, push: push.enviados }
 }
 
 /**
@@ -243,7 +262,7 @@ export async function runRadarNotify() {
   )
   const equipes = await carregarEquipes([...new Set([...agora, ...semVi].map((n) => n.titular_id))])
 
-  let enviados = 0, falhas = 0
+  let enviados = 0, falhas = 0, push = 0
   const porDestinatario = new Map<string, number>()
   for (const n of agora) {
     const ja = porDestinatario.get(n.destinatario) ?? 0
@@ -257,7 +276,9 @@ export async function runRadarNotify() {
     if (!meu.length) continue
     porDestinatario.set(n.destinatario, ja + 1)
     const repassa = quemEscala({ destinatario: n.destinatario, responsavel: n.responsavel, equipe: equipes.get(n.titular_id) ?? [] }) != null
-    if (await enviarAviso(n, n.id, n.destinatario, { repassa })) enviados++; else falhas++
+    const e = await enviarAviso(n, n.id, n.destinatario, { repassa })
+    if (e.ok) enviados++; else falhas++
+    push += e.push
   }
 
   // 3) Repasse.
@@ -290,9 +311,10 @@ export async function runRadarNotify() {
     )
     if (!vez.length) continue
 
-    const ok = await enviarAviso(n, idRepasse, para.email, {
+    const { ok, push: p } = await enviarAviso(n, idRepasse, para.email, {
       repasse: { de: n.destinatario, minutos: n.minutos, falhou: n.status === 'falha' },
     })
+    push += p
     if (ok) repassados++
     else {
       falhas++
@@ -320,6 +342,7 @@ export async function runRadarNotify() {
     imediatos: agora.length,
     enviados, falhas,
     repassados, semEquipe,
+    push,
   }
   if (resultado.expirados || resultado.pendentes || semVi.length) {
     console.log(`[cron:radar-notify] ${JSON.stringify(resultado)} em ${Date.now() - inicio}ms`)
