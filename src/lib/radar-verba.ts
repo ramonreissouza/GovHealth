@@ -6,6 +6,7 @@
 import { parseValorBR, type EmendaParlamentar } from '@/lib/emendas'
 // Type-only: apagado na compilação, não puxa o runtime (pg) de capacidade-pagamento.
 import type { CapacidadePagamento } from '@/lib/capacidade-pagamento'
+import type { PagometroInfo } from '@/lib/pagometro-texto'
 
 export type Temperatura = 'quente' | 'morno' | 'frio'
 
@@ -29,6 +30,8 @@ export interface EmendaRadar {
   // Capacidade de pagamento da instituição (CAPAG do município/UF beneficiário).
   capacidadePagamento?: { fonte: 'capag' | 'serasa' | 'na'; nota: 'A' | 'B' | 'C' | 'D' | null; label: string }
   esfera?: 'federal' | 'estadual' // origem: Portal da Transparência (federal) ou portal estadual
+  // Pagômetro do ente que recebe a verba (src/lib/pagometro.ts). Fora do score.
+  pagometro?: PagometroInfo | null
 }
 
 // Emenda ESTADUAL (portal de transparência do estado) crua, para o radar.

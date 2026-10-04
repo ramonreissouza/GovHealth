@@ -7,6 +7,7 @@ import { buscarEmendasSaudeAno, type EmendaParlamentar } from '@/lib/emendas'
 import { lerEmendasSaude, lerEmendasEstaduais } from '@/lib/emendas-ingest'
 import { toEmendaRadar, toEmendaRadarEstadual, type EmendaRadar } from '@/lib/radar-verba'
 import { carregarIndiceCapag, carregarComportamentoPagamento, orgaoKey } from '@/lib/capacidade-pagamento'
+import { carregarIndicePagometro } from '@/lib/pagometro'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 
 export const runtime = 'nodejs'
@@ -55,9 +56,14 @@ export async function GET(req: NextRequest) {
     // Capacidade de pagamento (CAPAG) do ente beneficiário entra no score da emenda.
     // Índice carregado em lote (cacheado); resolvido por UF/município da localidade do gasto.
     const capagIdx = await carregarIndiceCapag()
-    let emendas: EmendaRadar[] = brutas.map((e) =>
-      toEmendaRadar(e, capagIdx.resolveLocalidade(e.localidadeDoGasto)),
-    )
+    // Pagômetro do ente que recebe: a emenda federal vai para o município, ou para o
+    // estado quando a localidade é "(UF)"; a estadual é paga pelo governo do estado.
+    // Sem a tabela, o índice vem vazio e o selo não aparece.
+    const pagIdx = await carregarIndicePagometro()
+    let emendas: EmendaRadar[] = brutas.map((e) => ({
+      ...toEmendaRadar(e, capagIdx.resolveLocalidade(e.localidadeDoGasto)),
+      pagometro: pagIdx.resolverLocalidade(e.localidadeDoGasto),
+    }))
 
     // Emendas ESTADUAIS (portais de transparência estaduais; piloto BA) — lead que o
     // Portal federal não tem. Entram como fonte adicional (esfera='estadual'), com a
@@ -75,7 +81,7 @@ export async function GET(req: NextRequest) {
         if (comp && comp.valorPago12m > 0) {
           cap.label = `${cap.label} · ${e.orgao} pagou ${brl(comp.valorPago12m)}/12m (${comp.qtdPagamentos.toLocaleString('pt-BR')} pagtos)`
         }
-        return toEmendaRadarEstadual(e, cap)
+        return { ...toEmendaRadarEstadual(e, cap), pagometro: pagIdx.estado(e.uf) }
       }))
     }
 

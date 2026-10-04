@@ -22,6 +22,7 @@ import { isTipoFornecimento } from '@/lib/tipo-sql'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 import { carregarIndiceCapag, type IndiceCapag } from '@/lib/capacidade-pagamento'
+import { carregarIndicePagometro } from '@/lib/pagometro'
 import { normalizeText } from '@/lib/text'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
@@ -811,6 +812,11 @@ export async function GET(req: NextRequest) {
       } catch (capErr) {
         console.warn('[opportunities] capacidade de pagamento indisponível:', String(capErr))
       }
+      // Pagômetro: informação ao lado do CAPAG, fora do score nesta fase. Quem paga é
+      // decidido pelo nome do órgão (`hospital`): prefeitura ou estado; o resto fica sem.
+      // Sem a tabela, o índice vem vazio e o selo não aparece.
+      const pagIdx = await carregarIndicePagometro()
+      oportunidades = oportunidades.map((o) => ({ ...o, pagometro: pagIdx.resolver(o.uf, o.municipio, o.hospital) }))
     }
 
     // Dedup pelo ID REAL da licitação (nº de controle PNCP). Antes deduplicava por

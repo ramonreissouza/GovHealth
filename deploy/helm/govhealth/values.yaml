@@ -133,6 +133,14 @@ mineracao:
       agenda: '30 23 * * 6'
       tetoSegundos: 3600    # 1 h
       comando: [node, scripts/ingest-capag.mjs]
+    # Pagômetro (Tesouro/Siconfi, MSC): domingo 20:00, janela móvel de 13 meses, só o que
+    # falta no banco. A API dá 429 se apertada, então é devagar (~2 s por chamada): as
+    # primeiras semanas completam o histórico; depois cada rodada pega o mês novo e quem
+    # entregou atrasado. Retoma de onde parou se o teto cortar.
+    pagometro:
+      agenda: '0 20 * * 0'
+      tetoSegundos: 43200   # 12 h
+      comando: [node, scripts/ingest-pagometro.mjs, '--meses', '13', '--max-min', '690']
     # Radar de Chat, passada completa a cada 2 h das 07:00 às 21:00. No Windows era a
     # mesma janela no relógio da Europa (madrugada no Brasil); aqui, horário de pregão.
     radar:

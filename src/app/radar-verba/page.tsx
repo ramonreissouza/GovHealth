@@ -19,6 +19,8 @@ import { getTerritorio } from '@/lib/territorio'
 import { useSetupUFDefault } from '@/lib/use-setup-uf'
 import TerritorioToggle from '@/components/ui/TerritorioToggle'
 import CapagBadge from '@/components/ui/CapagBadge'
+import PagometroBadge from '@/components/ui/PagometroBadge'
+import { textoPagometro } from '@/lib/pagometro-texto'
 import { Carregando } from '@/components/ui/Carregando'
 
 const UFS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']
@@ -354,6 +356,7 @@ function RadarVerbaConteudo() {
                         <CapagBadge cap={selected.capacidadePagamento} /> capac. pgto
                       </span>
                     )}
+                    <PagometroBadge p={selected.pagometro} />
                   </div>
                   <h2 className="font-heading font-bold text-[16px] text-strong mt-1.5">{selected.municipio || '—'} / {selected.uf || '—'}</h2>
                   <p className="text-[11px] text-muted">{selected.autor || 'Autor N/D'} · emenda {selected.numeroEmenda || selected.codigoEmenda}</p>
@@ -371,6 +374,12 @@ function RadarVerbaConteudo() {
                 <div className="text-[11px] text-muted">
                   <span className="text-faint">Subfunção:</span> {selected.subfuncao || '—'} · <span className="text-faint">Tipo:</span> {selected.tipo || '—'} · <span className="text-faint">% executado:</span> {selected.percentualExecutado}%
                 </div>
+                {/* No detalhe há espaço para a frase inteira, com a ressalva do que não é medido. */}
+                {selected.pagometro && (
+                  <p className="text-[11px] text-muted leading-snug">
+                    <span className="text-faint">Pagômetro:</span> {textoPagometro(selected.pagometro)}
+                  </p>
+                )}
 
                 {/* PARA QUE É A VERBA — a pergunta que o detalhe não respondia.
                     Tudo isto já vinha do Portal junto com o empenho e era descartado:

@@ -44,6 +44,23 @@ const ESTADOS_UF: Record<string, string> = {
   'SANTA CATARINA': 'SC', 'SAO PAULO': 'SP', SERGIPE: 'SE', TOCANTINS: 'TO',
 }
 
+/**
+ * Lê a "localidade do gasto" crua do Portal da Transparência (emendas). Marcadores do
+ * governo: "Cidade (SP)", "Cidade - PB", "Embu/SP" = municipal; "PARANÁ (UF)" ou só o
+ * nome do estado = estadual (municipio null); "MÚLTIPLO"/"NACIONAL" = sem ente → null.
+ * Compartilhado pelo CAPAG e pelo Pagômetro, para os dois lerem a emenda do mesmo jeito.
+ */
+export function lerLocalidade(localidade: string | null | undefined): { uf: string; municipio: string | null } | null {
+  const loc = (localidade ?? '').trim()
+  if (!loc || /m[úu]ltiplo|nacional|exterior/i.test(loc)) return null
+  const sigla = loc.match(/[([/-]\s*([A-Za-z]{2})\)?\s*$/)?.[1]?.toUpperCase()
+  const nome = loc.replace(/\s*[([/-]\s*[A-Za-z]{2}\)?\s*$/, '').trim()
+  // Sigla real ("- PB"/"(SP)") → municipal. "(UF)" ou sem sigla → talvez um estado.
+  if (sigla && sigla !== 'UF') return { uf: sigla, municipio: nome }
+  const uf = ESTADOS_UF[normalizeKey(nome)]
+  return uf ? { uf, municipio: null } : null
+}
+
 export function scoreDaNota(nota: NotaCapag): number {
   return SCORE_POR_NOTA[nota] ?? NEUTRO_SCORE
 }
@@ -72,25 +89,11 @@ export class IndiceCapag {
     else this.municipios.set(`${r.uf}:${r.municipio_key}`, nota)
   }
 
-  // Resolve a partir da "localidade do gasto" crua do Portal (emendas). Trata os
-  // marcadores do governo: "Cidade (SP)" = municipal; "PARANÁ (UF)" ou nome de estado
-  // = estadual; "MÚLTIPLO"/"NACIONAL" = sem ente definido → neutro.
+  // Resolve a partir da "localidade do gasto" crua do Portal (emendas); ver lerLocalidade.
   resolveLocalidade(localidade: string | null | undefined): CapacidadePagamento {
-    const loc = (localidade ?? '').trim()
-    if (!loc || /m[úu]ltiplo|nacional|exterior/i.test(loc)) return capacidadeNeutra('sem ente')
-    // Sufixo de UF em qualquer formato do Portal: "Cidade - PB", "Embu/SP", "Bahia (UF)".
-    const sigla = loc.match(/[([/-]\s*([A-Za-z]{2})\)?\s*$/)?.[1]?.toUpperCase()
-    const nome = loc.replace(/\s*[([/-]\s*[A-Za-z]{2}\)?\s*$/, '').trim()
-    // "(UF)" é o marcador de nível ESTADUAL do Portal → resolve pela nota do estado.
-    if (sigla === 'UF') {
-      const uf = ESTADOS_UF[normalizeKey(nome)]
-      return uf ? this.resolvePublico(uf, null) : capacidadeNeutra('sem ente')
-    }
-    // Sigla real ("- PB"/"(SP)") → municipal (com fallback estadual dentro de resolvePublico).
-    if (sigla) return this.resolvePublico(sigla, nome)
-    // Sem sigla: o nome pode ser um estado ("PARANÁ"); senão, sem ente.
-    const uf = ESTADOS_UF[normalizeKey(nome)]
-    return uf ? this.resolvePublico(uf, null) : capacidadeNeutra('sem ente')
+    const l = lerLocalidade(localidade)
+    // Municipal com fallback estadual dentro de resolvePublico.
+    return l ? this.resolvePublico(l.uf, l.municipio) : capacidadeNeutra('sem ente')
   }
 
   // Resolve a capacidade de um ente PÚBLICO: tenta o município; se não achar (ou o

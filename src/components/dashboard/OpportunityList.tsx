@@ -8,6 +8,7 @@ import { Oportunidade } from '@/lib/types'
 import { clsx } from 'clsx'
 import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import CapagBadge from '@/components/ui/CapagBadge'
+import PagometroBadge from '@/components/ui/PagometroBadge'
 import { produtosQueCasam, type ProdutoPortfolio } from '@/lib/portfolio'
 import type { OpportunitiesData } from './DashboardView'
 import { Carregando } from '@/components/ui/Carregando'
@@ -173,6 +174,7 @@ export default function OpportunityList({ data, loading, error, limit = 6, produ
                 {opp.capacidadePagamento && opp.capacidadePagamento.fonte !== 'na' && (
                   <CapagBadge cap={opp.capacidadePagamento} className="w-5 h-4 text-[9px]" />
                 )}
+                <PagometroBadge p={opp.pagometro} />
                 {lic?.modalidadeNome && (
                   <span className="text-[10px] text-faint">· {lic.modalidadeNome}</span>
                 )}
