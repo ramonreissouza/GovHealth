@@ -12,6 +12,7 @@ import { signOut, useSession } from 'next-auth/react'
 import { clsx } from 'clsx'
 import { QRCodeSVG } from 'qrcode.react'
 import { loadStripe } from '@stripe/stripe-js'
+import { dadosCobrancaSchema, primeiraMensagem } from '@/lib/dados-cobranca'
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from '@stripe/react-stripe-js'
 import { Check, ArrowLeft, ShieldCheck, QrCode, CreditCard, FileText, Loader2, CheckCircle2, Lock, Copy, Mail, LogOut, Building2, Radar } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco, orcamentoHref } from '@/lib/planos'
@@ -152,7 +153,9 @@ function Checkout() {
 
   async function assinar() {
     setErro('')
-    if (!f.nome.trim() || !f.email.trim()) { setErro('Preencha nome e e-mail.'); return }
+    // Mesma regra das rotas (src/lib/dados-cobranca.ts): o erro aparece aqui, antes de enviar.
+    const valido = dadosCobrancaSchema.safeParse(f)
+    if (!valido.success) { setErro(primeiraMensagem(valido.error)); return }
     if (!aceite) { setErro('Para continuar, marque que leu e aceita os Termos de Uso e a Política de Privacidade.'); return }
 
     // CARTÃO → checkout EMBUTIDO na página (recorrente). Congela os dados e mostra
@@ -254,13 +257,13 @@ function Checkout() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Empresa"><input className={inp} value={f.empresa} onChange={set('empresa')} /></Field>
-                  <Field label="Instituição de trabalho"><input className={inp} value={f.instituicao} onChange={set('instituicao')} placeholder="Hospital, distribuidora…" /></Field>
+                  <Field label="Instituição de trabalho *"><input className={inp} value={f.instituicao} onChange={set('instituicao')} placeholder="Hospital, distribuidora…" /></Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="CPF ou CNPJ"><input className={inp} value={f.cpfCnpj} onChange={set('cpfCnpj')} placeholder="p/ nota fiscal" /></Field>
-                  <Field label="Telefone"><input className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Field>
+                  <Field label="CPF ou CNPJ *"><input className={inp} value={f.cpfCnpj} onChange={set('cpfCnpj')} placeholder="p/ nota fiscal" /></Field>
+                  <Field label="Telefone *"><input className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Field>
                 </div>
-                <Field label="Endereço"><input className={inp} value={f.endereco} onChange={set('endereco')} placeholder="Rua, nº, cidade/UF" /></Field>
+                <Field label="Endereço *"><input className={inp} value={f.endereco} onChange={set('endereco')} placeholder="Rua, nº, cidade/UF" /></Field>
               </div>
 
               {/* Método de pagamento */}

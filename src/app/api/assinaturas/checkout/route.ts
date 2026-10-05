@@ -8,19 +8,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { criarAssinatura, marcarCheckoutIniciado, registrarAceite, ipDaRequisicao, erroDeAceite } from '@/lib/assinaturas'
 import { planoPorId } from '@/lib/planos'
+import { dadosCobrancaSchema, primeiraMensagem } from '@/lib/dados-cobranca'
 import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
 import { getStripe, stripeConfigurado, lineItemDoPlano, appUrl } from '@/lib/stripe'
 
 export const runtime = 'nodejs'
 
-const Schema = z.object({
-  nome: z.string().min(1).max(120),
-  email: z.string().email(),
-  empresa: z.string().max(160).optional(),
-  instituicao: z.string().max(160).optional(),
-  cpfCnpj: z.string().max(20).optional(),
-  telefone: z.string().max(40).optional(),
-  endereco: z.string().max(240).optional(),
+// Os dados de cobrança vêm do esquema compartilhado com a tela (src/lib/dados-cobranca.ts).
+const Schema = dadosCobrancaSchema.extend({
   plano: z.enum(['essencial', 'pro']),
   // Mesma regra de /api/assinaturas: aceite só da versão vigente.
   termosVersao: z.literal(TERMOS_VERSAO, { errorMap: () => ({ message: 'Os Termos de Uso foram atualizados. Recarregue a página e confira o aceite.' }) }),
@@ -33,7 +28,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Pagamento por cartão indisponível no momento. Tente PIX/Boleto.' }, { status: 503 })
     }
     const parsed = Schema.safeParse(await req.json().catch(() => ({})))
-    if (!parsed.success) return NextResponse.json({ error: erroDeAceite(parsed.error) ?? 'Dados inválidos', detalhes: parsed.error.flatten() }, { status: 400 })
+    if (!parsed.success) return NextResponse.json({ error: erroDeAceite(parsed.error) ?? primeiraMensagem(parsed.error), detalhes: parsed.error.flatten() }, { status: 400 })
     const d = parsed.data
     const plano = planoPorId(d.plano)!
 
