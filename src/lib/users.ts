@@ -2,7 +2,7 @@
 // Senhas em bcrypt. Login rejeita conta suspensa/excluída.
 
 import bcrypt from 'bcryptjs'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, randomBytes, randomInt } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
 
 export type Role = 'master' | 'user'
@@ -179,7 +179,10 @@ export async function kpisAdmin() {
 
 /**
  * Provisiona/atualiza a conta ao ativar uma assinatura paga (webhook Stripe).
- * - Conta nova: cria com senha temporária (retornada p/ envio ao cliente).
+ * - Conta nova: cria SEM senha utilizável. O cliente define a senha pelo link de uso
+ *   único do e-mail de boas-vindas (criarLinkDefinirSenha, em lib/seguranca). Até a
+ *   revisão da #63 a conta nascia com uma senha temporária enviada em texto puro, que
+ *   virava a credencial real enquanto ninguém a trocasse.
  * - Conta existente: só atualiza plano/status/expiração (mantém a senha).
  * Nunca mexe em conta master. Idempotente.
  */
@@ -187,7 +190,7 @@ export async function provisionarPorAssinatura(data: {
   email: string; nome?: string | null; plano: string; empresa?: string | null
   telefone?: string | null; instituicao?: string | null; stripeCustomerId?: string | null
   expira_em?: string | null
-}): Promise<{ criada: boolean; senhaTemporaria?: string }> {
+}): Promise<{ criada: boolean }> {
   const id = norm(data.email)
   const existente = await queryOne<{ role: Role }>(`SELECT role FROM usuarios WHERE id=$1`, [id])
 
@@ -198,21 +201,26 @@ export async function provisionarPorAssinatura(data: {
           SET plano=$2, status_assinatura='ativa', suspenso=false, deleted_at=NULL,
               expira_em=COALESCE($3::date, expira_em),
               stripe_customer_id=COALESCE($4, stripe_customer_id), atualizado_em=now()
-        WHERE id=$1`,
+        WHERE id=$1 AND role<>'master'`,
       [id, data.plano, data.expira_em ?? null, data.stripeCustomerId ?? null],
     )
     return { criada: false }
   }
 
-  const senha = gerarSenhaTemporaria()
-  const hash = await bcrypt.hash(senha, 10)
-  await query(
+  // Hash de 32 bytes aleatórios que ninguém conhece nem recebe: a conta existe, mas só
+  // se entra nela depois de definir a senha pelo link.
+  const hash = await bcrypt.hash(randomBytes(32).toString('base64url'), 10)
+  // ON CONFLICT: duas entregas do mesmo pagamento chegando juntas não podem quebrar uma
+  // delas. Quem não inseriu não criou a conta, e diz isso.
+  const inserida = await query<{ id: string }>(
     `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,instituicao,plano,status_assinatura,expira_em,stripe_customer_id)
-     VALUES ($1,$1,$2,$3,'user',$4,$5,$6,$7,'ativa',$8,$9)`,
+     VALUES ($1,$1,$2,$3,'user',$4,$5,$6,$7,'ativa',$8,$9)
+     ON CONFLICT (id) DO NOTHING
+     RETURNING id`,
     [id, data.nome ?? null, hash, data.empresa ?? null, data.telefone ?? null, data.instituicao ?? null,
      data.plano, data.expira_em ?? null, data.stripeCustomerId ?? null],
   )
-  return { criada: true, senhaTemporaria: senha }
+  return { criada: inserida.length > 0 }
 }
 
 /** Marca status da conta pela assinatura (inadimplente/cancelada) sem excluir. */
@@ -452,10 +460,13 @@ export async function stripeCustomerIdDe(id: string): Promise<string | null> {
   return r?.c ?? null
 }
 
-/** Senha temporária legível (mostrada uma vez ao admin). */
+/**
+ * Senha temporária legível (mostrada uma vez ao admin). Sorteio por `randomInt`, que é
+ * CSPRNG — `Math.random` não é, e era o que gerava estas senhas até a revisão da #63.
+ */
 export function gerarSenhaTemporaria(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
   let s = ''
-  for (let i = 0; i < 10; i++) s += chars[Math.floor(Math.random() * chars.length)]
+  for (let i = 0; i < 10; i++) s += chars[randomInt(chars.length)]
   return s + '!'
 }

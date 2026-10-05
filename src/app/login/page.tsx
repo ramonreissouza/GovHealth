@@ -1,6 +1,6 @@
 'use client'
 // src/app/login/page.tsx — Entrar (login) + Criar conta (autocadastro c/ teste
-// grátis de 3 dias e escolha de plano). O modo inicial vem de ?criar=1 / ?plano=X.
+// grátis de DIAS_TESTE_GRATIS dias e escolha de plano). O modo inicial vem de ?criar=1 / ?plano=X.
 
 import { signIn, getSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -9,7 +9,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { clsx } from 'clsx'
 import { Loader2, Check, Eye, EyeOff, ArrowLeft } from 'lucide-react'
-import { PLANOS, planoPorId, formatarPreco } from '@/lib/planos'
+import { PLANOS, planoPorId, formatarPreco, DIAS_TESTE_GRATIS } from '@/lib/planos'
 
 type Modo = 'entrar' | 'criar'
 
@@ -244,8 +244,8 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
     <div className="bg-bg2 border border-subtle rounded-xl p-7 grid md:grid-cols-[1fr_320px] gap-7">
       {/* Formulário */}
       <div>
-        <h1 className="text-[17px] font-heading font-semibold text-strong mb-1">Criar conta · <span className="text-gradient-brand">3 dias grátis</span></h1>
-        <p className="text-[13px] text-muted mb-5">Sem cartão agora. Você testa por 3 dias e decide se assina depois.</p>
+        <h1 className="text-[17px] font-heading font-semibold text-strong mb-1">Criar conta · <span className="text-gradient-brand">{DIAS_TESTE_GRATIS} dias grátis</span></h1>
+        <p className="text-[13px] text-muted mb-5">Sem cartão agora. Você testa por {DIAS_TESTE_GRATIS} dias e decide se assina depois.</p>
 
         <form onSubmit={handleCriar} className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
@@ -291,7 +291,7 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading}
             className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60">
-            {loading && <Loader2 size={14} className="animate-spin" />} Começar teste de 3 dias
+            {loading && <Loader2 size={14} className="animate-spin" />} Começar teste de {DIAS_TESTE_GRATIS} dias
           </button>
           <p className="text-[10.5px] text-faint text-center">Ao criar a conta você concorda com nossos termos. Cancele quando quiser.</p>
         </form>

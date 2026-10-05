@@ -1,17 +1,17 @@
-// src/app/api/cadastro/route.ts — autocadastro PÚBLICO com TESTE GRÁTIS de 3 dias.
+// src/app/api/cadastro/route.ts — autocadastro PÚBLICO com TESTE GRÁTIS (DIAS_TESTE_GRATIS, em lib/planos).
 // Cria a conta (senha em bcrypt) no plano escolhido com status 'trial' e
-// expira_em = hoje + 3 dias. O login é feito em seguida pelo cliente (NextAuth).
+// expira_em = hoje + DIAS_TESTE_GRATIS. O login é feito em seguida pelo cliente (NextAuth).
 // Rota pública (rate-limitada pelo middleware).
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { emailExiste, criarUsuario } from '@/lib/users'
-import { planoPorId } from '@/lib/planos'
+import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { enviarBoasVindasTrial } from '@/lib/email'
 
 export const runtime = 'nodejs'
 
-const DIAS_TRIAL = 3
+const DIAS_TRIAL = DIAS_TESTE_GRATIS
 
 const Schema = z.object({
   nome: z.string().min(2, 'Informe seu nome').max(120),

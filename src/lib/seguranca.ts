@@ -6,7 +6,7 @@
 // O master (admin) é sempre isento das duas (evita lock-out operacional).
 
 import bcrypt from 'bcryptjs'
-import { randomUUID, randomBytes } from 'node:crypto'
+import { randomUUID, randomBytes, randomInt } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
 import { enviarCodigoAcesso, enviarRedefinicaoSenha } from '@/lib/email'
 import { senhaForteOk } from '@/lib/users'
@@ -20,9 +20,17 @@ const OTP_MAX_TENTATIVAS = 5
 const SESSAO_TTL_DIAS = 7
 const JANELA_ATIVA_MIN = 10 // sessão é "ativa" se vista nos últimos 10 min
 const RESET_TTL_MIN = 30    // validade do link de redefinição de senha
+/**
+ * Validade do link de CRIAR senha que vai no e-mail de boas-vindas da assinatura. Mais
+ * longa que a do "esqueci minha senha" porque quem acabou de pagar pode abrir o e-mail
+ * horas depois; curta o bastante para não virar credencial guardada na caixa postal. Se
+ * expirar, o próprio "Esqueci minha senha" emite outro (revisão da #63).
+ */
+export const BOAS_VINDAS_LINK_HORAS = 24
 
 function codigo6(): string {
-  return String(Math.floor(100000 + Math.random() * 900000))
+  // randomInt é CSPRNG; Math.random, que gerava este código até a revisão da #63, não é.
+  return String(randomInt(100000, 1000000))
 }
 
 /** Gera, armazena (hash) e envia o OTP. Retorna se o e-mail saiu. */
@@ -98,12 +106,30 @@ export async function solicitarResetSenha(email: string): Promise<void> {
   const row = await queryOne<{ id: string; email: string; nome: string | null }>(
     `SELECT id, email, nome FROM usuarios WHERE id=$1 AND deleted_at IS NULL AND suspenso=false`, [id])
   if (!row) return
+  const link = await emitirLinkDeSenha(id, RESET_TTL_MIN)
+  await enviarRedefinicaoSenha({ to: row.email, nome: row.nome, link })
+}
+
+/**
+ * Token de uso único para (re)definir a senha: 32 bytes do CSPRNG, só o HASH vai para o
+ * banco, com validade. Emitir outro invalida o anterior (é a mesma coluna). Consumido em
+ * redefinirSenhaComToken, que também encerra as sessões abertas.
+ */
+async function emitirLinkDeSenha(id: string, validadeMin: number): Promise<string> {
   const token = randomBytes(32).toString('base64url')
   const hash = await bcrypt.hash(token, 10)
-  const expira = new Date(Date.now() + RESET_TTL_MIN * 60_000)
+  const expira = new Date(Date.now() + validadeMin * 60_000)
   await query(`UPDATE usuarios SET reset_hash=$2, reset_expira=$3, atualizado_em=now() WHERE id=$1`, [id, hash, expira])
-  const link = `${appUrl()}/redefinir-senha?token=${encodeURIComponent(token)}&e=${encodeURIComponent(id)}`
-  await enviarRedefinicaoSenha({ to: row.email, nome: row.nome, link })
+  return `${appUrl()}/redefinir-senha?token=${encodeURIComponent(token)}&e=${encodeURIComponent(id)}`
+}
+
+/**
+ * Link para quem acabou de assinar CRIAR a senha da conta nova (e-mail de boas-vindas).
+ * Substitui a senha temporária em texto puro: o que vai por e-mail é um link que vale
+ * BOAS_VINDAS_LINK_HORAS e morre no primeiro uso, não a credencial (revisão da #63).
+ */
+export async function criarLinkDefinirSenha(email: string): Promise<string> {
+  return emitirLinkDeSenha(email.trim().toLowerCase(), BOAS_VINDAS_LINK_HORAS * 60)
 }
 
 /**

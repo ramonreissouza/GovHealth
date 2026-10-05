@@ -8,7 +8,7 @@ import Image from 'next/image'
 import type { Metadata } from 'next'
 import { clsx } from 'clsx'
 import { ArrowRight, ShieldCheck, Check, Radar, Swords, Globe, MessageSquare, Tag, Wallet } from 'lucide-react'
-import { PLANOS, precoLabel, orcamentoHref } from '@/lib/planos'
+import { PLANOS, precoLabel, orcamentoHref, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { siteUrl } from '@/lib/site'
 import { getStats, getPortaisDisputa, num, bilhoes } from './dados'
 
@@ -118,7 +118,7 @@ export default async function InicioPage() {
               </p>
               <div className="reveal flex items-center gap-4 mt-8" style={{ '--d': '0.15s' } as React.CSSProperties}>
                 <Link href="/login?criar=1" className="inline-flex items-center gap-2 text-[15px] font-semibold text-white bg-gradient-brand hover:brightness-105 px-6 py-3 rounded-xl transition-all shadow-lg shadow-accent/20">
-                  Criar conta · 3 dias grátis <ArrowRight size={16} />
+                  Criar conta · {DIAS_TESTE_GRATIS} dias grátis <ArrowRight size={16} />
                 </Link>
                 <Link href="/login" className="text-[14px] text-muted hover:text-strong transition-colors">Já tenho conta</Link>
               </div>
@@ -363,7 +363,7 @@ export default async function InicioPage() {
         <section id="planos" className="border-y border-subtle bg-bg3/60">
           <div className="max-w-[1080px] mx-auto px-6 py-20">
             <h2 className="text-center font-heading font-bold text-[28px] mb-1">Escolha o plano da sua operação</h2>
-            <p className="text-center text-[13.5px] text-muted mb-4 max-w-[520px] mx-auto">Mensal, sem fidelidade. 3 dias grátis para testar. Nota fiscal em todos os planos.</p>
+            <p className="text-center text-[13.5px] text-muted mb-4 max-w-[520px] mx-auto">Mensal, sem fidelidade. {DIAS_TESTE_GRATIS} dias grátis para testar. Nota fiscal em todos os planos.</p>
             {/* A mesma frase do hero, repetida AQUI de propósito: é na seção de
                 preço que a objeção de custo aparece, e é onde "uma assinatura no
                 lugar de duas ou três" deixa de ser vaidade e vira justificativa de
@@ -402,7 +402,7 @@ export default async function InicioPage() {
                       <Link href={`/login?criar=1&plano=${p.id}`}
                         className={clsx('inline-flex items-center justify-center gap-2 text-[14px] font-semibold px-5 py-3 rounded-xl transition-all',
                           p.destaque ? 'bg-gradient-brand text-white hover:brightness-105 shadow-lg shadow-accent/20' : 'bg-bg2 border border-subtle2 text-strong hover:border-accent/50')}>
-                        Testar {p.nome} · 3 dias grátis <ArrowRight size={15} />
+                        Testar {p.nome} · {DIAS_TESTE_GRATIS} dias grátis <ArrowRight size={15} />
                       </Link>
                       <Link href={`/assinar?plano=${p.id}`} className="text-center text-[11px] text-faint hover:text-accent mt-2.5">ou assinar direto</Link>
                     </>
@@ -426,10 +426,10 @@ export default async function InicioPage() {
             </h2>
             <p className="text-[14.5px] text-white/85 mt-2 mb-7 relative max-w-[480px] mx-auto">
               Veja quais são da sua categoria, em qual portal disputar e se o município paga.
-              Teste grátis por 3 dias, sem cartão e sem fidelidade.
+              Teste grátis por {DIAS_TESTE_GRATIS} dias, sem cartão e sem fidelidade.
             </p>
             <Link href="/login?criar=1" className="relative inline-flex items-center gap-2 text-[15px] font-semibold text-accent bg-white hover:bg-white/90 px-7 py-3 rounded-xl transition-colors">
-              Criar conta · 3 dias grátis <ArrowRight size={16} />
+              Criar conta · {DIAS_TESTE_GRATIS} dias grátis <ArrowRight size={16} />
             </Link>
           </div>
         </section>
