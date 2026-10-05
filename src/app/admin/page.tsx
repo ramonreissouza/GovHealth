@@ -36,20 +36,20 @@ export default function AdminPage() {
       {/* Header próprio do admin */}
       <header className="border-b border-subtle bg-bg2 sticky top-0 z-20">
         <div className="max-w-[1200px] mx-auto px-5 h-14 flex items-center gap-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Image src="/logo-govhealth.png" alt="GovHealth" width={130} height={59} className="h-6 w-auto" />
             <span className="font-mono-custom text-[11px] font-semibold text-accent border border-accent/30 rounded px-1.5 py-0.5">Admin</span>
           </div>
-          <nav className="flex items-center gap-1 ml-4">
+          <nav className="flex items-center gap-1 ml-4 min-w-0 overflow-x-auto">
             {([['contas', 'Contas', Users], ['assinaturas', 'Assinaturas', CreditCard], ['dashboard', 'Dashboard', LayoutDashboard], ['acessos', 'Acessos', ScrollText], ['suporte', 'Suporte', MessageCircle], ['aviso', 'Aviso', BellRing], ['mapa', 'Mapa', MapIcon]] as [Tab, string, React.ElementType][]).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
-                className={clsx('flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg transition-colors',
+                className={clsx('flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap shrink-0',
                   tab === k ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-strong')}>
                 <Icon size={13} /> {label}
               </button>
             ))}
           </nav>
-          <button onClick={() => signOut({ callbackUrl: '/login' })} className="ml-auto flex items-center gap-1.5 text-[12px] text-faint hover:text-red transition-colors">
+          <button onClick={() => signOut({ callbackUrl: '/login' })} className="ml-auto shrink-0 flex items-center gap-1.5 text-[12px] text-faint hover:text-red transition-colors">
             <LogOut size={13} /> Sair
           </button>
         </div>

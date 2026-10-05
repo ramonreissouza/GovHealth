@@ -96,7 +96,7 @@ export default function AdminAviso() {
               <div>
                 <strong className="text-strong">A fila de e-mail não está andando.</strong>{' '}
                 <span className="text-muted">
-                  {num(d.fila.pendentes)} avisos esperando; o mais antigo há {dur((d.fila.maisAntigoMin ?? 0) * 60)}.
+                  {num(d.fila.pendentes)} {d.fila.pendentes === 1 ? 'aviso esperando' : 'avisos esperando'}; o mais antigo há {dur((d.fila.maisAntigoMin ?? 0) * 60)}.
                   O worker só envia com RESEND_API_KEY ou as chaves VAPID configuradas, e na primeira rodada expira o que passou de 48 h.
                 </span>
               </div>
