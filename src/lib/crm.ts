@@ -82,9 +82,118 @@ export interface PipelineDeal {
   probabilidade: number          // 0-100 %
   notas?: string
   licitacaoLink?: string
+  // Tarefas por etapa (ver CHECKLIST_ETAPA). Ausente = deal anterior ao checklist,
+  // que recebe o modelo padrão na primeira leitura (checklistDoDeal).
+  checklist?: TarefaEtapa[]
   createdAt: string
   updatedAt: string
   movedAt: string                // last time stage changed
+}
+
+// ── Checklist por etapa ───────────────────────────────────────────────────────
+// O que precisa estar feito em cada etapa de uma licitação, do edital ao pagamento.
+// O checklist de habilitação (documento por documento) já mora no dossiê do edital
+// (lib/edital-workspace.ts); aqui ele aparece como uma tarefa só, com o progresso
+// do dossiê ao lado quando o deal veio de uma oportunidade.
+
+export interface TarefaEtapa {
+  id: string
+  stage: PipelineStage
+  label: string
+  feito: boolean
+  link?: string          // tela do GovHealth que resolve a tarefa
+  personalizada?: boolean // criada pelo usuário (fora do modelo)
+}
+
+export const ID_TAREFA_HABILITACAO = 'proposta:habilitacao'
+
+export const CHECKLIST_ETAPA: Record<PipelineStage, { id: string; label: string; link?: string }[]> = {
+  prospeccao: [
+    { id: 'prospeccao:edital',        label: 'Ler o edital e o termo de referência', link: '/edital' },
+    { id: 'prospeccao:especificacao', label: 'Conferir se o produto atende à especificação' },
+    { id: 'prospeccao:prazos',        label: 'Anotar os prazos de impugnação e de esclarecimento', link: '/agenda' },
+    { id: 'prospeccao:decisao',       label: 'Decidir se vale participar' },
+  ],
+  contato: [
+    { id: 'contato:responsavel',      label: 'Identificar quem conduz a compra no órgão' },
+    { id: 'contato:esclarecimento',   label: 'Tirar as dúvidas do edital (pedido de esclarecimento)', link: '/edital' },
+    { id: 'contato:visita',           label: 'Agendar a visita técnica, se o edital exigir' },
+  ],
+  proposta: [
+    { id: ID_TAREFA_HABILITACAO,      label: 'Documentos de habilitação em dia', link: '/editais' },
+    { id: 'proposta:anvisa',          label: 'Registro ANVISA do produto válido', link: '/perfil?tab=portfolio' },
+    { id: 'proposta:amostra',         label: 'Amostra ou catálogo, se o edital exigir' },
+    { id: 'proposta:planilha',        label: 'Proposta comercial e planilha de preços' },
+    { id: 'proposta:portal',          label: 'Proposta cadastrada no portal' },
+  ],
+  negociacao: [
+    { id: 'negociacao:sessao',        label: 'Acompanhar a sessão de lances', link: '/radar' },
+    { id: 'negociacao:diligencia',    label: 'Responder diligências e convocações do pregoeiro' },
+    { id: 'negociacao:ajustada',      label: 'Enviar a proposta ajustada ao lance final' },
+    { id: 'negociacao:recurso',       label: 'Recurso ou contrarrazões, se houver', link: '/edital' },
+  ],
+  ganho: [
+    { id: 'ganho:contrato',           label: 'Assinar o contrato ou a ata' },
+    { id: 'ganho:garantia',           label: 'Prestar a garantia contratual, se exigida' },
+    { id: 'ganho:empenho',            label: 'Receber a nota de empenho' },
+    { id: 'ganho:entrega',            label: 'Entregar e obter o recebimento definitivo' },
+    { id: 'ganho:pagamento',          label: 'Emitir a nota fiscal e acompanhar o pagamento' },
+  ],
+  perdido: [
+    { id: 'perdido:motivo',           label: 'Registrar o motivo da perda (preço, habilitação, especificação)' },
+    { id: 'perdido:recurso',          label: 'Avaliar se cabe recurso', link: '/edital' },
+  ],
+}
+
+export function checklistPadrao(): TarefaEtapa[] {
+  return STAGES.flatMap((s) =>
+    CHECKLIST_ETAPA[s.id].map((t) => ({ ...t, stage: s.id, feito: false })),
+  )
+}
+
+/** O checklist do deal; deals antigos (sem o campo) recebem o modelo padrão. */
+export function checklistDoDeal(deal: Pick<PipelineDeal, 'checklist'>): TarefaEtapa[] {
+  return deal.checklist ?? checklistPadrao()
+}
+
+export function tarefasDaEtapa(deal: Pick<PipelineDeal, 'checklist'>, stage: PipelineStage): TarefaEtapa[] {
+  return checklistDoDeal(deal).filter((t) => t.stage === stage)
+}
+
+export function progressoEtapa(
+  deal: Pick<PipelineDeal, 'checklist'>,
+  stage: PipelineStage,
+): { feitos: number; total: number } {
+  const ts = tarefasDaEtapa(deal, stage)
+  return { feitos: ts.filter((t) => t.feito).length, total: ts.length }
+}
+
+/**
+ * Tarefas que ficaram para trás: não feitas, de etapas ANTERIORES à atual no funil.
+ * "Perdido" não é etapa do caminho (ninguém passa por ela), então não deixa pendência,
+ * e um deal perdido não cobra as tarefas de quem ganhou.
+ */
+export function pendentesAnteriores(deal: Pick<PipelineDeal, 'checklist' | 'stage'>): TarefaEtapa[] {
+  if (deal.stage === 'perdido') return []
+  const ordem: PipelineStage[] = STAGES.map((s) => s.id).filter((id) => id !== 'perdido')
+  const atual = ordem.indexOf(deal.stage)
+  const anteriores = new Set(ordem.slice(0, atual))
+  return checklistDoDeal(deal).filter((t) => anteriores.has(t.stage) && !t.feito)
+}
+
+export function alternarTarefa(checklist: TarefaEtapa[], id: string): TarefaEtapa[] {
+  return checklist.map((t) => (t.id === id ? { ...t, feito: !t.feito } : t))
+}
+
+export function adicionarTarefa(checklist: TarefaEtapa[], stage: PipelineStage, label: string): TarefaEtapa[] {
+  const texto = label.trim()
+  if (!texto) return checklist
+  const id = `${stage}:x-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  return [...checklist, { id, stage, label: texto, feito: false, personalizada: true }]
+}
+
+export function removerTarefa(checklist: TarefaEtapa[], id: string): TarefaEtapa[] {
+  return checklist.filter((t) => t.id !== id)
 }
 
 const STORAGE_KEY = 'govhealth:crm:deals'
