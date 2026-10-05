@@ -74,17 +74,27 @@ function digitalDoEdital(texto: string): string {
   return `${texto.length}:${h}`
 }
 
-interface Formulario {
-  tipo: TipoPeca
+/** O que muda de sentido de uma peça para outra fica separado por peça: a data do
+ *  recurso é a da ata, a do esclarecimento é a da abertura; o texto colado no recurso
+ *  é a decisão, nas contrarrazões é o recurso do concorrente. */
+interface Campos {
   dataBase: string
-  alvo: AlvoRecurso
-  intencao: boolean
   documento: string
   argumentos: string
 }
 
+interface Formulario {
+  tipo: TipoPeca
+  alvo: AlvoRecurso
+  intencao: boolean
+  campos: Record<TipoPeca, Campos>
+}
+
+const CAMPOS_VAZIOS: Campos = { dataBase: '', documento: '', argumentos: '' }
+
 const FORM_VAZIO: Formulario = {
-  tipo: 'esclarecimento', dataBase: '', alvo: 'minha-inabilitacao', intencao: false, documento: '', argumentos: '',
+  tipo: 'esclarecimento', alvo: 'minha-inabilitacao', intencao: false,
+  campos: { esclarecimento: CAMPOS_VAZIOS, recurso: CAMPOS_VAZIOS, contrarrazoes: CAMPOS_VAZIOS },
 }
 
 interface Rascunho {
@@ -98,8 +108,28 @@ function lerRascunho(digital: string): Rascunho | null {
     const raw = localStorage.getItem(LS_PECAS)
     if (!raw) return null
     const o = JSON.parse(raw) as Rascunho
-    return o?.digital === digital ? o : null
+    if (o?.digital !== digital) return null
+    // Rascunho num formato antigo: as peças valem, o formulário recomeça.
+    return o.form?.campos ? o : { ...o, form: FORM_VAZIO }
   } catch { return null }
+}
+
+/**
+ * Grava a peça no rascunho NA HORA em que ela chega, e não pelo efeito com atraso:
+ * a redação leva 1 a 2 minutos, e quem saiu da tela nesse meio perdia a peça. Se o
+ * rascunho guardado já é de outro edital, a pessoa seguiu adiante e ele fica.
+ */
+function gravarPeca(digital: string, formNoPedido: Formulario, peca: PecaGerada) {
+  try {
+    const raw = localStorage.getItem(LS_PECAS)
+    const atual = raw ? JSON.parse(raw) as Rascunho : null
+    if (atual && atual.digital !== digital) return
+    localStorage.setItem(LS_PECAS, JSON.stringify({
+      digital,
+      form: atual?.form ?? formNoPedido,
+      pecas: { ...atual?.pecas, [peca.tipo]: peca },
+    } satisfies Rascunho))
+  } catch { /* cota estourada: a peça segue na tela */ }
 }
 
 function baixarDoc(peca: PecaGerada) {
@@ -128,8 +158,8 @@ interface Props {
 }
 
 /**
- * Um painel por edital: trocar o edital troca a `key`, o painel nasce de novo com o
- * rascunho DAQUELE edital e o pedido em voo do anterior é cancelado ao desmontar.
+ * Um painel por edital: trocar o edital troca a `key`, e o painel nasce de novo com o
+ * rascunho DAQUELE edital.
  */
 export default function PecasJuridicas(props: Props) {
   const digital = useMemo(() => digitalDoEdital(props.texto), [props.texto])
@@ -144,7 +174,6 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const caixaRef = useRef<HTMLDivElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -156,39 +185,42 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
   useEffect(() => {
     if (pedidoFoco) caixaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [pedidoFoco])
-  useEffect(() => () => abortRef.current?.abort(), [])
 
+  const c = form.campos[form.tipo]
   const prazo: PrazoPeca | { erro: string } | null = useMemo(
-    () => (form.dataBase ? prazoDaPeca(form.tipo, form.dataBase, hojeIsoBR()) : null),
-    [form.tipo, form.dataBase],
+    () => (c.dataBase ? prazoDaPeca(form.tipo, c.dataBase, hojeIsoBR()) : null),
+    [form.tipo, c.dataBase],
   )
 
   const set = <K extends keyof Formulario>(k: K, v: Formulario[K]) => setForm((f) => ({ ...f, [k]: v }))
+  const setCampo = (k: keyof Campos, v: string) => setForm((f) => ({
+    ...f, campos: { ...f.campos, [f.tipo]: { ...f.campos[f.tipo], [k]: v } },
+  }))
   const doc = ROTULO_DOCUMENTO[form.tipo]
   const arg = ROTULO_ARGUMENTOS[form.tipo]
   const precisaDocumento = !!doc
-  const podeGerar = !loading && (!precisaDocumento || form.documento.trim().length >= 80) && !(prazo && 'erro' in prazo)
+  const podeGerar = !loading && (!precisaDocumento || c.documento.trim().length >= 80) && !(prazo && 'erro' in prazo)
   const peca = pecas[form.tipo]
 
   async function gerar() {
     if (!podeGerar) return
     setLoading(true)
     setErro(null)
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
+    // O pedido NÃO é cancelado se a tela fechar: a IA já está escrevendo do lado do
+    // servidor de qualquer jeito, e a peça que chegar vai para o rascunho.
     const tipo = form.tipo
+    const formNoPedido = form
     try {
       const empresa = getEmpresa()
       const res = await fetch('/api/edital/peca', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: ctrl.signal,
         body: JSON.stringify({
           tipo,
           edital: texto,
-          dataBase: form.dataBase || undefined,
-          documento: precisaDocumento ? form.documento : undefined,
-          argumentos: form.argumentos || undefined,
+          dataBase: c.dataBase || undefined,
+          documento: precisaDocumento ? c.documento : undefined,
+          argumentos: c.argumentos || undefined,
           alvo: tipo === 'recurso' ? form.alvo : undefined,
           intencaoManifestada: tipo === 'recurso' ? form.intencao : undefined,
           empresa: { razaoSocial: empresa.nomeEmpresa, cnpj: empresa.cnpj },
@@ -196,13 +228,12 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
       })
       const j = await res.json().catch(() => null)
       if (!res.ok || !j?.peca) throw new Error(j?.error ?? 'Não foi possível gerar a peça.')
-      setPecas((p) => ({ ...p, [tipo]: j.peca as PecaGerada }))
+      const nova = j.peca as PecaGerada
+      gravarPeca(digital, formNoPedido, nova)
+      setPecas((p) => ({ ...p, [tipo]: nova }))
     } catch (e) {
-      if (!(e instanceof DOMException && e.name === 'AbortError')) {
-        setErro(e instanceof Error ? e.message : 'Não foi possível gerar a peça.')
-      }
+      setErro(e instanceof Error ? e.message : 'Não foi possível gerar a peça.')
     } finally {
-      if (abortRef.current === ctrl) abortRef.current = null
       setLoading(false)
     }
   }
@@ -264,8 +295,8 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
             <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">{ROTULO_DATA_BASE[form.tipo]}</span>
             <input
               type="date"
-              value={form.dataBase}
-              onChange={(e) => set('dataBase', e.target.value)}
+              value={c.dataBase}
+              onChange={(e) => setCampo('dataBase', e.target.value)}
               className="mt-1 block bg-bg3 border border-subtle rounded-lg px-3 py-2 text-[12px] text-strong focus:outline-none focus:border-accent"
             />
           </label>
@@ -283,8 +314,8 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
           <label className="block">
             <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">{doc.titulo}</span>
             <textarea
-              value={form.documento}
-              onChange={(e) => set('documento', e.target.value)}
+              value={c.documento}
+              onChange={(e) => setCampo('documento', e.target.value)}
               placeholder={doc.placeholder}
               rows={5}
               className="mt-1 w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[12px] text-strong placeholder:text-faint focus:outline-none focus:border-accent resize-y leading-relaxed"
@@ -295,8 +326,8 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
         <label className="block">
           <span className="text-[11px] font-mono-custom text-faint uppercase tracking-wider">{arg.titulo}</span>
           <textarea
-            value={form.argumentos}
-            onChange={(e) => set('argumentos', e.target.value)}
+            value={c.argumentos}
+            onChange={(e) => setCampo('argumentos', e.target.value)}
             placeholder={arg.placeholder}
             rows={3}
             className="mt-1 w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[12px] text-strong placeholder:text-faint focus:outline-none focus:border-accent resize-y leading-relaxed"
@@ -304,7 +335,7 @@ function Painel({ texto, onFechar, pedidoFoco = 0, digital }: Props & { digital:
         </label>
 
         <div className="flex items-center justify-end gap-3">
-          {precisaDocumento && form.documento.trim().length < 80 ? (
+          {precisaDocumento && c.documento.trim().length < 80 ? (
             <span className="text-[11px] text-faint">Cole {form.tipo === 'recurso' ? 'a decisão' : 'o recurso'} para gerar.</span>
           ) : loading ? (
             <span className="text-[11px] text-faint">A redação leva de 1 a 2 minutos.</span>

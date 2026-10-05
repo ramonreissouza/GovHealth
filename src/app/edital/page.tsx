@@ -455,12 +455,12 @@ export default function EditalPage() {
                 className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[12px] text-strong placeholder:text-faint focus:outline-none focus:border-accent resize-y font-mono-custom leading-relaxed"
               />
 
-              <div className="flex items-center justify-between mt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-3">
                 <span className="text-[11px] font-mono-custom text-faint">
                   {texto.length > 0 ? `${texto.length.toLocaleString('pt-BR')} caracteres` : 'Aguardando conteúdo'}
                   {produtos.length > 0 && <span className="ml-2 text-accent">· {produtos.length} produto(s) do portfólio no contexto</span>}
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   {/* Só ENQUANTO não há análise. Com a análise na tela o botão vive no
                       cabeçalho dela (logo acima do relatório), que é onde os olhos
                       estão — dois botões iguais na mesma tela só confundem. Aqui ele
@@ -499,9 +499,9 @@ export default function EditalPage() {
             {/* Resultado */}
             {analise && (
               <>
-                <div className="flex items-center justify-between mb-3 gap-3">
+                <div className="flex flex-wrap items-center justify-between mb-3 gap-3">
                   <span className="text-[11px] font-mono-custom text-faint">Análise salva neste navegador — continua aqui quando você voltar.</span>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     {/* Aqui é onde a dúvida costuma nascer: logo depois de ler a análise. */}
                     <BotaoPecas onClick={abrirPecas} />
                     <BotaoDuvidas onClick={abrirDuvidas} n={nPerguntas} />
