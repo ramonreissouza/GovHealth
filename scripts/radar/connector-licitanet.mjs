@@ -29,7 +29,7 @@
 // Almas/BA). Sem o lote, o dedup por hash colapsaria as duas em uma e o fornecedor
 // perderia que o fato aconteceu nos dois itens.
 
-import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff, abrirPagina, PortalRecusou } from './connector-base.mjs'
+import { FUSO_NAVEGADOR, SIMULADO_FIXTURES, normalizarMensagem, withBackoff, abrirPagina, PortalRecusou } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 import { contadorDeConsumo } from './rodizio.mjs'
 
@@ -188,7 +188,7 @@ export async function sync({ credencial, processos = [], simulado }) {
   let recusa = null
   try {
     browser = await withBackoff(() => chromium.launch({ headless: true }))
-    const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
+    const context = await browser.newContext({ ...FUSO_NAVEGADOR, userAgent: UA_NAVEGADOR })
     const page = await context.newPage()
 
     for (const p of alvos) {

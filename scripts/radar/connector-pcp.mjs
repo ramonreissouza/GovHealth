@@ -13,7 +13,7 @@
 //
 // Referência de implementação: connector-comprasgov.mjs.
 
-import { SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import { FUSO_NAVEGADOR, SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 import { serializarSessaoRecortada } from './sessao-escopo.mjs'
 
@@ -110,7 +110,7 @@ async function monitorarPublico(processos) {
   const browser = await withBackoff(() => chromium.launch({ headless: true }))
   const mensagens = []
   try {
-    const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
+    const context = await browser.newContext({ ...FUSO_NAVEGADOR, userAgent: UA_NAVEGADOR })
     const page = await context.newPage()
     for (const p of alvos) {
       try {
@@ -169,7 +169,7 @@ export async function sync({ credencial, processos = [], simulado }) {
   let browser
   try {
     browser = await withBackoff(() => chromium.launch({ headless: true }))
-    const context = await browser.newContext({ storageState: JSON.parse(credencial.storageState) })
+    const context = await browser.newContext({ ...FUSO_NAVEGADOR, storageState: JSON.parse(credencial.storageState) })
     const page = await context.newPage()
 
     // 1) valida a sessão abrindo a área autenticada.

@@ -26,7 +26,7 @@
 // DUAS DATAS, DOIS FORMATOS, no mesmo processo: as solicitações escrevem "7 de setembro
 // de 2026 às 22:35" e os avisos "11/09/2026 11:00". Os dois viram ISO -03:00.
 
-import { SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import { FUSO_NAVEGADOR, SIMULADO_FIXTURES, horarioBrParaISO, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 
 const META = portalMeta('ammlicita')
@@ -199,7 +199,7 @@ export async function sync({ credencial, processos = [], simulado }) {
   let comMensagem = 0
   try {
     browser = await withBackoff(() => chromium.launch({ headless: true }))
-    const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
+    const context = await browser.newContext({ ...FUSO_NAVEGADOR, userAgent: UA_NAVEGADOR })
     const page = await context.newPage()
 
     for (const p of alvos) {
