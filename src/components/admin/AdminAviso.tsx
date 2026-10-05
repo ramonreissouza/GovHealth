@@ -41,7 +41,7 @@ const PILL: Record<Estado, { txt: string; cls: string }> = {
 const STATUS_LABEL: Record<string, string> = {
   pendente: 'Na fila', enviando: 'Enviando', enviado: 'Enviado na hora', falha: 'Falhou',
   aguardando_resumo: 'Para o resumo do dia', resumindo: 'Montando o resumo', resumido: 'Foi no resumo do dia',
-  expirado: 'Expirou (mais de 48 h)', entregue: 'Lido na tela antes do e-mail',
+  expirado: 'Expirou (mais de 48 h)', entregue: 'Lido na tela',
 }
 
 export default function AdminAviso() {
