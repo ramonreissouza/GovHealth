@@ -27,11 +27,15 @@ function estadoDe(p95: number | null, meta: number): Estado {
   if (p95 <= meta) return 'ok'
   return p95 <= 5 * meta ? 'atencao' : 'critico'
 }
+const PILL_OK = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+const PILL_ATENCAO = 'bg-amber/15 text-amber border-amber/30'
+const PILL_CRITICO = 'bg-red/15 text-red border-red/30'
+const PILL_VAZIO = 'bg-bg4 text-faint border-subtle2'
 const PILL: Record<Estado, { txt: string; cls: string }> = {
-  ok: { txt: 'Na meta', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
-  atencao: { txt: 'Acima da meta', cls: 'bg-amber/15 text-amber border-amber/30' },
-  critico: { txt: 'Muito acima', cls: 'bg-red/15 text-red border-red/30' },
-  vazio: { txt: 'Sem amostra', cls: 'bg-bg4 text-faint border-subtle2' },
+  ok: { txt: 'Na meta', cls: PILL_OK },
+  atencao: { txt: 'Acima da meta', cls: PILL_ATENCAO },
+  critico: { txt: 'Muito acima', cls: PILL_CRITICO },
+  vazio: { txt: 'Sem amostra', cls: PILL_VAZIO },
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -46,18 +50,24 @@ export default function AdminAviso() {
   const [erro, setErro] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  // Trocar o período cancela o pedido anterior: a resposta de 90 dias que chegasse depois
+  // da de 1 dia sobrescreveria o painel com o seletor mostrando "Hoje". Falha limpa o
+  // painel em vez de deixar o período anterior na tela como se fosse o novo.
   useEffect(() => {
+    const pedido = new AbortController()
     setLoading(true); setErro(false)
-    fetch(`/api/admin/aviso?dias=${dias}`)
+    fetch(`/api/admin/aviso?dias=${dias}`, { signal: pedido.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setD)
-      .catch(() => setErro(true))
-      .finally(() => setLoading(false))
+      .then((x: PainelAviso) => setD(x))
+      .catch(() => { if (!pedido.signal.aborted) { setD(null); setErro(true) } })
+      .finally(() => { if (!pedido.signal.aborted) setLoading(false) })
+    return () => pedido.abort()
   }, [dias])
 
   const travada = d && d.fila.pendentes > 0 && (d.fila.maisAntigoMin ?? 0) > 15
-  // O coletor passa várias vezes ao dia; 6 h sem ler nada de nenhum portal é parada.
-  const semCaptura = d && d.semCapturaHaMin != null && d.semCapturaHaMin > 6 * 60
+  // O coletor passa várias vezes ao dia, achando mensagem ou não: 6 h sem passada em
+  // nenhum portal é parada. Pela passada (radar_saude), não pela última mensagem.
+  const semPassada = d && d.semTentativaHaMin != null && d.semTentativaHaMin > 6 * 60
 
   return (
     <div>
@@ -79,13 +89,13 @@ export default function AdminAviso() {
       {loading && !d && !erro && <div className="text-faint text-[13px] py-10 text-center">Medindo…</div>}
 
       {d && (
-        <div className={clsx('space-y-4', loading && 'opacity-60')}>
-          {semCaptura && (
+        <div className={clsx('space-y-4', loading && 'opacity-60')} aria-busy={loading}>
+          {semPassada && (
             <div className="flex gap-2.5 items-start bg-red/10 border border-red/30 rounded-xl px-4 py-3 text-[12px]">
               <AlertTriangle size={15} className="text-red shrink-0 mt-0.5" />
               <div>
-                <strong className="text-strong">Nenhuma mensagem lida de nenhum portal há {dur((d.semCapturaHaMin ?? 0) * 60)}.</strong>{' '}
-                <span className="text-muted">Sem captura, nenhum aviso sai, por mais rápido que o resto seja. Confira se o coletor do Radar está rodando.</span>
+                <strong className="text-strong">O coletor não passa em nenhum portal há {dur((d.semTentativaHaMin ?? 0) * 60)}.</strong>{' '}
+                <span className="text-muted">Sem passada, nenhuma mensagem é lida e nenhum aviso sai, por mais rápido que o resto seja. Confira se o coletor do Radar está rodando.</span>
               </div>
             </div>
           )}
@@ -108,7 +118,7 @@ export default function AdminAviso() {
             <Etapa titulo="Captura" sub="pregoeiro escreveu → nós lemos" f={d.captura} meta={d.metaS}
               nota={d.captura.futuro > 0 ? <span className="text-amber">{num(d.captura.futuro)} com a hora do portal depois da leitura (fuso ou relógio errado; fora da conta)</span> : undefined} />
             <Etapa titulo="Envio" sub="nós lemos → aviso saiu (worker a cada 5 min)" f={d.envio} meta={d.metaS}
-              nota={d.envio.falhas > 0 ? <span className="text-red">{num(d.envio.falhas)} falharam</span> : undefined} />
+              nota={d.envio.falhas > 0 ? <span className="text-red">{num(d.envio.falhas)} {d.envio.falhas === 1 ? 'tentativa não chegou' : 'tentativas não chegaram'} a ninguém (fora da conta)</span> : undefined} />
             <EtapaVi f={d.vi} repasses={d.repasses} />
           </div>
 
@@ -118,18 +128,20 @@ export default function AdminAviso() {
               <table className="w-full text-[12px] tabular-nums">
                 <thead>
                   <tr className="text-faint text-[10px] font-mono-custom uppercase tracking-wider border-y border-subtle">
-                    {['Portal', 'Última leitura', 'Mensagens novas', 'Captura p50', 'Captura p95', 'Em até 60 s', 'Hora no futuro', 'Ponta a ponta p95'].map((h, i) => (
+                    {['Portal', 'Última passada', 'Situação', 'Última mensagem', 'Mensagens novas', 'Captura p50', 'Captura p95', 'Em até 60 s', 'Hora no futuro', 'Ponta a ponta p95'].map((h, i) => (
                       <th key={h} className={clsx('px-3 py-2 font-medium', i === 0 ? 'text-left' : 'text-right')}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {d.porPortal.length === 0 ? (
-                    <tr><td colSpan={8} className="px-3 py-6 text-center text-faint">Nenhum portal leu mensagem ainda.</td></tr>
+                    <tr><td colSpan={10} className="px-3 py-6 text-center text-faint">Nenhum portal monitorado ainda.</td></tr>
                   ) : d.porPortal.map((p) => (
                     <tr key={p.conector} className="border-b border-subtle last:border-0 hover:bg-bg3">
                       <td className="px-3 py-2 text-strong">{p.nome}</td>
-                      <td className="px-3 py-2 text-right"><HaQuanto iso={p.ultimaCaptura} agora={d.geradoEm} /></td>
+                      <td className="px-3 py-2 text-right"><HaQuanto iso={p.ultimaTentativa} agora={d.geradoEm} /></td>
+                      <td className="px-3 py-2 text-right"><Situacao s={p.situacao} ok={p.ultimoOk} agora={d.geradoEm} /></td>
+                      <td className="px-3 py-2 text-right text-muted"><HaQuanto iso={p.ultimaMensagem} agora={d.geradoEm} neutro /></td>
                       <td className="px-3 py-2 text-right text-muted">{num(p.captura.n + p.futuro)}</td>
                       <td className="px-3 py-2 text-right text-muted">{dur(p.captura.p50)}</td>
                       <td className="px-3 py-2 text-right"><Valor s={p.captura.p95} meta={d.metaS} /></td>
@@ -198,10 +210,31 @@ export default function AdminAviso() {
   )
 }
 
-function HaQuanto({ iso, agora }: { iso: string | null; agora: string }) {
+/** "há 3 h". Âmbar passado de 6 h, exceto com `neutro` (a última mensagem: pregão calado não é defeito). */
+function HaQuanto({ iso, agora, neutro }: { iso: string | null; agora: string; neutro?: boolean }) {
   if (!iso) return <span className="text-faint">—</span>
   const s = Math.max(0, Math.round((new Date(agora).getTime() - new Date(iso).getTime()) / 1000))
-  return <span title={new Date(iso).toLocaleString('pt-BR')} className={s > 6 * 3600 ? 'text-amber' : 'text-muted'}>há {dur(s)}</span>
+  return <span title={new Date(iso).toLocaleString('pt-BR')} className={!neutro && s > 6 * 3600 ? 'text-amber' : 'text-muted'}>há {dur(s)}</span>
+}
+
+const SITUACAO: Record<string, { txt: string; cls: string }> = {
+  ok: { txt: 'OK', cls: PILL_OK },
+  sessao_expirada: { txt: 'Sessão expirada', cls: PILL_ATENCAO },
+  captcha_2fa: { txt: 'Captcha ou 2FA', cls: PILL_ATENCAO },
+  portal_indisponivel: { txt: 'Portal fora do ar', cls: PILL_ATENCAO },
+  falha: { txt: 'Falhou', cls: PILL_CRITICO },
+  nunca_verificado: { txt: 'Nunca rodou', cls: PILL_VAZIO },
+}
+
+/** Status da última passada; o título diz desde quando não há passada OK. */
+function Situacao({ s, ok, agora }: { s: string | null; ok: string | null; agora: string }) {
+  if (!s) return <span className="text-faint">—</span>
+  const x = SITUACAO[s] ?? { txt: s, cls: PILL_VAZIO }
+  const desdeOk = ok ? Math.round((new Date(agora).getTime() - new Date(ok).getTime()) / 1000) : null
+  return (
+    <span title={desdeOk == null ? 'Nenhuma passada OK registrada' : `Última passada OK há ${dur(desdeOk)}`}
+      className={clsx('text-[10px] font-mono-custom px-1.5 py-0.5 rounded-full border whitespace-nowrap', x.cls)}>{x.txt}</span>
+  )
 }
 
 function Valor({ s, meta }: { s: number | null; meta: number }) {

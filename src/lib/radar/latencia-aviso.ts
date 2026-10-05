@@ -16,6 +16,17 @@
 // HORA DO PORTAL NO FUTURO (horario_origem > capturado_em) não entra na conta e é contada
 // à parte: é relógio ou fuso errado na leitura, não latência. Foi assim que apareceu o
 // fuso do PCP (scripts/radar/connector-base.mjs, FUSO_NAVEGADOR).
+//
+// SÓ AVISO QUE CHEGOU entra nas latências. enviado_em é a hora da TENTATIVA, mesmo quando
+// nenhum canal entregou (status 'falha'); contá-la como "saiu" melhoraria o p95 justo
+// durante uma queda. A falha vai para um contador à parte. A leitura na tela troca o
+// status de QUALQUER linha para 'entregue' (rotas de mensagens), até de uma que falhou:
+// ali, conta como entregue só a que terminou uma tentativa (tentativas > 0) com o e-mail
+// aceito (erro NULL — enviarAviso grava o motivo quando o e-mail não sai).
+//
+// COLETOR PARADO vem de radar_saude.tentado_em (toda passada marca, achando mensagem ou
+// não), não da última mensagem: de noite ou num pregão calado o coletor roda horas sem
+// achar nada. A última mensagem fica na tabela como informação, sem disparar alerta.
 
 import { query } from '@/lib/db'
 import { nomeConector } from '@/lib/radar/conectores'
@@ -42,15 +53,21 @@ export interface PainelAviso {
   pontaAPonta: Faixa
   vi: Faixa & { enviados: number }
   repasses: number
-  porPortal: { conector: string; nome: string; captura: Faixa; futuro: number; pontaAPonta: Faixa; ultimaCaptura: string | null }[]
+  porPortal: {
+    conector: string; nome: string; captura: Faixa; futuro: number; pontaAPonta: Faixa
+    /** radar_saude: última passada (com ou sem mensagem), última passada OK e o status dela. */
+    ultimaTentativa: string | null; ultimoOk: string | null; situacao: string | null
+    /** A mensagem mais recente lida. Informação; não prova que o coletor rodou. */
+    ultimaMensagem: string | null
+  }[]
   serie: { dia: string; novas: number; capturaP95: number | null; pontaP95: number | null }[]
   /** Status das notificações de e-mail criadas no período (nova_mensagem). */
   porStatus: { status: string; n: number }[]
   /** A fila de agora, sem olhar o período: o que o worker ainda não tocou. */
   fila: { pendentes: number; maisAntigoMin: number | null }
-  /** Última mensagem lida de qualquer portal, em minutos, sem olhar o período. Sem
-   *  captura, todas as outras etapas param: é o primeiro sinal de coletor parado. */
-  semCapturaHaMin: number | null
+  /** Minutos desde a última passada do coletor em qualquer portal (radar_saude), sem
+   *  olhar o período. null = nenhuma passada registrada. */
+  semTentativaHaMin: number | null
 }
 
 interface FaixaRow { n: number; p50: number | null; p95: number | null; na_meta: number | null }
@@ -71,12 +88,15 @@ const agregados = (seg: string) => `count(*)::int AS n,
 const CAP_S = `EXTRACT(EPOCH FROM m.capturado_em - m.horario_origem)`
 /** Sobre a CTE `avisos` (n): portal escreveu → aviso saiu. */
 const PONTA_S = `EXTRACT(EPOCH FROM n.enviado_em - n.m_origem)`
+/** O aviso chegou a alguém (ver o cabeçalho): é o único que entra nas latências. */
+const ENTREGUE = `(n.status = 'enviado' OR (n.status = 'entregue' AND n.erro IS NULL AND n.tentativas > 0))`
 /** Aviso que conta no ponta a ponta: mensagem nova, com hora do portal plausível. */
 const PONTA_VALIDA = `n.nova AND n.m_origem <= n.m_capturado`
 
 /**
- * Mensagens novas do período (`novas`) e avisos imediatos de e-mail (`avisos`). O repasse
- * (id esc:…) não é aviso novo: entra só na contagem de repasses.
+ * Mensagens novas do período (`novas`), tentativas de aviso imediato por e-mail
+ * (`tentativas`) e, delas, as que chegaram (`avisos`). O repasse (id esc:…) não é aviso
+ * novo: entra só na contagem de repasses.
  */
 const CTE = `
   ini AS (
@@ -87,18 +107,19 @@ const CTE = `
     SELECT m.* FROM radar_mensagens m JOIN ini USING (processo_id)
      WHERE m.capturado_em > now() - make_interval(days => $1)
        AND m.horario_origem IS NOT NULL AND m.horario_origem > ini.ini),
-  avisos AS (
+  tentativas AS (
     SELECT n.*, m.conector_id, m.capturado_em AS m_capturado, m.horario_origem AS m_origem,
            m.horario_origem > (SELECT min(x.capturado_em) FROM radar_mensagens x WHERE x.processo_id = m.processo_id) AS nova
       FROM radar_notificacoes n JOIN radar_mensagens m ON m.id = n.mensagem_id
      WHERE n.criado_em > now() - make_interval(days => $1)
        AND n.canal = 'email' AND n.evento = 'nova_mensagem' AND n.id NOT LIKE 'esc:%'
-       AND n.enviado_em IS NOT NULL)`
+       AND n.enviado_em IS NOT NULL),
+  avisos AS (SELECT * FROM tentativas n WHERE ${ENTREGUE})`
 
 export async function painelAviso(diasPedidos: number): Promise<PainelAviso> {
   const dias = Math.min(Math.max(Math.floor(diasPedidos) || 7, 1), 90)
   const a = [dias]
-  const [cap, env, ponta, vi, rep, capPortal, pontaPortal, serie, status, fila, ultimas] = await Promise.all([
+  const [cap, env, ponta, vi, rep, capPortal, pontaPortal, serie, status, fila, ultimas, saude] = await Promise.all([
     query<FaixaRow & { futuro: number }>(
       `WITH ${CTE}
        SELECT ${agregados(CAP_S)}, (SELECT count(*)::int FROM novas m WHERE m.horario_origem > m.capturado_em) AS futuro
@@ -106,7 +127,7 @@ export async function painelAviso(diasPedidos: number): Promise<PainelAviso> {
     query<FaixaRow & { falhas: number }>(
       `WITH ${CTE}
        SELECT ${agregados('EXTRACT(EPOCH FROM n.enviado_em - n.m_capturado)')},
-              count(*) FILTER (WHERE n.status = 'falha')::int AS falhas
+              (SELECT count(*)::int FROM tentativas WHERE status = 'falha') AS falhas
          FROM avisos n`, a),
     query<FaixaRow>(
       `WITH ${CTE}
@@ -114,7 +135,7 @@ export async function painelAviso(diasPedidos: number): Promise<PainelAviso> {
     query<FaixaRow & { enviados: number }>(
       `WITH ${CTE}
        SELECT ${agregados('EXTRACT(EPOCH FROM n.confirmado_em - n.enviado_em)')},
-              (SELECT count(*)::int FROM avisos WHERE status = 'enviado' OR confirmado_em IS NOT NULL) AS enviados
+              (SELECT count(*)::int FROM avisos) AS enviados
          FROM avisos n WHERE n.confirmado_em IS NOT NULL AND n.confirmado_em >= n.enviado_em`, a),
     query<{ n: number }>(
       `SELECT count(*)::int AS n FROM radar_notificacoes
@@ -153,15 +174,21 @@ export async function painelAviso(diasPedidos: number): Promise<PainelAviso> {
          FROM radar_notificacoes WHERE canal = 'email' AND status = 'pendente'`),
     query<{ conector: string; ultima: string }>(
       `SELECT conector_id AS conector, max(capturado_em) AS ultima FROM radar_mensagens GROUP BY 1`),
+    query<{ conector: string; tentado: string | null; ok: string | null; status: string | null }>(
+      `SELECT conector_id AS conector, max(tentado_em) AS tentado, max(verificado_em) AS ok,
+              (array_agg(status ORDER BY tentado_em DESC NULLS LAST))[1] AS status
+         FROM radar_saude GROUP BY 1`),
   ])
 
   const pontaPorConector = new Map(pontaPortal.map((r) => [r.conector, faixa(r)]))
   const ultimaPorConector = new Map(ultimas.map((r) => [r.conector, new Date(r.ultima).toISOString()]))
-  const ultima = Math.max(...ultimas.map((r) => new Date(r.ultima).getTime()))
+  const saudePorConector = new Map(saude.map((r) => [r.conector, r]))
+  const iso = (v: string | null | undefined) => (v ? new Date(v).toISOString() : null)
+  const ultimaTentativa = Math.max(...saude.filter((r) => r.tentado).map((r) => new Date(r.tentado!).getTime()))
   // Todo portal que já leu alguma coisa, mesmo sem mensagem nova no período: o portal
   // parado é justamente o que some de uma lista feita só com o que chegou.
   const capPorConector = new Map(capPortal.map((r) => [r.conector, r]))
-  const conectores = [...new Set([...capPortal.map((r) => r.conector), ...ultimas.map((r) => r.conector)])]
+  const conectores = [...new Set([...capPortal.map((r) => r.conector), ...ultimas.map((r) => r.conector), ...saude.map((r) => r.conector)])]
   return {
     geradoEm: new Date().toISOString(),
     dias,
@@ -177,7 +204,10 @@ export async function painelAviso(diasPedidos: number): Promise<PainelAviso> {
       captura: faixa(capPorConector.get(c)),
       futuro: capPorConector.get(c)?.futuro ?? 0,
       pontaAPonta: pontaPorConector.get(c) ?? faixa(undefined),
-      ultimaCaptura: ultimaPorConector.get(c) ?? null,
+      ultimaTentativa: iso(saudePorConector.get(c)?.tentado),
+      ultimoOk: iso(saudePorConector.get(c)?.ok),
+      situacao: saudePorConector.get(c)?.status ?? null,
+      ultimaMensagem: ultimaPorConector.get(c) ?? null,
     })),
     serie: serie.map((r) => ({
       dia: r.dia, novas: r.novas,
@@ -186,6 +216,6 @@ export async function painelAviso(diasPedidos: number): Promise<PainelAviso> {
     })),
     porStatus: status,
     fila: { pendentes: fila[0]?.pendentes ?? 0, maisAntigoMin: fila[0]?.mais_antigo_min ?? null },
-    semCapturaHaMin: Number.isFinite(ultima) ? Math.round((Date.now() - ultima) / 60_000) : null,
+    semTentativaHaMin: Number.isFinite(ultimaTentativa) ? Math.round((Date.now() - ultimaTentativa) / 60_000) : null,
   }
 }
