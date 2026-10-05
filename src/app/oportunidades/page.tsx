@@ -260,6 +260,8 @@ function OportunidadesInner() {
     const s = searchParams.get('status'); return s === 'aberto' || s === 'encerrado' || s === 'todos' ? s : 'aberto'
   })
   const [minScore, setMinScore] = useState(Number(searchParams.get('minScore') ?? 0) || 0)
+  // Pagômetro: só órgãos que pagam em até N dias depois da liquidação (0 = qualquer).
+  const [pagaAte, setPagaAte] = useState(Number(searchParams.get('pagaAte') ?? 0) || 0)
   const [viewMode, setViewMode] = useState<'tabela' | 'cards'>('tabela')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [produtos, setProdutos] = useState<ProdutoPortfolio[]>([])
@@ -311,7 +313,7 @@ function OportunidadesInner() {
   // página 7 mostraria vazio sem dizer por quê.
   useEffect(() => {
     setPagina(1)
-  }, [pageSize, tipo, statusFiltro, anoFiltro, categoria, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, minScore, soPortfolio, ufsKey, municipioFiltro, ordem.chave, ordem.dir])
+  }, [pageSize, tipo, statusFiltro, anoFiltro, categoria, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, minScore, pagaAte, soPortfolio, ufsKey, municipioFiltro, ordem.chave, ordem.dir])
 
   const filtrosParams = useCallback(() => {
     // Status/ano/tipo/busca/portfólio/ordenação vão ao servidor — os KPIs refletem
@@ -321,6 +323,7 @@ function OportunidadesInner() {
       offset: String((pagina - 1) * pageSize),
     })
     if (minScore > 0) params.set('minScore', String(minScore))
+    if (pagaAte > 0) params.set('pagaAte', String(pagaAte))
     if (categoria !== 'todos') params.set('categoria', categoria)
     if (statusFiltro !== 'todos') params.set('status', statusFiltro)
     if (anoFiltro !== 'todos') params.set('ano', anoFiltro)
@@ -347,7 +350,7 @@ function OportunidadesInner() {
     if (soPortfolio) params.set('portfolio', '1')
     if (ordem.chave) { params.set('sort', ordem.chave); params.set('dir', ordem.dir) }
     return params
-  }, [pageSize, pagina, minScore, categoria, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, soPortfolio, ordem])
+  }, [pageSize, pagina, minScore, pagaAte, categoria, statusFiltro, anoFiltro, tipo, municipioFiltro, ufsKey, searchParams, queryDebounced, queryProponenteDebounced, queryConvenioDebounced, soPortfolio, ordem])
 
   // Uma query por combinação de filtros+página — o React Query cacheia cada uma
   // (staleTime/gcTime em QueryProvider), então voltar a uma página JÁ vista não
@@ -616,6 +619,17 @@ function OportunidadesInner() {
               <option value={50}>Score ≥ 50</option>
               <option value={70}>Score ≥ 70</option>
               <option value={80}>Score ≥ 80</option>
+            </select>
+
+            {/* Pagômetro — dias que quem paga a compra leva depois de liquidar a nota */}
+            <select value={pagaAte} onChange={(e) => setPagaAte(Number(e.target.value))}
+              title="Dias que o órgão pagador costuma levar para pagar o fornecedor depois de reconhecer a nota (liquidação). Não inclui o tempo até atestar a entrega. Com um prazo escolhido, só aparecem órgãos com prazo medido."
+              aria-label="Filtrar por prazo de pagamento do órgão"
+              className="text-[11px] font-mono-custom bg-bg2 border border-subtle2 rounded-lg px-3 py-2 text-strong outline-none cursor-pointer">
+              <option value={0}>Qualquer prazo de pagamento</option>
+              <option value={15}>Paga em até 15 dias</option>
+              <option value={30}>Paga em até 30 dias</option>
+              <option value={60}>Paga em até 60 dias</option>
             </select>
 
             {/* Meu Portfólio — casa as oportunidades com os produtos cadastrados */}

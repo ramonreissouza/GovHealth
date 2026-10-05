@@ -23,6 +23,7 @@ import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 import { carregarIndiceCapag, type IndiceCapag } from '@/lib/capacidade-pagamento'
 import { carregarIndicePagometro } from '@/lib/pagometro'
+import { pagadorDaEsfera, pagadorDe, scorePagometro } from '@/lib/pagometro-calculo.mjs'
 import { normalizeText } from '@/lib/text'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
@@ -84,6 +85,11 @@ function montarOportunidade(input: {
   abertaConfirmada?: boolean
   categoria?: Oportunidade['categoria']
   tipo?: TipoFornecimento
+  /** contratacoes.pagometro_dias: o prazo que o SQL usa no score (aplicarCapacidade). */
+  diasPagamento?: number | null
+  /** Quem paga, para a CAPAG (aplicarCapacidade). Do banco vem o que o SQL usa
+   *  (contratacoes.pagador_tipo, senão a esfera); sem ele, pagadorDe na hora. */
+  tipoPagador?: Oportunidade['tipoPagador']
   agora: string
 }): Oportunidade {
   const { objeto, uf, municipio, hospital, valor, aberto, agora } = input
@@ -110,6 +116,10 @@ function montarOportunidade(input: {
     indiceConcorrencia: 'medio',
     acaoRecomendada: aberto ? 'Edital publicado — preparar proposta' : 'Monitorar — licitação prevista',
     licitacaoRelacionada: input.licitacao,
+    diasPagamento: input.diasPagamento ?? null,
+    tipoPagador: input.tipoPagador !== undefined
+      ? input.tipoPagador
+      : pagadorDe(hospital, input.licitacao.orgaoEntidade.esferaId),
     createdAt: agora,
     updatedAt: agora,
   }
@@ -117,15 +127,21 @@ function montarOportunidade(input: {
 
 // Enriquece a oportunidade com a capacidade de pagamento (CAPAG) da instituição e
 // mistura como fator aditivo ponderado (15%) no score: score' = 0,85·base + 0,15·cap.
-// Sem dado (federal/União ou ente sem CAPAG) → neutro, não distorce o lead.
+// A CAPAG é a de quem paga (resolvePorPagador): compra federal → neutro, estadual → a
+// do estado. Sem dado (ente sem CAPAG) → neutro, não distorce o lead.
+// Com prazo de quem paga gravado (diasPagamento), a capacidade é a média da CAPAG com a
+// nota do prazo — o MESMO cálculo de scoreExprSql, para a ordem do banco bater com o
+// número da tela.
 function aplicarCapacidade(o: Oportunidade, idx: IndiceCapag): Oportunidade {
-  const cap = idx.resolvePublico(o.uf, o.municipio)
-  const score = Math.round(0.85 * o.score + 0.15 * cap.score)
+  const cap = idx.resolvePorPagador(o.uf, o.municipio, o.tipoPagador)
+  const notaPrazo = o.diasPagamento != null ? scorePagometro(o.diasPagamento) : null
+  const capacidade = notaPrazo != null ? (cap.score + notaPrazo) / 2 : cap.score
+  const score = Math.round(0.85 * o.score + 0.15 * capacidade)
   return {
     ...o,
     score,
     status: score >= 75 ? 'quente' : score >= 50 ? 'morno' : 'frio',
-    subScores: { ...o.subScores, capacidade: cap.score },
+    subScores: { ...o.subScores, capacidade: Math.round(capacidade) },
     capacidadePagamento: { fonte: cap.fonte, nota: cap.nota, label: cap.label },
   }
 }
@@ -149,6 +165,9 @@ interface ContratacaoRow {
   link_externo: string | null
   esfera: string | null
   codigo_unidade: string | null
+  /** Só quando as colunas existem (conferirColunaPagometro). */
+  pagometro_dias?: number | null
+  pagador_tipo?: string | null
   usuario_nome: string | null
   aberto: boolean
 }
@@ -171,19 +190,58 @@ const semAcento = (expr: string) => `translate(lower(${expr}), '${SEM_ACENTO_DE}
 // por score sobre o universo inteiro, não só a amostra carregada. ATENÇÃO: mudar a
 // fórmula do score em qualquer um dos dois lados (JS ou aqui) exige mudar o outro —
 // mesmo risco de deriva já aceito para a expressão de acento acima.
-const scoreExprSql = (ref: string) => `ROUND(
-  0.85 * (CASE WHEN ${abertoExpr(ref)} THEN 85 ELSE 70 END)
-  + 0.15 * COALESCE(
+//
+// PAGÔMETRO NO SCORE (Fase 3): o sub-score de capacidade vira a média entre a nota CAPAG
+// e a nota do prazo de quem paga (scorePagometro: ≤15 dias 100, ≤45 60, acima 20), quando
+// a contratação tem prazo gravado (contratacoes.pagometro_dias, ver
+// scripts/lib/pagometro-contratacoes.mjs). Sem prazo, só a CAPAG, como antes. O peso
+// continua 15%. Espelho em JS: aplicarCapacidade.
+//
+// A CAPAG é a de QUEM PAGA (IndiceCapag.resolvePorPagador): federal → neutro (a União
+// não tem CAPAG), estadual → só a do estado, o resto → município, senão estado. Quem
+// paga vem gravado em contratacoes.pagador_tipo (pagadorDe, que olha o nome do órgão
+// quando a esfera do PNCP falta — ~98% da base); linha que a gravação ainda não viu cai
+// na parte da esfera (pagadorDaEsfera). O JS usa o mesmo par (buscarDoBanco).
+const tipoPagadorSql = (ref: string) => {
+  const daEsfera = `(CASE UPPER(TRIM(COALESCE(${ref}.esfera, ''))) WHEN 'F' THEN 'federal'
+                       WHEN 'E' THEN 'estado' WHEN 'D' THEN 'estado' WHEN 'M' THEN 'municipio' END)`
+  return temColunaPagometro ? `COALESCE(${ref}.pagador_tipo, ${daEsfera})` : daEsfera
+}
+const capagSql = (ref: string) => `(CASE WHEN ${tipoPagadorSql(ref)} = 'federal' THEN 60 ELSE COALESCE(
+      CASE WHEN ${tipoPagadorSql(ref)} = 'estado' THEN NULL ELSE
       (SELECT CASE cap_m.nota WHEN 'A' THEN 100 WHEN 'B' THEN 70 WHEN 'C' THEN 40 WHEN 'D' THEN 10 END
          FROM capag cap_m
         WHERE cap_m.ente_tipo = 'municipio' AND cap_m.uf = ${ref}.uf
           AND cap_m.municipio_key = UPPER(${semAcento(`${ref}.municipio`)})
-        LIMIT 1),
+        LIMIT 1) END,
       (SELECT CASE cap_e.nota WHEN 'A' THEN 100 WHEN 'B' THEN 70 WHEN 'C' THEN 40 WHEN 'D' THEN 10 END
          FROM capag cap_e WHERE cap_e.ente_tipo = 'estado' AND cap_e.uf = ${ref}.uf LIMIT 1),
       60
-    )
+    ) END)`
+const scoreExprSql = (ref: string) => `ROUND(
+  0.85 * (CASE WHEN ${abertoExpr(ref)} THEN 85 ELSE 70 END)
+  + 0.15 * ${temColunaPagometro
+    ? `(CASE WHEN ${ref}.pagometro_dias IS NULL THEN ${capagSql(ref)}
+             ELSE (${capagSql(ref)} + CASE WHEN ${ref}.pagometro_dias <= 15 THEN 100
+                                            WHEN ${ref}.pagometro_dias <= 45 THEN 60 ELSE 20 END) / 2.0 END)`
+    : capagSql(ref)}
 )`
+
+// As colunas pagometro_* e pagador_tipo de contratacoes só existem depois que
+// db/schema-pagometro.sql foi aplicado (migrate-pagometro.mjs ou uma carga). O app pode
+// subir antes: conferida no começo de cada pedido (cacheada 10 min), e sem elas o
+// score, a ordenação e o filtro ficam como eram. pagador_tipo é a última que o schema
+// acrescenta: com ela, todas existem.
+let temColunaPagometro = false
+let colunaConferidaEm = 0
+async function conferirColunaPagometro() {
+  if (Date.now() - colunaConferidaEm < 10 * 60_000) return
+  colunaConferidaEm = Date.now()
+  try {
+    const r = await query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'contratacoes' AND column_name = 'pagador_tipo'`)
+    temColunaPagometro = r.length > 0
+  } catch { /* banco fora: mantém o último valor; a consulta principal trata o erro */ }
+}
 
 // Tokeniza a busca livre como matchesTermo (src/lib/text.ts): por espaço, tolerante a
 // plural simples. Teto de 8 termos — corte defensivo contra input patológico.
@@ -217,6 +275,8 @@ interface FiltroBanco {
   portfolioVazio?: boolean
   /** Score mínimo (calculado em SQL — ver scoreExprSql). */
   minScore?: number
+  /** Só quem paga em até N dias depois da liquidação (contratacoes.pagometro_dias). */
+  pagaAte?: number
 }
 function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {}): { whereSql: string; args: unknown[] } {
   // O universo é o MESMO do mapa, do dashboard, dos alertas e da landing.
@@ -280,6 +340,11 @@ function construirWhere(params: FiltroBanco, opts: { incluirTipo?: boolean } = {
     args.push(params.minScore)
     where.push(`${scoreExprSql('contratacoes')} >= $${args.length}`)
   }
+  if (params.pagaAte && params.pagaAte > 0) {
+    // Sem a coluna ainda, ninguém tem prazo medido: o filtro honesto devolve nada, não tudo.
+    if (!temColunaPagometro) where.push('FALSE')
+    else { args.push(params.pagaAte); where.push(`pagometro_dias <= $${args.length}`) }
+  }
   return { whereSql: where.join(' AND '), args }
 }
 
@@ -294,7 +359,7 @@ export interface TotaisBanco {
   municipios: number
 }
 async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
-  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}`
+  const cacheKey = `opp:totais:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}:${params.pagaAte ?? ''}:${temColunaPagometro ? 'pg' : ''}`
   const cached = getCached<TotaisBanco>(cacheKey)
   if (cached) return cached
   // O WHERE sai SEM o filtro de status; o status vira um FILTER. Assim `total` segue
@@ -331,7 +396,7 @@ async function totaisDoBanco(params: FiltroBanco): Promise<TotaisBanco> {
 // Contagem por tipo de fornecimento (para as abas), SEM o filtro de tipo — assim
 // todas as abas mostram seu total dentro do filtro de status/ano/categoria.
 async function porTipoDoBanco(params: FiltroBanco): Promise<Record<string, number>> {
-  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}`
+  const cacheKey = `opp:portipo:${params.ufs?.join(',') ?? params.uf ?? ''}:${params.municipio ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}:${params.pagaAte ?? ''}:${temColunaPagometro ? 'pg' : ''}`
   const cached = getCached<Record<string, number>>(cacheKey)
   if (cached) return cached
   const { whereSql, args } = construirWhere(params, { incluirTipo: false })
@@ -370,7 +435,9 @@ const SORT_COLUMNS: Record<string, string> = {
 // (deep-link ?opp=) precisa da MESMA ordem da listagem: se as duas divergirem, o
 // link leva o usuário para a página errada — o item não está onde ele foi mandado.
 function ordemSql(sort: string | undefined, dir: 'asc' | 'desc'): string {
-  const col = sort ? SORT_COLUMNS[sort] : undefined
+  // O score é remontado aqui, não lido do mapa: o mapa é montado uma vez, quando o módulo
+  // carrega, e o score depende de a coluna do Pagômetro existir (conferida por pedido).
+  const col = sort === 'score' ? scoreExprSql('contratacoes') : sort ? SORT_COLUMNS[sort] : undefined
   const d = dir === 'asc' ? 'ASC' : 'DESC'
   return col
     ? `${col} ${d} NULLS LAST, numero_controle_pncp ASC`
@@ -442,13 +509,14 @@ async function buscarDoBanco(params: {
   portfolioNeedles?: string[]
   portfolioVazio?: boolean
   minScore?: number
+  pagaAte?: number
   limit?: number
   offset?: number
   sort?: string
   dir?: 'asc' | 'desc'
   agora: string
 }): Promise<Oportunidade[]> {
-  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}:${params.limit ?? ''}:${params.offset ?? ''}:${params.sort ?? ''}:${params.dir ?? ''}`
+  const cacheKey = `opp:banco:${params.ufs?.length ? params.ufs.join(',') : params.uf ?? ''}:${params.municipio ?? ''}:${params.tipo ?? ''}:${params.porUf ?? ''}:${params.status ?? ''}:${params.ano ?? ''}:${params.categoria ?? ''}:${params.q ?? ''}:${params.proponente ?? ''}:${params.convenio ?? ''}:${(params.portfolioNeedles ?? []).join('|')}${params.portfolioVazio ? ':pv' : ''}:${params.minScore ?? ''}:${params.pagaAte ?? ''}:${temColunaPagometro ? 'pg' : ''}:${params.limit ?? ''}:${params.offset ?? ''}:${params.sort ?? ''}:${params.dir ?? ''}`
   const cached = getCached<Oportunidade[]>(cacheKey)
   if (cached) return cached
 
@@ -459,7 +527,7 @@ async function buscarDoBanco(params: {
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
             situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo,
-            usuario_nome, esfera, codigo_unidade`
+            usuario_nome, esfera, codigo_unidade${temColunaPagometro ? ', pagometro_dias::float8 AS pagometro_dias, pagador_tipo' : ''}`
   const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
   const off = Math.max(0, Math.floor(params.offset ?? 0))
   // Sem coluna válida: mesmo default de sempre (score desc, data, e a PK no fim).
@@ -526,6 +594,10 @@ async function buscarDoBanco(params: {
       abertaConfirmada: r.aberto,   // veio do banco: é a regra canônica
       categoria: catBanco && CATEGORIAS_VALIDAS.has(catBanco) ? catBanco : undefined,
       tipo: isTipoFornecimento(r.tipo_fornecimento) ? r.tipo_fornecimento : undefined,
+      diasPagamento: r.pagometro_dias ?? null,
+      // O mesmo par do tipoPagadorSql: o gravado, senão a esfera. Não pagadorDe pelo
+      // nome aqui: o SQL não o tem, e o número da tela divergiria da ordem do banco.
+      tipoPagador: (r.pagador_tipo as Oportunidade['tipoPagador']) ?? pagadorDaEsfera(r.esfera),
       agora: params.agora,
     })
   })
@@ -608,6 +680,9 @@ export async function GET(req: NextRequest) {
     const municipio = searchParams.get('municipio')?.trim() || undefined // filtro por cidade (deep-link do mapa)
     const porUf = searchParams.get('porUf') ? Number(searchParams.get('porUf')) : undefined // amostra por UF (mapa)
     const minScore = Number(searchParams.get('minScore') ?? 0)
+    // "Paga em até N dias" depois da liquidação (Pagômetro gravado na contratação).
+    const pagaAte = Math.max(0, Math.floor(Number(searchParams.get('pagaAte') ?? 0) || 0)) || undefined
+    await conferirColunaPagometro()
     const categoria = searchParams.get('categoria') ?? undefined
     const regiao = searchParams.get('regiao') ?? undefined
     const tipoParam = searchParams.get('tipo') ?? undefined
@@ -662,7 +737,7 @@ export async function GET(req: NextRequest) {
     const localizarId = searchParams.get('localizarId')?.trim() || undefined
     if (localizarId) {
       const idAlvo = localizarId.startsWith('pncp-') ? localizarId.slice(5) : localizarId
-      const { whereSql, args } = construirWhere({ uf, ufs, municipio, tipo, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore })
+      const { whereSql, args } = construirWhere({ uf, ufs, municipio, tipo, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, pagaAte })
       args.push(idAlvo)
       try {
         const [row] = await query<{ posicao: number }>(
@@ -701,7 +776,7 @@ export async function GET(req: NextRequest) {
 
     // Um filtro está ATIVO? Decide o que fazer com "zero linhas" logo abaixo.
     const comFiltro = !!(uf || ufs?.length || municipio || tipo || status || ano || categoria
-      || q || proponente || convenio || portfolioLigado || minScore > 0 || offset > 0)
+      || q || proponente || convenio || portfolioLigado || minScore > 0 || pagaAte || offset > 0)
 
     // FILTROS QUE O FALLBACK NÃO SABE REPRODUZIR — predicado diferente do de cima, e
     // são dois de propósito: `comFiltro` responde "o usuário pediu recorte?", este
@@ -725,7 +800,7 @@ export async function GET(req: NextRequest) {
     // para comparar, ordenamos a janela do PNCP pelo que foi pedido (ordenarEmMemoria).
     const semEquivalenteNoPncp = !!(
       ufs?.length || municipio || status || ano || q || proponente || convenio
-      || portfolioLigado || offset > 0 || sortParam
+      || portfolioLigado || offset > 0 || sortParam || pagaAte
     )
     const erro503Banco = () => NextResponse.json({
       error: 'Banco de dados indisponível neste momento. Os filtros ativos (busca, portfólio, '
@@ -736,9 +811,9 @@ export async function GET(req: NextRequest) {
 
     try {
       const [doBanco, tot, pt] = await Promise.all([
-        buscarDoBanco({ uf, ufs, municipio, tipo, porUf, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, limit, offset, sort: sortParam, dir: dirParam, agora }),
-        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, municipio, tipo, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore }),
-        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, municipio, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore }),
+        buscarDoBanco({ uf, ufs, municipio, tipo, porUf, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, pagaAte, limit, offset, sort: sortParam, dir: dirParam, agora }),
+        porUf ? Promise.resolve(null) : totaisDoBanco({ uf, ufs, municipio, tipo, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, pagaAte }),
+        porUf ? Promise.resolve(null) : porTipoDoBanco({ uf, ufs, municipio, status, ano, categoria, q, proponente, convenio, portfolioNeedles, portfolioVazio, minScore, pagaAte }),
       ])
       totais = tot
       porTipo = pt

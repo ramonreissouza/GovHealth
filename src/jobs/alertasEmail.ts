@@ -16,6 +16,7 @@ import { query } from '@/lib/db'
 import { ABERTA, UNIVERSO } from '@/lib/licitacoes/universo'
 import { matchItem, type AlertaConfig, type AlertaNotificacao, type ItemParaMatch } from '@/lib/alertas'
 import { buildAlertaDigestHtml } from '@/lib/alerta-email'
+import { diasCurto } from '@/lib/pagometro-texto'
 // DESATIVADO (a pedido) — Cofre de Documentos. Reativar: descomentar o import e o bloco (0) abaixo.
 // import { enviarAvisosDocumentos } from '@/lib/documentos-alertas'
 
@@ -67,18 +68,27 @@ export async function runAlertasEmail() {
   }
 
   // 2) Itens recentes (compartilhados entre usuários) — editais abertos + emendas.
-  const editaisRows = await query<{ n: string; orgao: string | null; mun: string | null; uf: string | null; obj: string | null; cat: string | null; v: number | null }>(
+  // O prazo de quem paga (Pagômetro, gravado em contratacoes por
+  // scripts/lib/pagometro-contratacoes.mjs) vai junto quando a coluna já existe.
+  const temPrazo = (await query(
+    `SELECT 1 FROM information_schema.columns WHERE table_name = 'contratacoes' AND column_name = 'pagometro_dias'`,
+  )).length > 0
+  const editaisRows = await query<{ n: string; orgao: string | null; mun: string | null; uf: string | null; obj: string | null; cat: string | null; v: number | null; dias?: number | null; pagador?: string | null }>(
     `SELECT numero_controle_pncp n, razao_social_orgao orgao, municipio mun, uf, objeto_compra obj,
             categoria_saude cat, valor_total_estimado::float8 v
+            ${temPrazo ? ', pagometro_dias::float8 dias, pagometro_pagador pagador' : ''}
        FROM contratacoes c
       WHERE ${UNIVERSO('c')} AND ${ABERTA('c')}
         AND coletado_em > now() - interval '2 days'
       ORDER BY coletado_em DESC LIMIT 800`,
   )
+  // Curto, com a ressalva: é depois da liquidação, não depois da entrega.
+  const prazo = (e: { dias?: number | null }) =>
+    e.dias != null ? ` · costuma pagar em ${diasCurto(e.dias)} depois de liquidar a nota` : ''
   const editais: ItemParaMatch[] = editaisRows.map((e) => ({
     id: `edital-${e.n}`,
     titulo: 'Edital de saúde publicado',
-    descricao: `${e.orgao ?? 'Órgão N/D'} (${[e.mun, e.uf].filter(Boolean).join('/') || 'N/D'}): ${(e.obj ?? '').slice(0, 90)}… — ${kBRL(e.v ?? 0)}`,
+    descricao: `${e.orgao ?? 'Órgão N/D'} (${[e.mun, e.uf].filter(Boolean).join('/') || 'N/D'}): ${(e.obj ?? '').slice(0, 90)}… — ${kBRL(e.v ?? 0)}${prazo(e)}`,
     uf: e.uf ?? undefined,
     categoria: e.cat ?? undefined,
     valor: e.v ?? undefined,

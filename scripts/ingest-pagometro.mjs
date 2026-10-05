@@ -26,6 +26,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { novoPool } from './lib/pg-ssl.mjs'
 import { somarMsc, resumirDias, normalizeKey } from '../src/lib/pagometro-calculo.mjs'
+import { atualizarPagometroContratacoes } from './lib/pagometro-contratacoes.mjs'
 
 if (!process.env.DATABASE_URL) {
   try { const env = fs.readFileSync('.env.local', 'utf8'); const m = env.match(/^DATABASE_URL=(.*)$/m); if (m) process.env.DATABASE_URL = m[1].trim().replace(/^["']|["']$/g, '') } catch {}
@@ -142,6 +143,9 @@ async function main() {
 
   if (!SO_RESUMO) await coletar(entes)
   await resumir(lista)
+  // O prazo novo vale para o score, o filtro e o e-mail só depois de gravado em cada
+  // contratação (Fase 3).
+  if (!DRY) await atualizarPagometroContratacoes(pool)
 }
 
 async function coletar(entes) {
