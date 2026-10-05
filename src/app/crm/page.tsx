@@ -8,13 +8,16 @@ import { ScoreBadge } from '@/components/ui/ScoreBadge'
 import { clsx } from 'clsx'
 import {
   Plus, Trash2, X, TrendingUp, DollarSign, CheckCircle2,
-  Percent, Clock, ChevronRight, GripVertical, ExternalLink, Save, FileSearch,
+  Percent, Clock, ChevronRight, GripVertical, ExternalLink, Save, FileSearch, ListChecks,
 } from 'lucide-react'
 import { ExportButton } from '@/components/ui/ExportButton'
 import {
   STAGES, getDeals, createDeal, updateDeal, deleteDeal, calcularCRMStats, diasNoStage,
-  type PipelineDeal, type PipelineStage, type CRMStats,
+  checklistDoDeal, checklistPadrao, progressoEtapa, pendentesAnteriores,
+  type PipelineDeal, type PipelineStage, type CRMStats, type TarefaEtapa,
 } from '@/lib/crm'
+import ChecklistEtapas, { type DossieResumo } from '@/components/crm/ChecklistEtapas'
+import { getWorkspace, calcularProgresso } from '@/lib/edital-workspace'
 import { CATEGORIA_COLOR } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 
@@ -39,6 +42,8 @@ function DealCard({
 }) {
   const dias = diasNoStage(deal)
   const stalled = dias >= DIAS_ALERTA && deal.stage !== 'ganho' && deal.stage !== 'perdido'
+  const etapa = progressoEtapa(deal, deal.stage)
+  const atrasadas = pendentesAnteriores(deal).length
 
   return (
     <div
@@ -66,6 +71,24 @@ function DealCard({
 
       {/* Description */}
       <p className="text-[11px] text-muted leading-snug line-clamp-2 mb-2 pl-[17px]">{deal.descricao}</p>
+
+      {/* Checklist da etapa atual (+ o que ficou para trás nas anteriores) */}
+      {etapa.total > 0 && (
+        <div className="flex flex-wrap items-center gap-x-1.5 mb-2 pl-[17px] text-[10px] font-mono-custom whitespace-nowrap">
+          <span className={clsx(
+            'flex items-center gap-1',
+            etapa.feitos === etapa.total ? 'text-emerald-400' : 'text-faint',
+          )}>
+            <ListChecks size={11} />
+            {etapa.feitos}/{etapa.total} tarefas
+          </span>
+          {atrasadas > 0 && (
+            <span className="text-amber" title="Tarefas de etapas anteriores ainda não marcadas">
+              · {atrasadas} atrasada{atrasadas > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between pl-[17px]">
@@ -224,24 +247,47 @@ function DealModal({
   deal,
   defaultStage,
   onSave,
+  onChecklist,
   onDelete,
   onClose,
 }: {
   deal: PipelineDeal | null
   defaultStage: PipelineStage
   onSave: (data: Omit<PipelineDeal, 'id' | 'createdAt' | 'updatedAt' | 'movedAt'>) => void
+  onChecklist: (id: string, checklist: TarefaEtapa[]) => void
   onDelete: (id: string) => void
   onClose: () => void
 }) {
   const [form, setForm] = useState<Omit<PipelineDeal, 'id' | 'createdAt' | 'updatedAt' | 'movedAt'>>(
     deal
-      ? { ...deal }
-      : { ...EMPTY_FORM, stage: defaultStage }
+      ? { ...deal, checklist: checklistDoDeal(deal) }
+      : { ...EMPTY_FORM, stage: defaultStage, checklist: checklistPadrao() }
   )
   const [confirmDelete, setConfirmDelete] = useState(false)
 
+  // Progresso do dossiê do edital (checklist de habilitação documento a documento),
+  // quando o deal veio de uma oportunidade que já tem dossiê.
+  const [dossie] = useState<DossieResumo | null>(() => {
+    const ws = deal?.oportunidadeId ? getWorkspace(deal.oportunidadeId) : null
+    if (!ws) return null
+    const p = calcularProgresso(ws)
+    return {
+      href: `/editais?id=${encodeURIComponent(ws.id)}`,
+      feitos: p.feitosDocs,
+      total: p.totalDocs,
+      obrigatoriosPendentes: p.obrigatoriosPendentes,
+    }
+  })
+
   const set = <K extends keyof typeof form>(key: K, value: typeof form[K]) =>
     setForm((p) => ({ ...p, [key]: value }))
+
+  // Marcar tarefa salva na hora num deal existente: ninguém espera que fechar o painel
+  // sem "Salvar" desfaça um item riscado.
+  const mudarChecklist = (c: TarefaEtapa[]) => {
+    set('checklist', c)
+    if (deal) onChecklist(deal.id, c)
+  }
 
   const handleSave = () => {
     if (!form.hospital.trim()) return
@@ -251,10 +297,11 @@ function DealModal({
   const inputCls = 'w-full bg-bg3 border border-subtle2 rounded-lg px-3 py-2 text-[12px] text-strong placeholder:text-faint outline-none focus:border-accent/60 transition-colors'
   const labelCls = 'block text-[9px] font-mono-custom text-faint uppercase tracking-wider mb-1'
 
+  // z acima do botão de menu do celular (z-[60] no Sidebar), que cobria o título.
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[65] flex items-start justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="w-[520px] h-full bg-bg2 border-l border-subtle overflow-y-auto flex flex-col"
+        className="w-full max-w-[520px] h-full bg-bg2 border-l border-subtle overflow-y-auto flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -320,6 +367,19 @@ function DealModal({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Checklist por etapa */}
+          <div>
+            <label className={labelCls}>
+              Checklist da licitação{deal ? ' · salvo ao marcar' : ''}
+            </label>
+            <ChecklistEtapas
+              checklist={form.checklist ?? []}
+              stageAtual={form.stage}
+              onChange={mudarChecklist}
+              dossie={dossie}
+            />
           </div>
 
           {/* Hospital + Município */}
@@ -581,6 +641,11 @@ export default function CRMPage() {
     setModalOpen(false)
   }
 
+  const handleChecklist = (id: string, checklist: TarefaEtapa[]) => {
+    updateDeal(id, { checklist })
+    reload()
+  }
+
   const handleDelete = (id: string) => {
     deleteDeal(id)
     reload()
@@ -725,6 +790,7 @@ export default function CRMPage() {
           deal={selectedDeal}
           defaultStage={defaultStage}
           onSave={handleSave}
+          onChecklist={handleChecklist}
           onDelete={handleDelete}
           onClose={() => setModalOpen(false)}
         />

@@ -314,7 +314,7 @@ export default function ChatInterface() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full overflow-hidden">
       <HistoricoConversas
         tipo="copiloto"
         conversas={conversas}
@@ -325,7 +325,7 @@ export default function ChatInterface() {
         // ali, parecendo salva, e a próxima pergunta ressuscitaria um id que já não existe.
         onApagada={() => { void recarregar(); novaConversa() }}
       />
-      <div className="flex-1 flex flex-col h-full min-w-0 pl-5">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 px-3 pt-3 md:pt-0 md:pl-5 md:pr-0">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
         {/* Abrir uma conversa é uma ida ao banco. Sem este aviso a tela ficava com a

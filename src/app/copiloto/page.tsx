@@ -16,7 +16,7 @@ export default function CopilotoPage() {
         <Topbar title="Copiloto IA" subtitle="dados PNCP + TransfereGov" />
         {/* Sem `max-w-3xl` aqui: a coluna de conversas anteriores mora dentro do
             ChatInterface, e o limite de largura da página a espremeria. */}
-        <main className="flex-1 overflow-hidden py-6 pr-6 bg-bg">
+        <main className="flex-1 overflow-hidden pb-3 md:py-6 md:pr-6 bg-bg">
           <div className="h-full flex flex-col">
             <ChatInterface />
           </div>
