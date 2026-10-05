@@ -1,0 +1,242 @@
+/* marketing/instagram/template/slides.css
+   Linguagem visual dos posts da GovHealth no Instagram (@techealth_).
+
+   Direção de arte: "DOSSIÊ DE LICITAÇÃO". O seguidor vive entre edital, ata,
+   carimbo e sala de disputa, então o post fala essa língua: tipografia editorial
+   (serifa com itálico de revista), cor chapada da paleta, textura de papel e
+   detalhes "feitos à mão" (marca-texto, sublinhado de caneta, carimbo, check).
+
+   O que NÃO entra (é o que deixa post com cara de gerado por IA): brilho
+   desfocado no fundo, degradê dentro do texto, pílula com bolinha, tudo centralizado
+   com sombra suave. Degradê azul→teal: não usar.
+
+   Cada <section class="slide"> vira um PNG 1080x1350 (render.mjs). */
+
+/* Fontes LOCAIS, versionadas em template/fonts (SIL OFL 1.1, ver OFL-*.txt).
+   Antes vinham do Google Fonts a cada render: offline o PNG saía com fonte de
+   sistema, e uma mudança do lado deles mudava o post sem mudar o commit.
+   render.mjs falha se alguma destas famílias não carregar. */
+@font-face { font-family: 'Archivo'; font-style: normal; font-weight: 400 900; font-stretch: 62% 125%; font-display: block; src: url('fonts/archivo-normal-400-900.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Fraunces'; font-style: italic; font-weight: 400 900; font-display: block; src: url('fonts/fraunces-italic-400-900.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Fraunces'; font-style: normal; font-weight: 400 900; font-display: block; src: url('fonts/fraunces-normal-400-900.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: block; src: url('fonts/ibm-plex-mono-normal-400.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: block; src: url('fonts/ibm-plex-mono-normal-500.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600; font-display: block; src: url('fonts/ibm-plex-mono-normal-600.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  /* paleta da plataforma (src/app/globals.css) */
+  --blue: #1f6fd6;
+  --blue-l: #2f80ed;
+  --teal: #17b8a6;
+  --teal-d: #0e9c8c;
+  --ink: #0f1b2d;      /* navy: texto e fundo escuro */
+  --paper: #f3f6fa;    /* bg3 da plataforma: o "papel" */
+  --muted: #4a5a70;
+  --line: #c9d3e0;
+  --red: #e5484d;      /* só no carimbo e no que deu errado */
+
+  --serif: 'Fraunces', Georgia, serif;
+  --sans: 'Archivo', 'Helvetica Neue', sans-serif;
+  --mono: 'IBM Plex Mono', monospace;
+
+  /* ruído de papel */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* máscara de tinta falhada, para o carimbo */
+  --worn: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -2.4 0 0 0 1.75'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #8a96a8; font-family: var(--sans); color: var(--ink); }
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+.slide {
+  width: 1080px; height: 1350px; margin: 0 auto 40px;
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+  padding: 72px 84px 64px;
+  background: var(--paper); color: var(--ink);
+}
+.slide::after {            /* grão de papel por cima de tudo */
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 50;
+  background-image: var(--grain); opacity: .16; mix-blend-mode: multiply;  /* mais que isso o papel fica cinza */
+}
+.slide.ink  { background: var(--ink);  color: var(--paper); }
+.slide.blue { background: var(--blue); color: #fff; }
+.slide.teal { background: var(--teal); color: var(--ink); }
+.slide.ink::after, .slide.blue::after { mix-blend-mode: soft-light; opacity: .55; }
+.slide > * { position: relative; z-index: 1; }
+
+/* ── Cabeçalho de série (estilo revista) ──────────────────────────────── */
+.mast {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding-bottom: 18px; border-bottom: 3px solid currentColor;
+  font-family: var(--sans); font-weight: 800; font-size: 25px;
+  letter-spacing: .14em; text-transform: uppercase;
+  font-variation-settings: 'wdth' 112;
+}
+.mast .no { font-family: var(--serif); font-style: italic; font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 34px; }
+
+/* ── Rodapé ───────────────────────────────────────────────────────────── */
+.foot {
+  margin-top: auto; padding-top: 22px; border-top: 2px solid currentColor;
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: var(--mono); font-size: 23px; letter-spacing: .02em;
+}
+.foot .src { opacity: .7; }
+.foot .go { font-family: var(--sans); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; font-size: 23px; }
+
+/* "Continua…": o gancho para o próximo post */
+.cont { margin-top: auto; padding-top: 26px; border-top: 2px solid currentColor; }
+.cont .when {
+  font-family: var(--sans); font-weight: 800; font-size: 23px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--teal-d);
+}
+.ink .cont .when, .blue .cont .when { color: var(--teal); }
+.cont p { font-family: var(--serif); font-style: italic; font-weight: 400; font-size: 44px; line-height: 1.15; margin-top: 10px; font-variation-settings: 'opsz' 72; }
+.cont + .foot { margin-top: 26px; border-top: 0; padding-top: 0; }
+
+/* ── Tipografia ───────────────────────────────────────────────────────── */
+.kicker {
+  font-family: var(--sans); font-weight: 800; font-size: 25px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--blue);
+}
+.ink .kicker { color: var(--teal); }
+.blue .kicker { color: rgba(255,255,255,.8); }
+
+.display {
+  font-family: var(--serif); font-weight: 600; font-size: 128px; line-height: .94;
+  letter-spacing: -0.012em; word-spacing: .05em;  /* Fraunces em corpo grande gruda as palavras */ font-variation-settings: 'opsz' 144, 'SOFT' 30;
+}
+.display em { font-style: italic; font-weight: 500; }
+.display.md { font-size: 104px; }
+.display.sm { font-size: 84px; line-height: 1; }
+
+.body { font-family: var(--sans); font-size: 36px; line-height: 1.32; font-weight: 400; }
+.body strong { font-weight: 700; }
+.body.serif { font-family: var(--serif); font-size: 46px; line-height: 1.16; font-variation-settings: 'opsz' 60; }
+
+.c-teal { color: var(--teal-d); }
+.ink .c-teal, .blue .c-teal { color: var(--teal); }
+.c-blue { color: var(--blue); }
+.c-ink { color: var(--ink); }
+.c-red { color: var(--red); }
+
+/* marca-texto teal, levemente torto, como passado à mão */
+.mark {
+  background: linear-gradient(176deg, transparent 58%, rgba(23,184,166,.5) 58%, rgba(23,184,166,.5) 92%, transparent 92%);
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  padding: 0 .06em;
+}
+.ink .mark { background: linear-gradient(176deg, transparent 55%, rgba(23,184,166,.6) 55%, rgba(23,184,166,.6) 90%, transparent 90%); }
+
+/* sublinhado de caneta (SVG dentro do span) */
+.pen { position: relative; display: inline-block; }
+.pen svg { position: absolute; left: -2%; bottom: -.16em; width: 104%; height: .32em; overflow: visible; }
+.pen path { fill: none; stroke: var(--teal); stroke-width: 9; stroke-linecap: round; }
+
+/* número que vaza a margem */
+.bleed {
+  font-family: var(--serif); font-weight: 800; font-size: 340px; line-height: .8;
+  letter-spacing: -0.03em; white-space: nowrap; margin-left: -14px;
+  font-variation-settings: 'opsz' 144, 'SOFT' 0;
+}
+
+/* ── Componentes ──────────────────────────────────────────────────────── */
+
+/* ficha com quadradinhos: "marque o seu" */
+.ficha { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 20px 36px; }
+.ficha li { display: flex; align-items: center; gap: 18px; font-size: 32px; font-weight: 500; }
+.ficha .box { flex: 0 0 38px; height: 38px; border: 3px solid currentColor; border-radius: 4px; }
+
+/* checklist grande, com check desenhado */
+.checks { list-style: none; display: flex; flex-direction: column; gap: 34px; }
+.checks li { display: flex; align-items: center; gap: 38px; font-family: var(--serif); font-weight: 600; font-size: 96px; line-height: 1; letter-spacing: -0.01em; font-variation-settings: 'opsz' 144; }
+.checks .box { position: relative; flex: 0 0 104px; height: 104px; border: 6px solid var(--ink); border-radius: 10px; }
+.checks .box svg { position: absolute; left: -8px; top: -26px; width: 132px; height: 132px; overflow: visible; }
+.checks .box path { fill: none; stroke: var(--teal); stroke-width: 15; stroke-linecap: round; stroke-linejoin: round; }
+.checks li.off { color: rgba(15,27,45,.32); }
+.checks li.off .box { border-color: var(--red); border-style: dashed; }
+
+/* janela de "sala de disputa" (imitação de portal, sem marca de ninguém) */
+.sala { background: #fff; border: 3px solid var(--ink); border-radius: 6px; box-shadow: 14px 14px 0 var(--ink); }
+.sala .hd { display: flex; justify-content: space-between; align-items: center; padding: 18px 26px; background: var(--ink); color: var(--paper);
+  font-family: var(--mono); font-size: 22px; }
+.sala .hd b { font-family: var(--sans); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; font-size: 22px; }
+.sala .msgs { padding: 30px 26px 34px; display: flex; flex-direction: column; gap: 26px; }
+.sala .m { display: grid; grid-template-columns: 110px 1fr; gap: 18px; font-size: 31px; line-height: 1.32; }
+.sala .m .t { font-family: var(--mono); font-size: 24px; color: var(--muted); padding-top: 4px; }
+.sala .m .who { font-family: var(--sans); font-weight: 800; font-size: 22px; letter-spacing: .1em; text-transform: uppercase; color: var(--blue); display: block; margin-bottom: 4px; }
+.sala .m.bad .who { color: var(--red); }
+.sala .m.unread { background: rgba(23,184,166,.12); margin: -12px -14px; padding: 12px 14px; border-left: 6px solid var(--teal); }
+
+/* carimbo de borracha */
+.stamp {
+  position: absolute; z-index: 5;
+  font-family: var(--sans); font-weight: 900; font-size: 74px; letter-spacing: .06em; text-transform: uppercase;
+  font-variation-settings: 'wdth' 75;
+  color: var(--red); border: 9px solid var(--red); border-radius: 10px; padding: 6px 30px 2px;
+  transform: rotate(-11deg); opacity: .9;
+  -webkit-mask-image: var(--worn); mask-image: var(--worn); -webkit-mask-size: 400px; mask-size: 400px;
+}
+.stamp::before { content: ''; position: absolute; inset: 7px; border: 3px solid var(--red); border-radius: 4px; }
+
+/* notificação pequena (o "1 mensagem não lida") */
+.toast { display: inline-flex; align-items: center; gap: 16px; align-self: flex-start;
+  background: var(--paper); color: var(--ink); border-radius: 6px; padding: 16px 24px;
+  font-family: var(--mono); font-size: 25px; box-shadow: 10px 10px 0 var(--ink); }
+.toast i { width: 18px; height: 18px; border-radius: 50%; background: var(--red); display: block; }
+
+/* escala de nota CAPAG */
+.grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.grades span { height: 190px; border: 4px solid rgba(243,246,250,.35); border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-weight: 700; font-size: 130px; color: rgba(243,246,250,.35); }
+.grades span.hit { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.grades-cap { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 22px; opacity: .7; margin-top: 14px; }
+
+/* barra de proporção */
+.bar { height: 30px; border: 3px solid currentColor; border-radius: 3px; position: relative; }
+.bar i { position: absolute; inset: 3px auto 3px 3px; background: var(--teal); display: block; }
+
+/* selo da marca colado como etiqueta */
+.sticker { background: #fff; border-radius: 14px; padding: 22px 30px; display: inline-block; align-self: flex-start;
+  transform: rotate(-3deg); box-shadow: 12px 12px 0 rgba(0,0,0,.28); }
+.sticker img { display: block; height: 104px; width: auto; object-view-box: inset(27% 8% 23% 8.5%);
+  mix-blend-mode: multiply; filter: brightness(1.06) contrast(1.12); }
+
+/* três verbos numerados */
+.verbs { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.verbs li { display: flex; align-items: baseline; gap: 30px; font-family: var(--serif); font-weight: 600; font-size: 96px; line-height: 1.06; letter-spacing: -0.01em; word-spacing: .05em; font-variation-settings: 'opsz' 144; }
+.verbs li b { font-style: italic; font-weight: 400; color: var(--teal); font-size: 60px; width: 50px; }
+
+/* lembrete de post anterior (call-back) */
+.recall { display: grid; grid-template-columns: 150px 1fr; gap: 34px; align-items: center; padding: 34px 0; border-top: 2px solid var(--line); }
+.recall.last { border-bottom: 2px solid var(--line); }
+.recall .ico { height: 150px; border-radius: 8px; border: 4px solid var(--ink); display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-weight: 700; font-size: 96px; }
+.recall .ico.fill { background: var(--ink); color: var(--paper); }
+.recall h3 { font-family: var(--sans); font-weight: 800; font-size: 25px; letter-spacing: .12em; text-transform: uppercase; color: var(--blue); margin-bottom: 8px; }
+.recall p { font-size: 34px; line-height: 1.3; }
+.tagline { font-family: var(--mono); font-size: 21px; color: var(--muted); margin-top: 6px; display: block; }
+
+/* cupom destacável */
+.coupon { display: grid; grid-template-columns: 300px 1fr; background: var(--paper); color: var(--ink); border-radius: 12px;
+  box-shadow: 14px 14px 0 var(--ink); position: relative; }
+.coupon .stub { border-right: 4px dashed var(--ink); padding: 40px 30px; display: flex; flex-direction: column; justify-content: center; }
+.coupon .stub b { font-family: var(--serif); font-weight: 800; font-size: 150px; line-height: .85; letter-spacing: -0.04em; }
+.coupon .stub span { font-family: var(--sans); font-weight: 800; font-size: 26px; letter-spacing: .14em; text-transform: uppercase; margin-top: 12px; }
+.coupon .main { padding: 40px 40px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+.coupon .main .row { font-size: 34px; font-weight: 600; display: flex; gap: 16px; align-items: center; }
+.coupon .main .row::before { content: '✓'; color: var(--teal-d); font-weight: 900; }
+.coupon .main .url { font-family: var(--mono); font-size: 25px; color: var(--muted); margin-top: 10px; }
+.coupon::before, .coupon::after { content: ''; position: absolute; left: 282px; width: 40px; height: 40px; border-radius: 50%; background: var(--teal); }
+.coupon::before { top: -20px; } .coupon::after { bottom: -20px; }
+
+.spacer { flex: 1; }
+.note { font-family: var(--mono); font-size: 21px; opacity: .65; }
+
+.nowrap { white-space: nowrap; }
+
+/* print do produto recortado numa moldura de sombra dura */
+.shot { border: 3px solid var(--ink); border-radius: 6px; overflow: hidden; box-shadow: 14px 14px 0 var(--ink); background: #fff; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
