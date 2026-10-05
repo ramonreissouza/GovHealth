@@ -51,3 +51,21 @@ export function temAcessoEmpresa(ctx: { plano?: string | null; role?: string | n
   if (ctx.role === 'master') return true
   return ctx.plano === 'empresa'
 }
+
+/**
+ * A conta pode usar recurso que gasta (IA)? O middleware só trava PÁGINAS para trial
+ * vencido; uma API cara precisa conferir por conta própria.
+ *
+ * Bloqueia: teste grátis vencido, assinatura cancelada ou expirada. `inadimplente`
+ * passa: é o período em que o Stripe ainda tenta cobrar, e o resto do app também
+ * não trava nele. Master passa sempre.
+ */
+export function assinaturaPermiteUso(
+  ctx: { role?: string | null; status?: string | null; expiraEm?: string | null },
+  hojeIso: string = new Date().toISOString().slice(0, 10),
+): boolean {
+  if (ctx.role === 'master') return true
+  if (ctx.status === 'cancelada' || ctx.status === 'expirada') return false
+  if (ctx.status === 'trial' && typeof ctx.expiraEm === 'string' && ctx.expiraEm.slice(0, 10) < hojeIso) return false
+  return true
+}
