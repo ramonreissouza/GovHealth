@@ -108,6 +108,8 @@ ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS tipo_fornecimento TEXT
   END) STORED;
 CREATE INDEX IF NOT EXISTS idx_contr_tipo    ON contratacoes (tipo_fornecimento);
 CREATE INDEX IF NOT EXISTS idx_contr_uf_tipo ON contratacoes (uf, tipo_fornecimento);
+-- Raio-X da disputa (/api/raio-x): órgão + categoria. Em produção vem de scripts/migrate-raio-x.mjs (CONCURRENTLY).
+CREATE INDEX IF NOT EXISTS idx_contratacoes_orgao_categoria ON contratacoes (cnpj_orgao, categoria_saude);
 
 ALTER TABLE resultados ADD COLUMN IF NOT EXISTS tipo_fornecimento TEXT
   GENERATED ALWAYS AS (CASE

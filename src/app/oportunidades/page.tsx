@@ -20,6 +20,7 @@ import { Carregando } from '@/components/ui/Carregando'
 // PDM do CATMAT casado (ver PrecoRefItem e scripts/casar-pdm.mjs).
 import { PrecoRefItem } from '@/components/ui/PrecoRefItem'
 import { AddToCRMButton } from '@/components/ui/AddToCRMButton'
+import { RaioXDisputa } from '@/components/ui/RaioXDisputa'
 import AcoesLicitacao from './components/AcoesLicitacao'
 import { ThSort, useOrdenacao } from '@/components/ui/ThSort'
 // Dossiê de edital DESATIVADO nas Licitações (a pedido). Reativar: descomentar.
@@ -942,6 +943,7 @@ function OportunidadesInner() {
                               </div>
                               {/* Itens em largura total — não espremer no grid de 2 colunas */}
                               <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
+                              <RaioXDisputa cnpjOrgao={lic?.orgaoEntidade?.cnpj} categoria={opp.categoria} modalidade={lic?.modalidadeNome} />
                             </td>
                           </tr>
                         )}
@@ -1104,6 +1106,7 @@ function OportunidadesInner() {
                         </div>
                         {/* Itens em largura total — não espremer no grid de 2 colunas */}
                         <ItemsRow opp={opp} preloaded={itensMap[opp.licitacaoRelacionada?.numeroControlePNCP ?? '']} />
+                        <RaioXDisputa cnpjOrgao={lic?.orgaoEntidade?.cnpj} categoria={opp.categoria} modalidade={lic?.modalidadeNome} />
                       </div>
                     )}
                   </div>
