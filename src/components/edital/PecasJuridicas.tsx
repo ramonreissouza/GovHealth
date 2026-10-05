@@ -65,13 +65,25 @@ function hojeIsoBR(): string {
 
 /**
  * Impressão digital do edital: o rascunho das peças só volta para o MESMO edital.
- * Tamanho + começo + fim bastam para separar editais; não é segurança.
+ * SHA-256 do texto INTEIRO (revisão da #60): olhar só o começo e o fim confundia duas
+ * versões do edital com o mesmo tamanho e mudança no meio, e trazia de volta a minuta
+ * da versão anterior.
  */
-function digitalDoEdital(texto: string): string {
-  let h = 0
-  const amostra = texto.slice(0, 2000) + texto.slice(-2000)
-  for (let i = 0; i < amostra.length; i++) h = (h * 31 + amostra.charCodeAt(i)) | 0
-  return `${texto.length}:${h}`
+async function digitalDoEdital(texto: string): Promise<string> {
+  const bytes = new TextEncoder().encode(texto)
+  if (globalThis.crypto?.subtle) {
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+    return `sha256:${Array.from(h, (b) => b.toString(16).padStart(2, '0')).join('')}`
+  }
+  // Sem crypto.subtle (página fora de HTTPS): hash de 64 bits do texto inteiro.
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57
+  for (const b of bytes) {
+    h1 = Math.imul(h1 ^ b, 2654435761)
+    h2 = Math.imul(h2 ^ b, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return `h64:${bytes.length}:${(h2 >>> 0).toString(16)}${(h1 >>> 0).toString(16)}`
 }
 
 /** O que muda de sentido de uma peça para outra fica separado por peça: a data do
@@ -162,7 +174,15 @@ interface Props {
  * rascunho DAQUELE edital.
  */
 export default function PecasJuridicas(props: Props) {
-  const digital = useMemo(() => digitalDoEdital(props.texto), [props.texto])
+  // O digest é assíncrono. Enquanto o novo não sai, o painel do anterior continua na
+  // tela (sem piscar a cada tecla no edital); a troca de `key` vem quando ele chegar.
+  const [digital, setDigital] = useState<string | null>(null)
+  useEffect(() => {
+    let vivo = true
+    void digitalDoEdital(props.texto).then((d) => { if (vivo) setDigital(d) })
+    return () => { vivo = false }
+  }, [props.texto])
+  if (!digital) return null
   return <Painel key={digital} digital={digital} {...props} />
 }
 
@@ -406,6 +426,16 @@ function Resultado({ peca }: { peca: PecaGerada }) {
   const [copiado, setCopiado] = useState(false)
   return (
     <div className="mt-4 space-y-3">
+      {(peca.alertas ?? []).length > 0 && (
+        <div role="alert" className="border border-red-500/40 bg-red-500/10 rounded-lg p-3">
+          <div className="text-[11px] font-mono-custom text-red-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+            <AlertTriangle size={12} /> Não protocole sem conferir
+          </div>
+          <ul className="space-y-1">
+            {peca.alertas.map((a, i) => <li key={i} className="text-[12px] text-strong leading-snug">• {a}</li>)}
+          </ul>
+        </div>
+      )}
       {peca.pendencias.length > 0 && (
         <div className="border border-amber-500/30 bg-amber-500/5 rounded-lg p-3">
           <div className="text-[11px] font-mono-custom text-amber-400 uppercase tracking-wider mb-1.5">Antes de protocolar, complete</div>

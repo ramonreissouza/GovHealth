@@ -66,3 +66,48 @@ export async function rateLimit(key: string, limit: number, windowMs: number): P
     return rateLimitMemoria(key, limit, windowMs)
   }
 }
+
+// ── Vagas simultâneas (pedido longo em voo) ───────────────────────────────────
+// O rate limit conta pedidos por janela; isto conta pedidos AO MESMO TEMPO. Serve
+// para rota que segura a conexão por minutos (a redação de uma peça pela IA): sem
+// isto, uma conta dispara dez de uma vez dentro da cota da janela.
+// O TTL é a rede de segurança: se a instância morrer sem liberar, a vaga volta sozinha.
+
+const vagasMemoria = new Map<string, { n: number; expira: number }>()
+
+/** Tenta ocupar uma das `max` vagas de `key`. Devolve false se estão todas ocupadas. */
+export async function ocuparVaga(key: string, max: number, ttlMs: number): Promise<boolean> {
+  const r = getRedis()
+  const rk = `vaga:${key}`
+  if (r) {
+    try {
+      const n = await r.incr(rk)
+      await r.pexpire(rk, ttlMs)
+      if (n > max) { await r.decr(rk); return false }
+      return true
+    } catch { /* cai no fallback local */ }
+  }
+  const agora = Date.now()
+  const v = vagasMemoria.get(rk)
+  const atual = v && v.expira > agora ? v.n : 0
+  if (atual >= max) return false
+  if (vagasMemoria.size > MAX_KEYS) vagasMemoria.clear()
+  vagasMemoria.set(rk, { n: atual + 1, expira: agora + ttlMs })
+  return true
+}
+
+/** Devolve a vaga ocupada por `ocuparVaga`. */
+export async function liberarVaga(key: string): Promise<void> {
+  const r = getRedis()
+  const rk = `vaga:${key}`
+  if (r) {
+    try {
+      if ((await r.decr(rk)) <= 0) await r.del(rk)
+      return
+    } catch { /* cai no fallback local */ }
+  }
+  const v = vagasMemoria.get(rk)
+  if (!v) return
+  if (v.n <= 1) vagasMemoria.delete(rk)
+  else v.n--
+}

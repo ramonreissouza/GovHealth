@@ -12,7 +12,7 @@
 // local e dia sem expediente no órgão empurram o prazo para frente (art. 183, III),
 // nunca para trás — protocolar até a data daqui nunca é intempestivo por causa deles.
 
-import { diaDaSemana, diasUteisEntre, paraBR, paraISO, somarDiasUteis } from './prazos-uteis'
+import { diaDaSemana, diasUteisEntre, extrairDatas, paraBR, paraISO, somarDiasUteis } from './prazos-uteis'
 
 export type TipoPeca = 'esclarecimento' | 'recurso' | 'contrarrazoes'
 
@@ -47,6 +47,9 @@ export interface PrazoPeca {
   limiteIso: string
   limiteBR: string
   diaSemana: string
+  /** A data informada (abertura, ata ou divulgação do recurso). */
+  dataBaseIso: string
+  dataBaseBR: string
   situacao: 'aberto' | 'vence-hoje' | 'vencido'
   /** Dias úteis de hoje até o limite (0 = vence hoje; negativo = já venceu). */
   diasUteisRestantes: number
@@ -124,6 +127,8 @@ export function prazoDaPeca(tipo: TipoPeca, dataBaseIso: string, hojeIso: string
     limiteIso: paraISO(limite),
     limiteBR: paraBR(limite),
     diaSemana: diaDaSemana(limite),
+    dataBaseIso: paraISO(base),
+    dataBaseBR: paraBR(base),
     situacao: mesmoDia ? 'vence-hoje' : limite > hoje ? 'aberto' : 'vencido',
     diasUteisRestantes: mesmoDia ? 0 : restantes,
     fundamento,
@@ -159,7 +164,7 @@ const ESTRUTURA: Record<TipoPeca, string> = {
   esclarecimento: `PEDIDO DE ESCLARECIMENTO, nesta ordem:
 1. Endereçamento ao(à) Agente de Contratação/Pregoeiro(a) do órgão, com o número do processo/edital como estiver no edital.
 2. Qualificação da solicitante.
-3. Tempestividade: uma frase dizendo que o pedido é tempestivo nos termos do art. 164, citando a data-limite do bloco PRAZO.
+3. Tempestividade: o título da seção e, na linha de baixo, exatamente [[TEMPESTIVIDADE]].
 4. Os esclarecimentos, numerados. Cada um: o item do edital (cite o trecho literal entre aspas), a dúvida objetiva e, quando couber, por que a resposta afeta a formulação da proposta.
 5. Pedido: resposta divulgada no sítio oficial (art. 164, parágrafo único) e, se a resposta alterar o edital de forma que afete as propostas, nova divulgação com reabertura de prazo (art. 55, § 1º).
 6. Fechamento com local, data e assinatura.
@@ -167,7 +172,7 @@ const ESTRUTURA: Record<TipoPeca, string> = {
   recurso: `RECURSO ADMINISTRATIVO, nesta ordem:
 1. Endereçamento à autoridade que proferiu a decisão (Agente de Contratação/Pregoeiro(a)), com pedido de reconsideração ou, se mantida a decisão, encaminhamento à autoridade superior (art. 165, § 2º).
 2. Qualificação da recorrente e identificação do processo.
-3. Tempestividade: razões apresentadas no prazo do art. 165, I, citando a data-limite do bloco PRAZO; intenção de recorrer manifestada na sessão, se o usuário confirmou.
+3. Tempestividade: o título da seção e, na linha de baixo, exatamente [[TEMPESTIVIDADE]].
 4. Síntese dos fatos: o que foi decidido, por quem e com que motivação, só com base na DECISÃO enviada.
 5. Razões: um tópico por tese, cada um com o trecho do edital ou da decisão entre aspas, o dispositivo da lista e por que a decisão está errada.
 6. Efeito suspensivo (art. 168).
@@ -176,7 +181,7 @@ const ESTRUTURA: Record<TipoPeca, string> = {
   contrarrazoes: `CONTRARRAZÕES AO RECURSO, nesta ordem:
 1. Endereçamento ao(à) Agente de Contratação/Pregoeiro(a) e à autoridade superior.
 2. Qualificação da recorrida (a empresa do usuário) e identificação do processo e da recorrente.
-3. Tempestividade: contrarrazões no prazo do art. 165, § 4º, citando a data-limite do bloco PRAZO.
+3. Tempestividade: o título da seção e, na linha de baixo, exatamente [[TEMPESTIVIDADE]].
 4. Síntese do recurso: o que a recorrente alega, só com base no RECURSO enviado.
 5. Razões para negar o recurso: rebata cada alegação em um tópico próprio, com o trecho do edital entre aspas e o dispositivo da lista. Se a alegação for de falha formal sanável, use o formalismo moderado (art. 12, III; art. 64, § 1º).
 6. Pedidos: conhecimento e não provimento do recurso, manutenção da decisão.
@@ -239,17 +244,82 @@ export function validarEntrada(e: Partial<EntradaPeca>): string | null {
   return null
 }
 
-/** O bloco PRAZO do prompt. Sem data informada, o modelo deixa a tempestividade em aberto. */
-export function blocoPrazo(tipo: TipoPeca, prazo: PrazoPeca | null): string {
+export const MARCADOR_TEMPESTIVIDADE = '[[TEMPESTIVIDADE]]'
+
+/**
+ * O bloco PRAZO do prompt. O modelo NÃO escreve o prazo: ele deixa o marcador e o
+ * servidor põe no lugar o parágrafo de `textoTempestividade` (revisão da #60: copiar
+ * a data "do bloco" ainda deixava a data dentro da minuta sob controle da IA).
+ */
+export function blocoPrazo(prazo: PrazoPeca | null): string {
+  return `PRAZO E TEMPESTIVIDADE: quem escreve é o servidor, com a data calculada pela lei. Na seção de tempestividade escreva só ${MARCADOR_TEMPESTIVIDADE}. Em nenhum outro ponto da peça escreva data-limite, prazo em dias ou que a peça está dentro do prazo.`
+    + (prazo?.situacao === 'vencido' ? '\nAtenção: o prazo desta peça JÁ VENCEU. Não afirme tempestividade em lugar nenhum.' : '')
+}
+
+const ARTIGO_DO_PRAZO: Record<TipoPeca, string> = {
+  esclarecimento: 'art. 164',
+  recurso: 'art. 165, I',
+  contrarrazoes: 'art. 165, § 4º',
+}
+
+/**
+ * O parágrafo de tempestividade, montado aqui e não pela IA. Com o prazo vencido ele
+ * NÃO diz que a peça é tempestiva: vira um aviso entre colchetes para quem vai
+ * protocolar.
+ */
+export function textoTempestividade(tipo: TipoPeca, prazo: PrazoPeca | null, intencaoManifestada?: boolean): string {
+  const art = ARTIGO_DO_PRAZO[tipo]
+  let t: string
   if (!prazo) {
-    return `PRAZO: a data de referência não foi informada. Na tempestividade, escreva "[conferir: protocolado dentro do prazo do ${tipo === 'esclarecimento' ? 'art. 164' : tipo === 'recurso' ? 'art. 165, I' : 'art. 165, § 4º'}]" e não cite data.`
+    t = `[conferir: protocolado dentro do prazo do ${art}, da Lei nº 14.133/2021]`
+  } else if (prazo.situacao === 'vencido') {
+    t = `[ATENÇÃO: pelo ${art}, da Lei nº 14.133/2021, o prazo terminou em ${prazo.limiteBR} (${prazo.diaSemana}). Protocolada depois disso, a peça pode não ser conhecida. Confira o prazo no portal antes de protocolar.]`
+  } else if (tipo === 'esclarecimento') {
+    t = `O presente pedido é tempestivo: o prazo do art. 164 da Lei nº 14.133/2021, de até 3 (três) dias úteis antes da abertura da sessão, marcada para ${prazo.dataBaseBR}, encerra-se em ${prazo.limiteBR} (${prazo.diaSemana}).`
+  } else if (tipo === 'recurso') {
+    t = `As presentes razões são tempestivas: o prazo de 3 (três) dias úteis do art. 165, I, da Lei nº 14.133/2021, contado de ${prazo.dataBaseBR}, encerra-se em ${prazo.limiteBR} (${prazo.diaSemana}).`
+  } else {
+    t = `As presentes contrarrazões são tempestivas: o prazo de 3 (três) dias úteis do art. 165, § 4º, da Lei nº 14.133/2021, contado da divulgação do recurso em ${prazo.dataBaseBR}, encerra-se em ${prazo.limiteBR} (${prazo.diaSemana}).`
   }
-  const quando = prazo.situacao === 'vence-hoje' ? 'VENCE HOJE'
-    : prazo.situacao === 'vencido' ? 'JÁ VENCEU'
-    : `faltam ${prazo.diasUteisRestantes} dia(s) útil(eis)`
-  return `PRAZO — calculado pelo servidor, copie sem refazer a conta:
-- data-limite para protocolar: ${prazo.limiteBR} (${prazo.diaSemana}) · ${quando}
-- fundamento: ${prazo.fundamento}`
+  if (tipo === 'recurso') {
+    t += intencaoManifestada
+      ? ' A intenção de recorrer foi manifestada na sessão, logo após a decisão, nos termos do art. 165, § 1º, I.'
+      : ' [conferir: intenção de recorrer manifestada na sessão em __/__/____, nos termos do art. 165, § 1º, I]'
+  }
+  return t
+}
+
+const RE_TITULO_TEMPESTIVIDADE = /^(\s*(?:(?:\d+|[IVX]+)\s*[.)\-–]\s*)?(?:DA\s+)?TEMPESTIVIDADE\b\s*[:.\-–]?\s*)(.*)$/i
+// Linha que abre outra seção ("2. SÍNTESE DOS FATOS", "II – DOS PEDIDOS", "PEDIDOS"):
+// o parágrafo da tempestividade termina antes dela mesmo sem linha em branco.
+const RE_TITULO_SECAO = /^\s*(?:(?:\d+(?:\.\d+)*|[IVX]+)\s*[.)\-–]\s+\S|[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-ZÁÉÍÓÚÂÊÔÃÕÇ ]{3,}:?\s*$)/
+
+/**
+ * Põe o parágrafo do servidor na seção de tempestividade. Caminho normal: o marcador.
+ * Se a IA ignorou o marcador e escreveu a seção, o texto dela é TROCADO pelo do
+ * servidor (título com texto na mesma linha, ou o parágrafo logo abaixo do título).
+ * Sem marcador nem título, nada é trocado e quem chamou avisa.
+ */
+export function inserirTempestividade(minuta: string, paragrafo: string): { minuta: string; como: 'marcador' | 'secao' | 'nenhum' } {
+  if (minuta.includes(MARCADOR_TEMPESTIVIDADE)) {
+    // Só a primeira ocorrência recebe o parágrafo; marcador repetido some.
+    const [antes, ...depois] = minuta.split(MARCADOR_TEMPESTIVIDADE)
+    return { minuta: (antes + paragrafo + depois.join('')).replace(/\n{3,}/g, '\n\n'), como: 'marcador' }
+  }
+  const linhas = minuta.split('\n')
+  const i = linhas.findIndex((l) => RE_TITULO_TEMPESTIVIDADE.test(l))
+  if (i < 0) return { minuta, como: 'nenhum' }
+  const titulo = RE_TITULO_TEMPESTIVIDADE.exec(linhas[i])!
+  if (titulo[2].trim()) {
+    linhas[i] = `${titulo[1]}${paragrafo}`
+    return { minuta: linhas.join('\n'), como: 'secao' }
+  }
+  let j = i + 1
+  while (j < linhas.length && !linhas[j].trim()) j++
+  let k = j
+  while (k < linhas.length && linhas[k].trim() && !RE_TITULO_SECAO.test(linhas[k])) k++
+  linhas.splice(j, k - j, paragrafo)
+  return { minuta: linhas.join('\n'), como: 'secao' }
 }
 
 const nomeOuMarcador = (s: string | undefined, marcador: string) => (s && s.trim() ? s.trim() : marcador)
@@ -261,7 +331,7 @@ export function promptDaPeca(e: EntradaPeca, prazo: PrazoPeca | null, hoje: { is
   const razao = nomeOuMarcador(e.empresa?.razaoSocial, '[RAZÃO SOCIAL]')
   const cnpj = nomeOuMarcador(e.empresa?.cnpj, '[CNPJ]')
   const contexto = e.tipo === 'recurso'
-    ? `${ALVO_TEXTO[e.alvo ?? 'outro']}\nIntenção de recorrer manifestada na sessão: ${e.intencaoManifestada ? 'SIM, o usuário confirmou.' : 'NÃO CONFIRMADA — na tempestividade escreva "[conferir: intenção de recorrer manifestada na sessão em __/__/____]" e liste isso em "pendencias".'}`
+    ? `${ALVO_TEXTO[e.alvo ?? 'outro']}\nIntenção de recorrer manifestada na sessão: ${e.intencaoManifestada ? 'SIM, o usuário confirmou.' : 'NÃO CONFIRMADA pelo usuário (o servidor avisa na tempestividade; não escreva sobre isso).'}`
     : e.tipo === 'contrarrazoes'
       ? 'A RECORRIDA é a empresa do usuário, que está defendendo a decisão que a favoreceu.'
       : 'A SOLICITANTE é a empresa do usuário, que quer participar e precisa de respostas para formular a proposta.'
@@ -270,7 +340,7 @@ export function promptDaPeca(e: EntradaPeca, prazo: PrazoPeca | null, hoje: { is
 
 Você é um ADVOGADO especialista em licitações (Lei 14.133/2021) que redige peças para FORNECEDORES de saúde. Escreva a peça pedida, pronta para o usuário revisar e protocolar.
 
-${blocoPrazo(e.tipo, prazo)}
+${blocoPrazo(prazo)}
 
 DISPOSITIVOS que você pode citar (use SÓ estes; outro dispositivo só se o próprio edital ou a decisão o citarem, e então diga que é citado ali):
 ${DISPOSITIVOS_LEI_14133}
@@ -278,7 +348,7 @@ ${DISPOSITIVOS_LEI_14133}
 Regras inegociáveis:
 - Fatos só do que foi enviado (edital, decisão/recurso, argumentos do usuário). Não invente número de processo, nome de pregoeiro, data, valor, item ou documento. Onde faltar, use um marcador entre colchetes, como [Nº DO PROCESSO], e liste em "pendencias".
 - Não cite jurisprudência, acórdão nem súmula: o número costuma sair errado e derruba a peça.
-- Não refaça a conta do prazo; copie do bloco PRAZO.
+- Não escreva prazo nem data-limite: a tempestividade é do servidor (bloco PRAZO E TEMPESTIVIDADE).
 - A lista de DISPOSITIVOS é um RESUMO, não o texto da lei: nunca ponha esse resumo entre aspas como se fosse citação literal. Aspas só para trecho do edital, da decisão ou do recurso enviados.
   Errado: "erros ou falhas que não alterem a substância dos documentos podem ser sanados" (art. 64, § 1º).
   Certo: o art. 64, § 1º, permite sanar erros ou falhas que não alterem a substância dos documentos.
@@ -317,8 +387,99 @@ export interface PecaGerada {
   minuta: string
   teses: { tese: string; fundamento: string }[]
   pendencias: string[]
+  /** O que o servidor conferiu e NÃO bate: artigo fora da lista, jurisprudência, data
+   *  inventada, tempestividade que não pôde ser posta. A tela mostra em destaque. */
+  alertas: string[]
   prazo: PrazoPeca | null
 }
+
+// ── Conferência das referências legais (revisão da #60) ───────────────────────
+// O prompt pede a lista fechada, mas pedido não é garantia: tudo o que a minuta e as
+// teses citam é extraído e comparado aqui.
+
+/** Os artigos da lista DISPOSITIVOS_LEI_14133. */
+export const ARTIGOS_CONFERIDOS: ReadonlySet<string> = new Set(['5', '9', '12', '55', '59', '64', '67', '164', '165', '168', '183'])
+
+// "art. 64", "arts. 64 e 67", "artigo 5º", "art. 72-B", "arts. 62 a 70".
+const RE_ARTIGO = /\b(?:arts?|artigos?)\.?\s*(\d+(?:-[A-Z])?)[º°o]?((?:\s*(?:,|e|a|até)\s*\d+(?:-[A-Z])?[º°o]?\b)*)/gi
+// Normas: "Lei nº 14.133/2021", "Lei Complementar 123", "LC 123/2006", "Decreto 10.024".
+const RE_NORMA = /\b(Lei\s+Complementar|Decreto-Lei|Decreto|Lei|LC)\s*(?:federal\s*)?(?:n[º°o.]*\s*)?(\d{1,3}(?:\.\d{3})+|\d{1,5})\b/gi
+// Jurisprudência e afins: o prompt proíbe porque o número sai errado.
+// O fim da palavra importa: sem ele, "resposta" virava "REsp" (visto numa minuta real).
+const RE_JURIS = /\b(ac[óo]rd[ãa]os?|s[úu]mulas?|jurisprud[êe]ncia|precedentes?|REsp|AgRg|ADI|ADPF|RE\s*n?[º°]?\s*\d+|MS\s*n?[º°]?\s*\d+|entendimento\s+(?:consolidado\s+|pacífico\s+)?d[oa]s?\s+(?:TCU|STF|STJ|Tribuna(?:l|is)|Corte))(?![\p{L}\d])/giu
+
+function artigosDe(texto: string): Set<string> {
+  const achados = new Set<string>()
+  for (const m of texto.matchAll(RE_ARTIGO)) {
+    achados.add(m[1].toUpperCase())
+    for (const n of (m[2] ?? '').matchAll(/(\d+(?:-[A-Z])?)/gi)) achados.add(n[1].toUpperCase())
+  }
+  return achados
+}
+
+function normasDe(texto: string): Map<string, string> {
+  const achadas = new Map<string, string>()
+  for (const m of texto.matchAll(RE_NORMA)) {
+    const tipo = /^(lei\s+complementar|lc)$/i.test(m[1]) ? 'LC' : /^decreto/i.test(m[1]) ? 'Decreto' : 'Lei'
+    const numero = m[2].replace(/\D/g, '')
+    achadas.set(`${tipo}:${numero}`, `${tipo === 'LC' ? 'Lei Complementar' : tipo} ${m[2]}`)
+  }
+  return achadas
+}
+
+export interface ConferenciaReferencias {
+  artigosForaDaLista: string[]
+  normasNaoConferidas: string[]
+  jurisprudencia: string[]
+}
+
+/**
+ * Referências do `texto` (minuta + teses) que não estão na lista conferida NEM nas
+ * `fontes` (edital, decisão, recurso, argumentos do usuário). O prompt deixa a IA citar
+ * o que a própria fonte cita, então isso também vale aqui.
+ */
+export function conferirReferencias(texto: string, fontes: string): ConferenciaReferencias {
+  const artFontes = artigosDe(fontes)
+  const artigosForaDaLista = [...artigosDe(texto)]
+    .filter((a) => !ARTIGOS_CONFERIDOS.has(a) && !artFontes.has(a))
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+    .map((a) => `art. ${a}`)
+  const normasFontes = normasDe(fontes)
+  const normasNaoConferidas = [...normasDe(texto)]
+    .filter(([chave]) => chave !== 'Lei:14133' && !normasFontes.has(chave))
+    .map(([, rotulo]) => rotulo)
+  const jurisFontes = new Set([...fontes.matchAll(RE_JURIS)].map((m) => m[1].toLowerCase().slice(0, 5)))
+  const jurisprudencia = [...new Set([...texto.matchAll(RE_JURIS)].map((m) => m[1].trim()))]
+    .filter((j) => !jurisFontes.has(j.toLowerCase().slice(0, 5)))
+  return { artigosForaDaLista, normasNaoConferidas, jurisprudencia }
+}
+
+/** Datas citadas no `texto` que não vêm das fontes, do prazo calculado nem de hoje. */
+export function datasNaoConferidas(texto: string, fontes: string, permitidasIso: string[], hojeIso: string): string[] {
+  const [a, m, d] = hojeIso.split('-').map(Number)
+  const hoje = new Date(Date.UTC(a, m - 1, d, 12))
+  const ok = new Set([...permitidasIso, hojeIso, ...extrairDatas(fontes, hoje).map(paraISO)])
+  return extrairDatas(texto, hoje).filter((dt) => !ok.has(paraISO(dt))).map(paraBR)
+}
+
+export interface ContextoConferencia {
+  prazo: PrazoPeca | null
+  intencaoManifestada?: boolean
+  /** Tudo o que foi enviado à IA como fato: edital (no recorte enviado), decisão/recurso, argumentos. */
+  fontes: string
+  hojeIso: string
+}
+
+/** O que foi enviado como fato, no MESMO recorte que foi para o prompt. */
+export function fontesDaEntrada(e: EntradaPeca): string {
+  return [
+    e.edital.slice(0, MAX_EDITAL_PECA),
+    (e.documento ?? '').slice(0, MAX_DOCUMENTO_PECA),
+    (e.argumentos ?? '').slice(0, MAX_ARGUMENTOS_PECA),
+  ].join('\n')
+}
+
+const lista = (xs: string[]) => xs.length === 1 ? xs[0] : `${xs.slice(0, -1).join(', ')} e ${xs[xs.length - 1]}`
 
 // Trecho entre aspas colado a uma referência de artigo, nas duas ordens:
 //   "…" (art. 64, § 1º)      ·      o art. 64, § 1º, da Lei 14.133/2021, "…"
@@ -346,12 +507,17 @@ export function citacoesLiteraisDeLei(minuta: string): string[] {
   return [...achados].sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)))
 }
 
-/** Normaliza o JSON do modelo: campo faltando vira lista vazia, nunca quebra a tela. */
-export function normalizarPeca(tipo: TipoPeca, bruto: unknown, prazo: PrazoPeca | null): PecaGerada | null {
+/**
+ * Normaliza o JSON do modelo e confere a minuta. Campo faltando vira lista vazia,
+ * nunca quebra a tela. A tempestividade é posta pelo servidor; artigo, norma,
+ * jurisprudência e data que não batem com a lista ou com as fontes viram `alertas`.
+ */
+export function normalizarPeca(tipo: TipoPeca, bruto: unknown, ctx: ContextoConferencia): PecaGerada | null {
+  const { prazo } = ctx
   if (!bruto || typeof bruto !== 'object') return null
   const o = bruto as Record<string, unknown>
-  const minuta = typeof o.minuta === 'string' ? o.minuta.trim() : ''
-  if (minuta.length < 200) return null
+  const minutaDaIA = typeof o.minuta === 'string' ? o.minuta.trim() : ''
+  if (minutaDaIA.length < 200) return null
   const teses = Array.isArray(o.teses)
     ? o.teses
       .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
@@ -361,9 +527,48 @@ export function normalizarPeca(tipo: TipoPeca, bruto: unknown, prazo: PrazoPeca 
   const pendencias = Array.isArray(o.pendencias)
     ? o.pendencias.map((p) => String(p ?? '').trim()).filter(Boolean)
     : []
+  const alertas: string[] = []
+
+  // 1. Tempestividade: o parágrafo é do servidor.
+  const paragrafo = textoTempestividade(tipo, prazo, ctx.intencaoManifestada)
+  const posta = inserirTempestividade(minutaDaIA, paragrafo)
+  const minuta = posta.minuta
+  if (posta.como === 'nenhum') {
+    alertas.push(`A IA não deixou a seção de tempestividade, então o prazo dentro da minuta não foi conferido. Ponha nela este texto: "${paragrafo}"`)
+  }
+  // O que sobrou é só texto da IA: é nele que se procura data e "tempestivo".
+  const textoDaIA = posta.como === 'nenhum' ? minuta : minuta.replace(paragrafo, '')
+  // tempestivo/tempestiva, não o título "TEMPESTIVIDADE" nem "intempestivo".
+  if (prazo?.situacao === 'vencido' && /(?<!in)tempestiv[oa]s?\b/i.test(textoDaIA)) {
+    alertas.push(`O prazo terminou em ${prazo.limiteBR}, mas a minuta diz em outro ponto que a peça é tempestiva. Corrija antes de protocolar.`)
+  }
+
+  // 2. Referências legais fora da lista conferida.
+  const citado = [minuta, ...teses.flatMap((t) => [t.tese, t.fundamento])].join('\n')
+  const ref = conferirReferencias(citado, ctx.fontes)
+  if (ref.artigosForaDaLista.length) {
+    alertas.push(`A minuta cita ${lista(ref.artigosForaDaLista)}, fora da lista de artigos conferidos e sem aparecer no edital ou no que você colou. Confira na lei se o artigo existe e diz isso, ou tire antes de protocolar.`)
+  }
+  if (ref.normasNaoConferidas.length) {
+    alertas.push(`A minuta cita ${lista(ref.normasNaoConferidas)}, que não é a Lei 14.133/2021 nem aparece no edital. Confira se a norma existe e vale para este caso.`)
+  }
+  if (ref.jurisprudencia.length) {
+    alertas.push(`A minuta menciona jurisprudência (${lista(ref.jurisprudencia.map((j) => `"${j}"`))}). A IA não cita isso com segurança: confira número e teor, ou tire antes de protocolar.`)
+  }
+
+  // 3. Datas que não vieram de lugar nenhum.
+  const permitidas = prazo ? [prazo.limiteIso, prazo.dataBaseIso] : []
+  const datas = datasNaoConferidas(textoDaIA, ctx.fontes, permitidas, ctx.hojeIso)
+  if (datas.length) {
+    alertas.push(`A minuta cita ${lista(datas)}, que não aparece${datas.length > 1 ? 'm' : ''} no edital, no que você colou nem no prazo calculado. Confira antes de protocolar.`)
+  }
+
   const literais = citacoesLiteraisDeLei(minuta)
   if (literais.length) {
     pendencias.push(`A minuta põe entre aspas trechos atribuídos ao ${literais.join(', ')} da Lei 14.133/2021. A IA resume a lei: confira a redação literal ou tire as aspas antes de protocolar.`)
   }
-  return { tipo, minuta, teses, pendencias, prazo }
+  if (tipo === 'recurso' && !ctx.intencaoManifestada) {
+    pendencias.push('Confirme que a intenção de recorrer foi manifestada na sessão e ponha a data na tempestividade. Sem ela, o recurso pode não ser conhecido (art. 165, § 1º, I).')
+  }
+  return { tipo, minuta, teses, pendencias, alertas, prazo }
 }
