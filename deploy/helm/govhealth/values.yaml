@@ -64,10 +64,12 @@ worker:
     limits: {cpu: '1', memory: 1Gi}
 
 # Backup diário do banco (templates/backup.yaml), no lugar do cron da VM Oracle.
-# Desligado por padrão pelo mesmo motivo da mineração: o deploy do Jenkins precisa
-# poder criar CronJob e PVC no namespace (RBAC no repositório `infra`).
+# LIGADO desde 05/10/2026 (revisão 17 do release): até então a VPS não tinha backup
+# nenhum. Ficar `false` aqui faria o próximo deploy a partir da main DESLIGÁ-LO.
+# O deploy precisa poder criar CronJob e PVC no namespace (RBAC no repositório
+# `infra`); o usuário `deploy` da VPS já pode.
 backup:
-  enabled: false
+  enabled: true
   agenda: '15 3 * * *'      # 03:15, o mesmo horário da VM Oracle
   manterDias: 7
   storageClassName: local-path
