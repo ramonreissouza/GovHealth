@@ -28,6 +28,7 @@ function Sucesso() {
   // null = o webhook ainda não terminou as boas-vindas (ou não terminou a tempo).
   const [contaNova, setContaNova] = useState<boolean | null>(null)
   const [emailEnviado, setEmailEnviado] = useState<boolean | null>(null)
+  const [validadeLinkHoras, setValidadeLinkHoras] = useState<number | null>(null)
 
   useEffect(() => {
     if (!sessionId) { setStatus('processando'); return }
@@ -42,6 +43,7 @@ function Sucesso() {
         if (d.email) setEmail(d.email)
         if (typeof d.contaNova === 'boolean') setContaNova(d.contaNova)
         if (typeof d.emailEnviado === 'boolean') setEmailEnviado(d.emailEnviado)
+        if (typeof d.validadeLinkHoras === 'number') setValidadeLinkHoras(d.validadeLinkHoras)
         if (d.status === 'ativa') {
           setStatus('ativa')
           // Ativa não basta: o e-mail sai DEPOIS da ativação. Espera o resultado dele.
@@ -77,7 +79,7 @@ function Sucesso() {
                 ? 'Seu acesso já está liberado.'
                 : 'Estamos processando a confirmação — leva só alguns instantes.'}
             </p>
-            <AvisoDeAcesso email={email} contaNova={contaNova} emailEnviado={emailEnviado} />
+            <AvisoDeAcesso email={email} contaNova={contaNova} emailEnviado={emailEnviado} validadeLinkHoras={validadeLinkHoras} />
             <div className="flex items-center justify-center gap-3">
               <Link href="/login" className="inline-flex items-center gap-2 text-[14px] font-semibold bg-accent text-black px-5 py-2.5 rounded-lg hover:bg-accent2">
                 Entrar na plataforma <ArrowRight size={15} />
@@ -92,19 +94,21 @@ function Sucesso() {
 }
 
 /** O que dizer sobre o acesso, a partir do que o webhook gravou. */
-function AvisoDeAcesso({ email, contaNova, emailEnviado }: { email: string; contaNova: boolean | null; emailEnviado: boolean | null }) {
+function AvisoDeAcesso({ email, contaNova, emailEnviado, validadeLinkHoras }: { email: string; contaNova: boolean | null; emailEnviado: boolean | null; validadeLinkHoras: number | null }) {
   const quem = email ? <strong className="text-strong">{email}</strong> : 'o seu e-mail'
 
-  // Conta criada agora e o e-mail com a senha não saiu: sem isto a pessoa pagou e não
-  // tem como entrar. Diz o que aconteceu e por onde resolver.
+  // Conta criada agora e o e-mail com o link de criar senha não saiu: sem isto a pessoa
+  // pagou e não tem como entrar. O webhook segue tentando (o Stripe reenvia), e o
+  // "Esqueci minha senha" emite um link novo para o mesmo e-mail.
   if (contaNova === true && emailEnviado === false) {
     return (
       <div className="bg-bg2 border border-amber/40 rounded-xl p-4 flex items-start gap-2.5 text-left mb-6">
         <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
         <p className="text-[12.5px] text-muted">
-          Sua conta foi criada, mas o e-mail com a senha de acesso para {quem} não chegou a sair. Escreva para{' '}
-          <a href={`mailto:${CONTATO_EMAIL}`} className="text-accent hover:underline">{CONTATO_EMAIL}</a>{' '}
-          que liberamos o acesso. O pagamento já está confirmado.
+          Sua conta foi criada e o pagamento está confirmado, mas o e-mail para {quem} com o link de criar a senha ainda
+          não saiu. Use <Link href="/esqueci-senha" className="text-accent hover:underline">Esqueci minha senha</Link>{' '}
+          com o e-mail da assinatura, ou escreva para{' '}
+          <a href={`mailto:${CONTATO_EMAIL}`} className="text-accent hover:underline">{CONTATO_EMAIL}</a>.
         </p>
       </div>
     )
@@ -115,7 +119,7 @@ function AvisoDeAcesso({ email, contaNova, emailEnviado }: { email: string; cont
     // Já tinha conta: não existe senha nova, o que muda é o plano.
     texto = <>{quem} já tinha conta: entre com a senha de sempre.{emailEnviado ? ' Mandamos a confirmação da assinatura por e-mail.' : ''} A nota fiscal é emitida em seguida.</>
   } else if (emailEnviado === true) {
-    texto = <>Enviamos sua senha de acesso para {quem} (verifique também o spam). A nota fiscal é emitida em seguida.</>
+    texto = <>Enviamos para {quem} o link para você criar sua senha (verifique também o spam).{validadeLinkHoras ? ` Ele vale por ${validadeLinkHoras} horas.` : ''} A nota fiscal é emitida em seguida.</>
   } else {
     // Ainda sem resposta do webhook: não afirma envio que não aconteceu.
     texto = <>Os dados de acesso vão para {quem} em instantes (verifique também o spam). A nota fiscal é emitida em seguida.</>

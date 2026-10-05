@@ -6,7 +6,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { randomBytes } from 'node:crypto'
 import { criarAssinatura, marcarCheckoutIniciado, registrarAceite, ipDaRequisicao, erroDeAceite } from '@/lib/assinaturas'
+import { COOKIE_CHECKOUT, hashDoNonce } from '@/lib/checkout-cookie'
 import { planoPorId } from '@/lib/planos'
 import { dadosCobrancaSchema, primeiraMensagem } from '@/lib/dados-cobranca'
 import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
@@ -61,10 +63,19 @@ export async function POST(req: NextRequest) {
       return_url: `${base}/assinar/sucesso?session_id={CHECKOUT_SESSION_ID}`,
     })
 
-    // 3) guarda a referência da sessão
-    await marcarCheckoutIniciado(assinaturaId, session.id)
+    // 3) guarda a referência da sessão e o HASH do cookie de correlação. O session_id
+    //    volta na URL de /assinar/sucesso, e URL vaza (histórico, logs, Referer): sozinho
+    //    ele não pode abrir o estado da conta. Só o navegador que iniciou o checkout tem o
+    //    cookie, e só ele vê o detalhe em /api/assinaturas/status (revisão da #63).
+    const nonce = randomBytes(32).toString('base64url')
+    await marcarCheckoutIniciado(assinaturaId, session.id, hashDoNonce(nonce))
 
-    return NextResponse.json({ ok: true, clientSecret: session.client_secret })
+    const res = NextResponse.json({ ok: true, clientSecret: session.client_secret })
+    res.cookies.set(COOKIE_CHECKOUT, nonce, {
+      httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax',
+      path: '/api/assinaturas/status', maxAge: 60 * 60 * 24,
+    })
+    return res
   } catch (e) {
     console.error('[assinaturas/checkout]', e)
     return NextResponse.json({ error: 'Não foi possível iniciar o pagamento.' }, { status: 500 })

@@ -311,15 +311,19 @@ export async function enviarTesteExpirado(params: {
 
 /**
  * E-mail de boas-vindas após a assinatura ser ativada.
- * `senhaTemporaria` só é enviada quando a conta foi criada agora.
+ * `linkDefinirSenha` vem só quando a conta foi criada agora.
  *
- * É o primeiro e-mail que o cliente pagante recebe, e para conta nova é o único lugar
- * onde a senha existe. Por isso diz o que foi contratado (plano, valor, cobrança), como
- * entrar, os dois primeiros passos que fazem o produto funcionar e quem atende. Nome e
- * e-mail vêm do formulário público: entram escapados.
+ * É o primeiro e-mail que o cliente pagante recebe. Diz o que foi contratado (plano,
+ * valor, cobrança), como entrar, os dois primeiros passos que fazem o produto funcionar
+ * e quem atende. Nome e e-mail vêm do formulário público: entram escapados.
+ *
+ * NÃO leva senha. Conta nova recebe um link de uso único para CRIAR a senha, com prazo
+ * (BOAS_VINDAS_LINK_HORAS): uma senha em texto puro ficaria na caixa postal valendo
+ * enquanto ninguém a trocasse (revisão da #63).
  */
 export async function enviarBoasVindas(params: {
-  email: string; nome?: string | null; plano: string; senhaTemporaria?: string
+  email: string; nome?: string | null; plano: string
+  linkDefinirSenha?: string; validadeLinkHoras?: number
 }): Promise<{ enviado: boolean; motivo?: string }> {
   const plano = planoPorId(params.plano)
   const nomePlano = plano?.nome ?? params.plano
@@ -344,12 +348,15 @@ export async function enviarBoasVindas(params: {
     linha('Cobrança', 'Mensal no cartão, com renovação automática') +
     linha('Nota fiscal', 'Emitida em seguida'))
 
-  const acesso = params.senhaTemporaria
-    ? quadro('Seu acesso',
-        linha('E-mail', escaparHtml(params.email)) +
-        linha('Senha temporária', escaparHtml(params.senhaTemporaria), true)) +
-      p(`Por segurança, troque a senha no primeiro acesso, em <a href="${app}/conta" style="color:#2f80ed;">Minha conta</a>.`, 'font-size:12.5px;color:#64748b;')
-    : p(`Sua conta <strong>${escaparHtml(params.email)}</strong> já existia: entre com a senha de sempre. O novo plano já vale a partir de agora.`)
+  const contaNova = !!params.linkDefinirSenha
+  const validade = params.validadeLinkHoras ?? 24
+  const acesso = contaNova
+    ? quadro('Seu acesso', linha('E-mail', escaparHtml(params.email))) +
+      p('Para entrar, crie sua senha pelo botão abaixo.') +
+      btn(params.linkDefinirSenha!, 'Criar minha senha') +
+      p(`O link vale por ${validade} horas e só pode ser usado uma vez. Se expirar, use <strong>Esqueci minha senha</strong> na <a href="${app}/login" style="color:#2f80ed;">tela de entrada</a> com este e-mail.`, 'font-size:12.5px;color:#64748b;margin-top:14px;')
+    : p(`Sua conta <strong>${escaparHtml(params.email)}</strong> já existia: entre com a senha de sempre. O novo plano já vale a partir de agora.`) +
+      btn(`${app}/login`, 'Acessar a plataforma')
 
   const passos = `
     <p style="font-size:13px;font-weight:700;color:#0f172a;margin:22px 0 8px;">Primeiros passos</p>
@@ -363,13 +370,12 @@ export async function enviarBoasVindas(params: {
     ${p(`Obrigado por assinar o GovHealth AI. Seu pagamento foi confirmado e o acesso ao plano <strong>${escaparHtml(nomePlano)}</strong> já está liberado.`)}
     ${assinatura}
     ${acesso}
-    ${btn(`${app}/login`, 'Acessar a plataforma')}
     ${passos}
     ${p(`Precisa de ajuda para configurar? Responda este e-mail ou escreva para <a href="mailto:${CONTATO_EMAIL}" style="color:#2f80ed;">${CONTATO_EMAIL}</a>.`, 'margin-top:18px;')}
     ${p('Equipe GovHealth AI', 'margin:0;color:#0f172a;font-weight:600;')}`
 
-  const assunto = params.senhaTemporaria
-    ? `Seu acesso ao GovHealth AI está liberado — plano ${nomePlano}`
+  const assunto = contaNova
+    ? `Crie sua senha: seu acesso ao GovHealth AI está liberado — plano ${nomePlano}`
     : `Assinatura confirmada — plano ${nomePlano} do GovHealth AI`
   return enviar(params.email, assunto, moldura('Boas-vindas ao GovHealth AI', corpo))
 }
