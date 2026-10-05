@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Exemplo canônico — componentes do template</title>
+<link rel="stylesheet" href="../../template/slides.css">
+<!--
+  Referência para o agente e para quem for criar post à mão: cada componente de
+  template/slides.css aparece aqui com o HTML certo. Conteúdo NEUTRO de propósito
+  (o repositório é público; post de verdade vive em fila/, que não é versionado).
+  Renderizar: node marketing/instagram/render.mjs marketing/instagram/exemplos/componentes
+-->
+</head>
+<body>
+
+<!-- Fundo claro: .mast com parte da série (só no 1º slide), .display com .mark e .pen, .toast, .ficha -->
+<section class="slide">
+  <div class="mast"><span>Nome da série</span><span class="no">Parte 1 de 3</span></div>
+  <div class="spacer"></div>
+  <div class="toast"><i></i>Notificação curta · 09:00</div>
+  <h1 class="display" style="margin-top:48px">Título com <span class="mark">marca-texto</span> e <em><span class="pen">itálico<svg viewBox="0 0 400 30" preserveAspectRatio="none"><path d="M4 20 C 70 8, 150 26, 230 14 S 360 6, 396 18"/></svg></span></em>.</h1>
+  <ul class="ficha" style="margin-top:56px">
+    <li><span class="box"></span>Opção um</li>
+    <li><span class="box"></span>Opção dois</li>
+    <li><span class="box"></span>Opção três</li>
+    <li><span class="box"></span>Opção quatro</li>
+  </ul>
+  <div class="spacer"></div>
+  <div class="foot"><span>@techealth_</span><span class="go">Arraste →</span></div>
+</section>
+
+<!-- Fundo navy (.ink): .kicker, .bleed, .body.serif, .cont (gancho para o próximo post) -->
+<section class="slide ink">
+  <div class="mast"><span>Nome da série</span></div>
+  <p class="kicker" style="margin-top:96px">Legenda do número</p>
+  <div class="bleed" style="margin-top:28px;font-size:360px">12.345</div>
+  <p class="body serif" style="margin-top:72px">Frase de apoio com um <em class="c-teal">destaque</em> em itálico.</p>
+  <div class="cont">
+    <span class="when">Continua quinta</span>
+    <p>Uma frase que dá vontade de ver o próximo post.</p>
+  </div>
+  <div class="foot"><span class="src">Fonte: nome da fonte oficial, dd/mm/aaaa</span><span>@techealth_</span></div>
+</section>
+
+<!-- Fundo claro: .checks, .sala com .stamp -->
+<section class="slide">
+  <div class="mast"><span>Nome da série</span></div>
+  <ul class="checks" style="margin-top:60px">
+    <li><span class="box"><svg viewBox="0 0 100 100"><path d="M14 52 C 24 60, 32 70, 40 80 C 54 54, 72 30, 96 8"/></svg></span>Feito.</li>
+    <li class="off"><span class="box"></span>Faltando.</li>
+  </ul>
+  <div class="sala" style="margin-top:60px">
+    <div class="hd"><b>Título da janela</b><span>subtítulo</span></div>
+    <div class="msgs">
+      <div class="m unread"><span class="t">09:00</span><span><span class="who">Remetente</span>Mensagem destacada como não lida.</span></div>
+      <div class="m bad"><span class="t">11:00</span><span><span class="who">Remetente</span>Mensagem do que deu errado.</span></div>
+    </div>
+  </div>
+  <div class="stamp" style="right:60px;top:1010px;font-size:62px">Carimbo</div>
+  <div class="foot"><span>@techealth_</span><span class="go">Arraste →</span></div>
+</section>
+
+<!-- Fundo navy: .grades + .grades-cap + .bar, .sticker -->
+<section class="slide ink">
+  <div class="mast"><span>Nome da série</span></div>
+  <div class="sticker" style="margin-top:60px"><img src="../../../../public/logo-govhealth.png" alt="GovHealth"></div>
+  <div class="grades" style="margin-top:80px"><span>A</span><span>B</span><span class="hit">C</span><span class="hit">D</span></div>
+  <div class="grades-cap"><span>rótulo da ponta boa</span><span>rótulo da ponta ruim</span></div>
+  <div class="bar" style="margin-top:60px"><i style="width:40%"></i></div>
+  <ul class="verbs" style="margin-top:70px">
+    <li><b>1</b>Primeiro verbo.</li>
+    <li><b>2</b>Segundo verbo.</li>
+  </ul>
+  <div class="foot"><span>@techealth_</span><span class="go">Arraste →</span></div>
+</section>
+
+<!-- Fundo claro: .recall, .shot -->
+<section class="slide">
+  <div class="mast"><span>Nome da série</span></div>
+  <h2 class="display sm" style="margin-top:56px">Título menor <em class="c-blue">(.display.sm)</em>.</h2>
+  <div style="margin-top:44px">
+    <div class="recall"><div class="ico fill">!</div><div><h3>Rótulo</h3><p>Texto curto de um item.</p><span class="tagline">observação em mono</span></div></div>
+    <div class="recall last"><div class="ico">C</div><div><h3>Rótulo</h3><p>Texto curto de outro item.</p></div></div>
+  </div>
+  <div class="shot" style="margin-top:56px;height:360px"><img src="../../../../public/shots/mapa.png" alt=""></div>
+  <div class="foot"><span>@techealth_</span><span class="go">Arraste →</span></div>
+</section>
+
+<!-- Fundo teal: .coupon -->
+<section class="slide teal">
+  <div class="mast"><span>Chamada para ação</span></div>
+  <div class="spacer"></div>
+  <h1 class="display">Título da <em>chamada.</em></h1>
+  <div class="coupon" style="margin-top:72px">
+    <div class="stub"><b>3</b><span>rótulo</span></div>
+    <div class="main"><span class="row">Benefício um</span><span class="row">Benefício dois</span><span class="url">endereco.com.br</span></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="foot"><span>TecHealth · Tecnologia a serviço da saúde</span><span class="go">Link na bio ↗</span></div>
+</section>
+
+</body>
+</html>

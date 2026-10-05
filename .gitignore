@@ -87,3 +87,20 @@ prospeccao-*.csv
 prospeccao-*.md
 prospeccao-*.log
 prospeccao-*.err
+
+# Marketing — estratégia e posts NÃO vão para o git: este repositório é público.
+# Campanha com revelação programada perde o sentido se o conteúdo já estiver
+# aqui, e PNG regenerado a cada post faria o histórico crescer para sempre.
+# LISTA DE PERMISSÃO: só as ferramentas entram; qualquer arquivo novo na pasta
+# (plano, fila, zip, versão alternativa de post) fica de fora por padrão.
+# O conteúdo vive só no disco (pasta sincronizada no OneDrive). Ver marketing/README.md.
+marketing/*
+!marketing/README.md
+!marketing/instagram/
+marketing/instagram/*
+!marketing/instagram/PLAYBOOK.md
+!marketing/instagram/render.mjs
+!marketing/instagram/template/
+!marketing/instagram/exemplos/
+marketing/**/*.png
+marketing/**/*.zip
