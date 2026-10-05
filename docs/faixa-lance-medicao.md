@@ -83,3 +83,25 @@ O que tem cobertura e algum poder preditivo:
   exige >= 5 itens de >= 2 pregões.
 - Cobertura nas 1.549 licitações abertas em pregão dessas duas categorias: desconto 843
   (54%), concorrentes 1.058 (68%), algum bloco 1.058 (68%).
+
+## Correção do review da #64: homologado = estimado conta como desconto 0%
+Até aqui, toda razão 1 era excluída. Isso estava errado para pregão:
+- Em medicamento + material, 91% dos itens com razão 1 (20.452 de 22.517) estão em pregões
+  em que outros itens tiveram desconto. São desconto 0% de verdade.
+- Só 9% estão em pregões em que TODOS os itens saíram pelo estimado. Aí o estimado foi
+  preenchido com o homologado, e só esses ficam de fora.
+- Backtest 2025→2026 contra o desfecho real (tudo, menos os pregões inteiros pelo estimado):
+
+  | regra | faixa acerta | erro mediano | largura |
+  |---|---|---|---|
+  | excluir toda razão 1 (antiga) | 44,5% | 15,7 pontos | 0,31 |
+  | incluir tudo | 49,8% | 15,2 pontos | 0,33 |
+  | **excluir só o pregão inteiro pelo estimado (atual)** | **49,7%** | **15,2 pontos** | 0,33 |
+
+- Efeito no maior órgão (medicamento): o desconto típico foi de 34% para 26%, e a faixa
+  de 15-54% para 3-50%. A regra antiga inflava o desconto.
+- Razão entre 1 e 1,5 (homologado acima do estimado) é desconto negativo. Em 26 de 431
+  recortes o p75 chega a 1 ou passa. O texto diz "acima do estimado" em vez de mostrar sinal.
+
+Os números das seções anteriores (cobertura, largura, backtests) foram medidos com a regra
+antiga. A cobertura só cresce com a regra nova, porque entram mais itens.

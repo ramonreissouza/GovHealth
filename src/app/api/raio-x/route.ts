@@ -2,68 +2,37 @@
 // GET ?cnpj=<CNPJ do órgão>&cat=<categoria_saude da licitação>
 // Recorte sempre órgão + categoria; categoria fora de CATEGORIAS_RAIO_X nem consulta o banco.
 //
-// Só pregão: em dispensa, credenciamento e inexigibilidade o homologado repete o estimado
-// em 64-83% dos itens — não houve disputa para medir. Pelo mesmo motivo sai todo item com
-// homologado = estimado, e a razão fica entre 0,05 e 1,5 (fora disso é unidade trocada
-// entre estimado e homologado, não desconto).
+// A consulta só traz os itens homologados do recorte (pregão, últimos 24 meses). Filtro de
+// razão, percentis e concorrentes são calculados em calcularRaioX, onde há teste. O maior
+// recorte medido tem ~1 mil itens.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { queryOne } from '@/lib/db'
+import { query } from '@/lib/db'
 import { getCached, setCached, TTL } from '@/lib/server-cache'
-import {
-  JANELA_DIAS, TOP_CONCORRENTES, estatDoBanco, montarRaioX, raioXDisponivel,
-  type ConcorrenteBruto, type RaioX,
-} from '@/lib/raio-x'
+import { JANELA_DIAS, calcularRaioX, raioXDisponivel, type ItemHomologado, type RaioX } from '@/lib/raio-x'
 
 export const runtime = 'nodejs'
 
-const ESTAT = `json_build_object(
-  'n',          count(ratio),
-  'p25',        percentile_cont(0.25) WITHIN GROUP (ORDER BY ratio),
-  'p50',        percentile_cont(0.5)  WITHIN GROUP (ORDER BY ratio),
-  'p75',        percentile_cont(0.75) WITHIN GROUP (ORDER BY ratio),
-  'itens',      count(*),
-  'licitacoes', count(DISTINCT ncp),
-  'licitacoes_desconto', count(DISTINCT ncp) FILTER (WHERE ratio IS NOT NULL),
-  'vencedores', count(DISTINCT forn))`
-
+// Só pregão: em dispensa, credenciamento e inexigibilidade o homologado repete o estimado
+// em 64-83% dos itens — não houve disputa para medir.
 const SQL = `
-WITH base AS (
-  SELECT r.ni_fornecedor forn, r.nome_fornecedor nome, r.porte_fornecedor porte,
-         r.data_resultado dt, r.valor_total_homologado vt, c.numero_controle_pncp ncp,
-         CASE WHEN i.valor_unitario_estimado > 0
-               AND r.valor_unitario_homologado <> i.valor_unitario_estimado
-               AND r.valor_unitario_homologado / i.valor_unitario_estimado > 0.05
-               AND r.valor_unitario_homologado / i.valor_unitario_estimado <= 1.5
-              THEN r.valor_unitario_homologado / i.valor_unitario_estimado END AS ratio
-    FROM contratacoes c
-    JOIN resultados r ON r.numero_controle_pncp = c.numero_controle_pncp
-    JOIN itens i ON i.numero_controle_pncp = r.numero_controle_pncp AND i.numero_item = r.numero_item
-   WHERE c.cnpj_orgao = $1
-     AND c.categoria_saude = $2
-     AND c.modalidade_nome LIKE 'Pregão%'
-     AND r.valor_unitario_homologado > 0
-     AND r.data_resultado >= current_date - ${JANELA_DIAS}
-)
-SELECT
-  (SELECT ${ESTAT} FROM base) AS estat,
-  (SELECT coalesce(json_agg(x), '[]'::json) FROM (
-     SELECT forn AS cnpj, max(nome) AS nome, max(porte) AS porte,
-            count(*) AS vitorias, sum(vt) AS valor, count(ratio) AS n_desconto,
-            count(DISTINCT ncp) FILTER (WHERE ratio IS NOT NULL) AS pregoes_desconto,
-            percentile_cont(0.5) WITHIN GROUP (ORDER BY ratio) AS ratio_mediana,
-            to_char(max(dt), 'YYYY-MM-DD') AS ultima
-       FROM base
-      GROUP BY forn
-      ORDER BY count(*) DESC, sum(vt) DESC NULLS LAST
-      LIMIT ${TOP_CONCORRENTES}
-  ) x) AS concorrentes
+SELECT c.numero_controle_pncp        AS pregao,
+       r.ni_fornecedor               AS fornecedor,
+       r.nome_fornecedor             AS nome,
+       r.porte_fornecedor            AS porte,
+       to_char(r.data_resultado, 'YYYY-MM-DD') AS data,
+       r.valor_unitario_homologado::float8 AS homologado,
+       i.valor_unitario_estimado::float8   AS estimado,
+       r.valor_total_homologado::float8    AS "valorTotal"
+  FROM contratacoes c
+  JOIN resultados r ON r.numero_controle_pncp = c.numero_controle_pncp
+  JOIN itens i ON i.numero_controle_pncp = r.numero_controle_pncp AND i.numero_item = r.numero_item
+ WHERE c.cnpj_orgao = $1
+   AND c.categoria_saude = $2
+   AND c.modalidade_nome LIKE 'Pregão%'
+   AND r.valor_unitario_homologado > 0
+   AND r.data_resultado >= current_date - ${JANELA_DIAS}
 `
-
-interface Linha {
-  estat: Record<string, unknown> | null
-  concorrentes: ConcorrenteBruto[] | null
-}
 
 export async function GET(req: NextRequest) {
   const cnpj = (req.nextUrl.searchParams.get('cnpj') ?? '').replace(/\D/g, '')
@@ -76,8 +45,7 @@ export async function GET(req: NextRequest) {
   if (cache) return NextResponse.json(cache)
 
   try {
-    const l = await queryOne<Linha>(SQL, [cnpj, cat])
-    const raio = montarRaioX({ estat: estatDoBanco(l?.estat), concorrentes: l?.concorrentes ?? [] })
+    const raio = calcularRaioX(await query<ItemHomologado>(SQL, [cnpj, cat]))
     // O histórico muda uma vez por dia (sync noturno de resultados).
     setCached(chave, raio, TTL.LONG)
     return NextResponse.json(raio)

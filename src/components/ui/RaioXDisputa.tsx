@@ -8,7 +8,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { Crosshair } from 'lucide-react'
-import { raioXDisponivel, type RaioX } from '@/lib/raio-x'
+import { raioXDisponivel, textoFaixa, textoVariacao, type RaioX } from '@/lib/raio-x'
 import { CATEGORIA_LABEL_CURTO } from '@/lib/categorias'
 import { formatBRL } from '@/lib/format'
 
@@ -61,13 +61,16 @@ export function RaioXDisputa({
       </div>
 
       {data.desconto && (
-        <div className="flex items-baseline gap-2.5 flex-wrap mb-2.5">
-          <span className="text-[22px] font-mono-custom font-bold text-strong leading-none">{data.desconto.mediana}%</span>
-          <span className="text-[11px] text-muted leading-snug">
-            é o desconto típico do vencedor sobre o valor estimado. Metade dos itens fechou entre{' '}
-            <span className="text-strong font-medium">{data.desconto.faixa[0]}%</span> e{' '}
-            <span className="text-strong font-medium">{data.desconto.faixa[1]}%</span> abaixo do estimado.
-          </span>
+        <div className="mb-2.5">
+          {/* O desconto pode ser 0 ou negativo (homologado acima do estimado): o texto
+              diz "acima"/"no próprio estimado" em vez de mostrar sinal. */}
+          <div className="text-[13px] text-strong leading-snug">
+            O vencedor costuma fechar{' '}
+            <span className="text-[18px] font-mono-custom font-bold">{textoVariacao(data.desconto.mediana)}</span>.
+          </div>
+          <div className="text-[11px] text-muted leading-snug mt-0.5">
+            Metade dos itens fechou {textoFaixa(data.desconto.faixa)}.
+          </div>
         </div>
       )}
 
@@ -102,7 +105,11 @@ export function RaioXDisputa({
                       {c.vitorias} <span className="text-faint">({c.participacao}%)</span>
                     </td>
                     <td className="py-1.5 pr-3 text-right font-mono-custom whitespace-nowrap">
-                      {c.desconto != null ? `${c.desconto}%` : <span className="text-faint" title="Poucos itens dele aqui para um desconto típico">—</span>}
+                      {c.desconto == null
+                        ? <span className="text-faint" title="Poucos itens ou pregões dele aqui para um desconto típico">—</span>
+                        : c.desconto >= 0
+                          ? `${c.desconto}%`
+                          : <span title="Acima do estimado">{-c.desconto}% acima</span>}
                     </td>
                     <td className="py-1.5 pr-3 text-right font-mono-custom whitespace-nowrap text-muted">{formatBRL(c.valor)}</td>
                     <td className="py-1.5 text-right font-mono-custom whitespace-nowrap text-faint">{quando(c.ultima)}</td>
@@ -115,8 +122,9 @@ export function RaioXDisputa({
       )}
 
       <p className="mt-2 text-[9px] text-faint leading-snug">
-        Calculado item a item sobre o valor estimado do edital, só em pregões. Itens em que o
-        homologado repete o estimado ficam de fora, porque não mostram disputa.
+        Calculado item a item sobre o valor estimado do edital, só em pregões. Itens que saíram
+        pelo próprio estimado contam como desconto zero; só fica de fora o pregão em que todos os
+        itens saíram pelo estimado, sinal de que o estimado foi preenchido com o homologado.
       </p>
     </div>
   )
