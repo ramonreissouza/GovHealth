@@ -107,8 +107,25 @@ na tarefa, em `mineracao.jobs` do `values.yaml`.
 ## Backup do banco
 
 A CronJob `backup-banco` (`templates/backup.yaml`) roda às 03:15, como o cron que existia
-na VM Oracle. Ela grava um `pg_dump -Fc` no PVC `backup-banco`, confere que o arquivo
-abre com `pg_restore --list` e apaga as cópias com mais de `backup.manterDias` (7).
+na VM Oracle. Em cada execução, nesta ordem:
+
+1. **Limpa antes do dump** as cópias com mais de `backup.manterDias` (7) dias, menos a
+   mais nova, que nunca sai. Limpar depois travaria o ciclo com o disco cheio (o dump
+   falharia antes da limpeza, todo dia). E apagar todas as vencidas, depois de uma
+   semana de falhas, deixaria o banco sem nenhum backup.
+2. **Confere o espaço:** exige livre o dobro do último dump (mínimo 1 GiB). Se faltar,
+   falha com `SEM ESPACO` no log, em vez de deixar um arquivo truncado.
+3. Grava um `pg_dump -Fc` num `.parcial`, confere que ele abre com `pg_restore --list` e
+   só então o renomeia para `.dump`. Se o dump morrer no meio, o `.parcial` é apagado
+   na hora.
+
+**Ninguém é avisado quando o backup falha.** O job fica como `Failed` em
+`kubectl get jobs`, mas não existe alerta. Confira de vez em quando, até que um
+alerta exista:
+
+```bash
+kubectl -n govhealth get jobs -l app=backup --sort-by=.metadata.creationTimestamp
+```
 
 **Ligado em 05/10/2026** (revisão 17 do release), antes da mineração. Até então a VPS
 não tinha backup nenhum. O primeiro teste falhou com `Connection refused`: o controle

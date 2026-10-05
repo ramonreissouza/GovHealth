@@ -75,25 +75,52 @@ spec:
                 - -c
                 - |
                   set -eu
+                  cd /backup
                   arq="/backup/govhealth-$(date +%Y-%m-%d_%H%M).dump"
-                  # Escreve num .parcial, VALIDA o .parcial e só então promove a .dump.
-                  # Nessa ordem: validar depois de renomear deixava um .dump com cara de
-                  # backup bom mesmo quando o pg_restore não o lia (revisão da #51), e
-                  # é o .dump que alguém escolhe na hora de recuperar.
+
+                  # 1) LIMPEZA ANTES DO DUMP (revisão da #62). Se ela viesse depois, um
+                  #    volume cheio faria o pg_dump falhar antes de limpar, e todo dia
+                  #    seguinte falharia igual, sem nunca liberar espaço.
+                  #    A cópia válida mais nova NUNCA sai, mesmo vencida: depois de uma
+                  #    semana de falhas, limpar tudo antes de um dump que também pode
+                  #    falhar deixaria o banco sem backup nenhum.
+                  ultimo=$(ls -1t govhealth-*.dump 2>/dev/null | head -n 1 || true)
+                  for f in $(find /backup -maxdepth 1 -name 'govhealth-*.dump' -mtime +"$MANTER_DIAS"); do
+                    [ "$(basename "$f")" = "$ultimo" ] && continue
+                    echo "vencido: $f"; rm -f "$f"
+                  done
+                  find /backup -maxdepth 1 -name '*.parcial' -mmin +120 -print -delete
+                  find /backup -maxdepth 1 -name '*.invalido' -mtime +"$MANTER_DIAS" -print -delete
+
+                  # 2) ESPAÇO: o dump novo cabe? Exige o dobro do último (o banco cresce
+                  #    e a compressão varia), no mínimo 1 GiB. Falta de espaço vira uma
+                  #    falha com nome, e não um .parcial truncado.
+                  if [ -n "$ultimo" ]; then precisa_kb=$(( $(du -k "$ultimo" | cut -f1) * 2 )); else precisa_kb=0; fi
+                  [ "$precisa_kb" -lt 1048576 ] && precisa_kb=1048576
+                  livre_kb=$(df -Pk /backup | awk 'NR==2 {print $4}')
+                  if [ "$livre_kb" -lt "$precisa_kb" ]; then
+                    echo "SEM ESPACO para o backup: livre ${livre_kb} KiB, precisa ${precisa_kb} KiB" >&2
+                    ls -lh /backup >&2
+                    exit 1
+                  fi
+
+                  # 3) Escreve num .parcial, VALIDA o .parcial e só então promove a .dump.
+                  #    Nessa ordem: validar depois de renomear deixava um .dump com cara
+                  #    de backup bom mesmo quando o pg_restore não o lia (revisão da #51),
+                  #    e é o .dump que alguém escolhe na hora de recuperar. Se o pg_dump
+                  #    morrer no meio, o .parcial sai na hora, sem esperar 2 h ocupando
+                  #    o disco.
+                  trap 'rm -f "$arq.parcial"' EXIT
                   pg_dump -h db -U govhealth -d govhealth -Fc -f "$arq.parcial"
                   if ! pg_restore --list "$arq.parcial" > /dev/null; then
                     # Fica para diagnóstico com um nome que ninguém confunde com backup,
-                    # e o job falha (aparece em `kubectl get jobs`). Os backups antigos
-                    # NÃO são apagados numa noite em que o novo não presta.
+                    # e o job falha (aparece em `kubectl get jobs`).
                     mv "$arq.parcial" "$arq.invalido"
                     echo "BACKUP INVALIDO: $arq.invalido não abre no pg_restore" >&2
                     exit 1
                   fi
                   mv "$arq.parcial" "$arq"
-                  echo "backup ok: $arq ($(du -h "$arq" | cut -f1))"
-                  find /backup -name 'govhealth-*.dump' -mtime +"$MANTER_DIAS" -print -delete
-                  find /backup -name '*.parcial' -mmin +120 -print -delete
-                  find /backup -name '*.invalido' -mtime +"$MANTER_DIAS" -print -delete
+                  echo "backup ok: $arq ($(du -h "$arq" | cut -f1)), livre antes: $((livre_kb / 1024)) MiB"
                   ls -lh /backup
               volumeMounts:
                 - { name: backup, mountPath: /backup }
