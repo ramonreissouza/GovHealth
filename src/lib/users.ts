@@ -198,7 +198,7 @@ export async function provisionarPorAssinatura(data: {
           SET plano=$2, status_assinatura='ativa', suspenso=false, deleted_at=NULL,
               expira_em=COALESCE($3::date, expira_em),
               stripe_customer_id=COALESCE($4, stripe_customer_id), atualizado_em=now()
-        WHERE id=$1`,
+        WHERE id=$1 AND role<>'master'`,
       [id, data.plano, data.expira_em ?? null, data.stripeCustomerId ?? null],
     )
     return { criada: false }

@@ -12,9 +12,20 @@
 // XSS); 'wasm-unsafe-eval' cobre o WASM do MapLibre sem reabrir eval de JS. Protecao XSS
 // de inline permanece limitada — nonce pleno exigiria renderizacao dinamica app-wide
 // (custo de perf); tratado como follow-up.
+// Stripe (checkout EMBUTIDO em /assinar): o Stripe.js vem de js.stripe.com, o formulário
+// do cartão e o desafio do 3-D Secure abrem em quadros do Stripe, e o próprio quadro fala
+// com a API dele. Sem estas três entradas o loadStripe() falha com 'Failed to load
+// Stripe.js' e o checkout simplesmente não aparece — sem erro na tela, só no console.
+// Achado no primeiro teste local com chave, em 05/10/2026; em produção estava escondido
+// porque, sem chave, o /assinar nem tentava carregar o Stripe.
+// Lista fechada do que o Stripe documenta, nunca '*.stripe.com'.
+const stripeScript = 'https://js.stripe.com'
+const stripeFrames = ['https://js.stripe.com', 'https://hooks.stripe.com', 'https://checkout.stripe.com']
+const stripeConnect = ['https://api.stripe.com', 'https://checkout.stripe.com']
+
 const scriptSrc = process.env.NODE_ENV === 'production'
-  ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
-  : "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
+  ? `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' ${stripeScript}`
+  : `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${stripeScript}`
 
 // frame-src: o Radar embute o live view do navegador hospedado (steel-browser) num
 // iframe para o fornecedor fazer o login do gov.br DENTRO da tela. Sem esta diretiva a
@@ -36,7 +47,7 @@ const embedOrigem = (process.env.RADAR_EMBED_ORIGIN || '').trim()
 // num quadro da tela. Origem FIXA, e não por env como a do steel: é um endereço do
 // governo que não muda por ambiente, e só esta origem entra — nunca `*.gov.br`.
 const comprasgovPublico = 'https://cnetmobile.estaleiro.serpro.gov.br'
-const frameSrc = ['frame-src', "'self'", comprasgovPublico, embedOrigem].filter(Boolean).join(' ')
+const frameSrc = ['frame-src', "'self'", comprasgovPublico, ...stripeFrames, embedOrigem].filter(Boolean).join(' ')
 
 const csp = [
   "default-src 'self'",
@@ -50,7 +61,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   scriptSrc,
   "worker-src 'self' blob:",
-  "connect-src 'self' https://tiles.openfreemap.org",
+  ['connect-src', "'self'", 'https://tiles.openfreemap.org', ...stripeConnect].join(' '),
   "upgrade-insecure-requests",
 ].join('; ')
 

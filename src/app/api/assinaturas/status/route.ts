@@ -12,5 +12,8 @@ export async function GET(req: NextRequest) {
   }
   const a = await assinaturaPorSession(sessionId)
   if (!a) return NextResponse.json({ status: 'desconhecida' })
-  return NextResponse.json({ status: a.status, plano: a.plano, email: a.email })
+  return NextResponse.json({
+    status: a.status, plano: a.plano, email: a.email,
+    contaNova: a.contaNova, emailEnviado: a.emailEnviado,
+  })
 }

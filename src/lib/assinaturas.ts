@@ -104,11 +104,39 @@ export async function atualizarStatusPorSubscription(subscriptionId: string, sta
   return (r[0] as Assinatura) ?? null
 }
 
+/**
+ * Grava o que aconteceu depois da ativação: se a conta foi criada agora e se o e-mail de
+ * boas-vindas saiu. É o que deixa a página de sucesso dizer a verdade — e o admin achar
+ * quem pagou e ficou sem a senha.
+ */
+export async function registrarBoasVindas(id: number, r: { contaNova: boolean; enviado: boolean; erro?: string | null }): Promise<void> {
+  await query(
+    `UPDATE assinaturas
+        SET conta_nova=$2, boas_vindas_em=now(), boas_vindas_enviado=$3, boas_vindas_erro=$4, atualizado_em=now()
+      WHERE id=$1`,
+    [id, r.contaNova, r.enviado, r.enviado ? null : (r.erro ?? 'motivo desconhecido').slice(0, 500)],
+  )
+}
+
+export interface EstadoDaSessao {
+  status: string; plano: string; email: string
+  /** null = o webhook ainda não terminou as boas-vindas. */
+  contaNova: boolean | null; emailEnviado: boolean | null
+}
+
 /** Assinatura por session (para a página de sucesso confirmar o estado). */
-export async function assinaturaPorSession(sessionId: string): Promise<Pick<Assinatura, 'status' | 'plano' | 'email'> | null> {
-  const r = await query<Pick<Assinatura, 'status' | 'plano' | 'email'>>(
-    `SELECT status, plano, email FROM assinaturas WHERE stripe_session_id=$1 LIMIT 1`,
+export async function assinaturaPorSession(sessionId: string): Promise<EstadoDaSessao | null> {
+  const r = await query<{ status: string; plano: string; email: string; conta_nova: boolean | null; boas_vindas_em: string | null; boas_vindas_enviado: boolean | null }>(
+    `SELECT status, plano, email, conta_nova, boas_vindas_em, boas_vindas_enviado
+       FROM assinaturas WHERE stripe_session_id=$1 LIMIT 1`,
     [sessionId],
   )
-  return r[0] ?? null
+  const a = r[0]
+  if (!a) return null
+  const terminou = a.boas_vindas_em != null
+  return {
+    status: a.status, plano: a.plano, email: a.email,
+    contaNova: terminou ? a.conta_nova : null,
+    emailEnviado: terminou ? a.boas_vindas_enviado : null,
+  }
 }

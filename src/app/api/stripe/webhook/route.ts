@@ -13,6 +13,7 @@ import type Stripe from 'stripe'
 import { getStripe } from '@/lib/stripe'
 import { ativarPorSession, atualizarStatusPorSubscription } from '@/lib/assinaturas'
 import { provisionarPorAssinatura, marcarStatusAssinatura } from '@/lib/users'
+import { registrarBoasVindas } from '@/lib/assinaturas'
 import { enviarBoasVindas, enviarPagamentoFalhou, enviarAssinaturaCancelada } from '@/lib/email'
 
 export const runtime = 'nodejs'
@@ -57,12 +58,23 @@ export async function POST(req: NextRequest) {
             instituicao: assinatura?.instituicao ?? null,
             stripeCustomerId: typeof s.customer === 'string' ? s.customer : s.customer?.id ?? null,
           })
-          await enviarBoasVindas({
+          const envio = await enviarBoasVindas({
             email,
             nome: assinatura?.nome ?? s.customer_details?.name ?? null,
             plano: assinatura?.plano ?? s.metadata?.plano ?? 'pro',
             senhaTemporaria: prov.senhaTemporaria,
           })
+          // O envio é best-effort, mas o resultado não pode sumir: para conta NOVA a senha
+          // temporária só existe dentro deste e-mail. Quem pagou e não recebeu precisa
+          // aparecer no log e no banco, e a página de sucesso não pode dizer que enviou.
+          if (!envio.enviado) {
+            console.error('[stripe/webhook] boas-vindas NÃO enviada', {
+              assinatura: assinatura?.id ?? null, contaNova: prov.criada, motivo: envio.motivo,
+            })
+          }
+          if (assinatura) {
+            await registrarBoasVindas(assinatura.id, { contaNova: prov.criada, enviado: envio.enviado, erro: envio.motivo })
+          }
         }
         break
       }

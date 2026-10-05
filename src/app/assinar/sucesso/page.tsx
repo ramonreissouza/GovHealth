@@ -1,11 +1,16 @@
 'use client'
 // src/app/assinar/sucesso/page.tsx — retorno do Stripe Checkout. Confirma o
 // estado da assinatura (polling curto no webhook) e orienta o próximo passo.
+//
+// A mensagem sobre o e-mail depende do que o webhook GRAVOU (conta nova? e-mail saiu?),
+// não de uma suposição. Até 05/10/2026 a tela dizia "enviamos os dados de acesso" sempre —
+// inclusive quando o e-mail não saía, e para conta nova a senha só existe nesse e-mail.
 
 import { useEffect, useState, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { CheckCircle2, Loader2, Mail, ArrowRight } from 'lucide-react'
+import { CheckCircle2, Loader2, Mail, ArrowRight, AlertTriangle } from 'lucide-react'
+import { CONTATO_EMAIL } from '@/lib/empresa-legal'
 
 export default function SucessoPage() {
   return (
@@ -20,6 +25,9 @@ function Sucesso() {
   const sessionId = sp.get('session_id')
   const [status, setStatus] = useState<'carregando' | 'ativa' | 'processando'>('carregando')
   const [email, setEmail] = useState<string>('')
+  // null = o webhook ainda não terminou as boas-vindas (ou não terminou a tempo).
+  const [contaNova, setContaNova] = useState<boolean | null>(null)
+  const [emailEnviado, setEmailEnviado] = useState<boolean | null>(null)
 
   useEffect(() => {
     if (!sessionId) { setStatus('processando'); return }
@@ -32,10 +40,16 @@ function Sucesso() {
         const d = await r.json().catch(() => ({}))
         if (!vivo) return
         if (d.email) setEmail(d.email)
-        if (d.status === 'ativa') { setStatus('ativa'); return }
+        if (typeof d.contaNova === 'boolean') setContaNova(d.contaNova)
+        if (typeof d.emailEnviado === 'boolean') setEmailEnviado(d.emailEnviado)
+        if (d.status === 'ativa') {
+          setStatus('ativa')
+          // Ativa não basta: o e-mail sai DEPOIS da ativação. Espera o resultado dele.
+          if (typeof d.emailEnviado === 'boolean') return
+        }
       } catch { /* rede — tenta de novo */ }
       if (vivo) {
-        if (tentativas >= 6) { setStatus('processando'); return } // ~15s: webhook pode atrasar
+        if (tentativas >= 8) { setStatus((s) => (s === 'ativa' ? 'ativa' : 'processando')); return } // ~20s: webhook pode atrasar
         setTimeout(checar, 2500)
       }
     }
@@ -63,12 +77,7 @@ function Sucesso() {
                 ? 'Seu acesso já está liberado.'
                 : 'Estamos processando a confirmação — leva só alguns instantes.'}
             </p>
-            <div className="bg-bg2 border border-subtle rounded-xl p-4 flex items-start gap-2.5 text-left mb-6">
-              <Mail size={16} className="text-accent flex-shrink-0 mt-0.5" />
-              <p className="text-[12.5px] text-muted">
-                Enviamos os dados de acesso {email ? <>para <strong className="text-strong">{email}</strong></> : 'para o seu e-mail'} (verifique também o spam). A nota fiscal é emitida em seguida.
-              </p>
-            </div>
+            <AvisoDeAcesso email={email} contaNova={contaNova} emailEnviado={emailEnviado} />
             <div className="flex items-center justify-center gap-3">
               <Link href="/login" className="inline-flex items-center gap-2 text-[14px] font-semibold bg-accent text-black px-5 py-2.5 rounded-lg hover:bg-accent2">
                 Entrar na plataforma <ArrowRight size={15} />
@@ -78,6 +87,43 @@ function Sucesso() {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/** O que dizer sobre o acesso, a partir do que o webhook gravou. */
+function AvisoDeAcesso({ email, contaNova, emailEnviado }: { email: string; contaNova: boolean | null; emailEnviado: boolean | null }) {
+  const quem = email ? <strong className="text-strong">{email}</strong> : 'o seu e-mail'
+
+  // Conta criada agora e o e-mail com a senha não saiu: sem isto a pessoa pagou e não
+  // tem como entrar. Diz o que aconteceu e por onde resolver.
+  if (contaNova === true && emailEnviado === false) {
+    return (
+      <div className="bg-bg2 border border-amber/40 rounded-xl p-4 flex items-start gap-2.5 text-left mb-6">
+        <AlertTriangle size={16} className="text-amber flex-shrink-0 mt-0.5" />
+        <p className="text-[12.5px] text-muted">
+          Sua conta foi criada, mas o e-mail com a senha de acesso para {quem} não chegou a sair. Escreva para{' '}
+          <a href={`mailto:${CONTATO_EMAIL}`} className="text-accent hover:underline">{CONTATO_EMAIL}</a>{' '}
+          que liberamos o acesso. O pagamento já está confirmado.
+        </p>
+      </div>
+    )
+  }
+
+  let texto: React.ReactNode
+  if (contaNova === false) {
+    // Já tinha conta: não existe senha nova, o que muda é o plano.
+    texto = <>{quem} já tinha conta: entre com a senha de sempre.{emailEnviado ? ' Mandamos a confirmação da assinatura por e-mail.' : ''} A nota fiscal é emitida em seguida.</>
+  } else if (emailEnviado === true) {
+    texto = <>Enviamos sua senha de acesso para {quem} (verifique também o spam). A nota fiscal é emitida em seguida.</>
+  } else {
+    // Ainda sem resposta do webhook: não afirma envio que não aconteceu.
+    texto = <>Os dados de acesso vão para {quem} em instantes (verifique também o spam). A nota fiscal é emitida em seguida.</>
+  }
+  return (
+    <div className="bg-bg2 border border-subtle rounded-xl p-4 flex items-start gap-2.5 text-left mb-6">
+      <Mail size={16} className="text-accent flex-shrink-0 mt-0.5" />
+      <p className="text-[12.5px] text-muted">{texto}</p>
     </div>
   )
 }

@@ -2,13 +2,17 @@
 // não estiver configurada, apenas loga e segue (não quebra o fluxo).
 
 import { appUrl } from '@/lib/stripe'
-import { planoPorId } from '@/lib/planos'
+import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { SLA_ESCALONA_MIN } from '@/lib/radar/entrega'
+import { CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE, CONTATO_EMAIL } from '@/lib/empresa-legal'
 
 /** Envia um HTML via Resend. Retorna se enviou (best-effort). */
 async function enviar(to: string, subject: string, html: string): Promise<{ enviado: boolean; motivo?: string }> {
   const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey) return { enviado: false, motivo: 'sem RESEND_API_KEY' }
+  if (!apiKey) {
+    console.warn('[email] não enviado, sem RESEND_API_KEY:', subject)
+    return { enviado: false, motivo: 'sem RESEND_API_KEY' }
+  }
   const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
   try {
     const { Resend } = await import('resend')
@@ -34,8 +38,11 @@ function moldura(titulo: string, corpo: string): string {
             <h1 style="font-size:19px;color:#0f172a;margin:0 0 12px;">${titulo}</h1>
             ${corpo}
           </td></tr>
-          <tr><td style="padding:14px 26px;background:#f8fafc;border-top:1px solid #eef2f7;font-size:11px;color:#94a3b8;">
-            Fontes 100% oficiais · metodologia pública. Dúvidas? Responda este e-mail.
+          <tr><td style="padding:16px 26px;background:#f8fafc;border-top:1px solid #eef2f7;font-size:11px;line-height:1.6;color:#94a3b8;">
+            Fontes 100% oficiais · metodologia pública. Dúvidas? Responda este e-mail.<br/>
+            ${CONTROLADOR_RAZAO_SOCIAL} · CNPJ ${CONTROLADOR_CNPJ} · ${CONTROLADOR_SEDE}<br/>
+            <a href="${appUrl()}/termos" style="color:#94a3b8;">Termos de Uso</a> ·
+            <a href="${appUrl()}/privacidade" style="color:#94a3b8;">Política de Privacidade</a>
           </td></tr>
         </table>
       </td></tr></table>
@@ -248,7 +255,7 @@ export async function enviarBoasVindasTrial(params: {
   const ate = dataBR(params.expiraEm)
   const corpo = `
     <p style="font-size:13px;color:#334155;margin:0 0 12px;">
-      ${params.nome ? params.nome + ', ' : ''}sua conta está pronta! Você tem <strong>3 dias de teste grátis</strong> no plano <strong>${nomePlano}</strong>${ate ? `, até <strong>${ate}</strong>` : ''} — sem precisar de cartão.
+      ${params.nome ? escaparHtml(params.nome) + ', ' : ''}sua conta está pronta! Você tem <strong>${DIAS_TESTE_GRATIS} dias de teste grátis</strong> no plano <strong>${nomePlano}</strong>${ate ? `, até <strong>${ate}</strong>` : ''} — sem precisar de cartão.
     </p>
     <p style="font-size:13px;color:#334155;margin:0 0 8px;">Comece por aqui:</p>
     <ul style="font-size:13px;color:#334155;margin:0 0 4px;padding-left:18px;line-height:1.7;">
@@ -258,7 +265,7 @@ export async function enviarBoasVindasTrial(params: {
     </ul>
     ${btn(`${appUrl()}/login`, 'Acessar a plataforma')}
     <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Ao fim do teste, você poderá assinar para manter o acesso. Cancele quando quiser.</p>`
-  return enviar(params.email, `Bem-vindo(a) ao GovHealth.ai — seu teste de 3 dias começou`, moldura('Seu teste grátis começou 🚀', corpo))
+  return enviar(params.email, `Bem-vindo(a) ao GovHealth.ai — seu teste de ${DIAS_TESTE_GRATIS} dias começou`, moldura('Seu teste grátis começou 🚀', corpo))
 }
 
 /**
@@ -305,28 +312,66 @@ export async function enviarTesteExpirado(params: {
 /**
  * E-mail de boas-vindas após a assinatura ser ativada.
  * `senhaTemporaria` só é enviada quando a conta foi criada agora.
+ *
+ * É o primeiro e-mail que o cliente pagante recebe, e para conta nova é o único lugar
+ * onde a senha existe. Por isso diz o que foi contratado (plano, valor, cobrança), como
+ * entrar, os dois primeiros passos que fazem o produto funcionar e quem atende. Nome e
+ * e-mail vêm do formulário público: entram escapados.
  */
 export async function enviarBoasVindas(params: {
   email: string; nome?: string | null; plano: string; senhaTemporaria?: string
 }): Promise<{ enviado: boolean; motivo?: string }> {
-  const nomePlano = planoPorId(params.plano)?.nome ?? params.plano
-  const bloco = params.senhaTemporaria
-    ? `<p style="font-size:13px;color:#334155;">Criamos seu acesso. Entre com:</p>
-       <table style="margin:8px 0 16px;font-size:13px;">
-         <tr><td style="padding:2px 8px;color:#64748b;">E-mail</td><td style="padding:2px 8px;font-weight:600;">${params.email}</td></tr>
-         <tr><td style="padding:2px 8px;color:#64748b;">Senha temporária</td><td style="padding:2px 8px;font-family:monospace;font-weight:600;">${params.senhaTemporaria}</td></tr>
-       </table>
-       <p style="font-size:12px;color:#64748b;">Recomendamos trocar a senha no primeiro acesso.</p>`
-    : `<p style="font-size:13px;color:#334155;">Sua assinatura foi renovada/atualizada. Acesse normalmente com sua senha atual.</p>`
+  const plano = planoPorId(params.plano)
+  const nomePlano = plano?.nome ?? params.plano
+  const primeiroNome = (params.nome ?? '').trim().split(/\s+/)[0]
+  const saudacao = primeiroNome ? `Olá, ${escaparHtml(primeiroNome)},` : 'Olá,'
+  const valor = plano && plano.preco > 0 ? `${brl(plano.preco)}/${plano.ciclo}` : null
+  const app = appUrl()
+
+  const p = (txt: string, extra = '') => `<p style="font-size:14px;line-height:1.6;color:#334155;margin:0 0 14px;${extra}">${txt}</p>`
+  const linha = (rotulo: string, valor: string, mono = false) =>
+    `<tr><td style="padding:7px 14px;font-size:12.5px;color:#64748b;width:140px;border-top:1px solid #eef2f7;">${rotulo}</td>
+         <td style="padding:7px 14px;font-size:13px;color:#0f172a;font-weight:600;border-top:1px solid #eef2f7;${mono ? 'font-family:Consolas,Menlo,monospace;letter-spacing:.5px;' : ''}">${valor}</td></tr>`
+  const quadro = (titulo: string, linhas: string) =>
+    `<table width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 18px;border:1px solid #e2e8f0;border-radius:10px;border-collapse:separate;overflow:hidden;">
+       <tr><td colspan="2" style="padding:9px 14px;background:#f8fafc;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#64748b;">${titulo}</td></tr>
+       ${linhas}
+     </table>`
+
+  const assinatura = quadro('Sua assinatura',
+    linha('Plano', escaparHtml(nomePlano)) +
+    (valor ? linha('Valor', valor) : '') +
+    linha('Cobrança', 'Mensal no cartão, com renovação automática') +
+    linha('Nota fiscal', 'Emitida em seguida'))
+
+  const acesso = params.senhaTemporaria
+    ? quadro('Seu acesso',
+        linha('E-mail', escaparHtml(params.email)) +
+        linha('Senha temporária', escaparHtml(params.senhaTemporaria), true)) +
+      p(`Por segurança, troque a senha no primeiro acesso, em <a href="${app}/conta" style="color:#2f80ed;">Minha conta</a>.`, 'font-size:12.5px;color:#64748b;')
+    : p(`Sua conta <strong>${escaparHtml(params.email)}</strong> já existia: entre com a senha de sempre. O novo plano já vale a partir de agora.`)
+
+  const passos = `
+    <p style="font-size:13px;font-weight:700;color:#0f172a;margin:22px 0 8px;">Primeiros passos</p>
+    <ol style="margin:0 0 4px;padding-left:20px;font-size:13.5px;line-height:1.7;color:#334155;">
+      <li>Preencha o <a href="${app}/perfil" style="color:#2f80ed;">Setup da Empresa</a> com o que você vende. É ele que orienta as oportunidades e os alertas.</li>
+      <li>Ligue os <a href="${app}/alertas" style="color:#2f80ed;">alertas</a> para receber as licitações novas do seu segmento.</li>
+    </ol>`
 
   const corpo = `
-    <p style="font-size:13px;color:#334155;margin:0 0 14px;">
-      ${params.nome ? params.nome + ', ' : ''}sua assinatura do plano <strong>${nomePlano}</strong> está ativa.
-    </p>
-    ${bloco}
-    ${btn(`${appUrl()}/login`, 'Acessar a plataforma')}
-    <p style="font-size:11.5px;color:#94a3b8;margin:16px 0 0;">Emitimos nota fiscal.</p>`
-  return enviar(params.email, `GovHealth.ai — assinatura ${nomePlano} ativada`, moldura('Assinatura confirmada 🎉', corpo))
+    ${p(saudacao)}
+    ${p(`Obrigado por assinar o GovHealth AI. Seu pagamento foi confirmado e o acesso ao plano <strong>${escaparHtml(nomePlano)}</strong> já está liberado.`)}
+    ${assinatura}
+    ${acesso}
+    ${btn(`${app}/login`, 'Acessar a plataforma')}
+    ${passos}
+    ${p(`Precisa de ajuda para configurar? Responda este e-mail ou escreva para <a href="mailto:${CONTATO_EMAIL}" style="color:#2f80ed;">${CONTATO_EMAIL}</a>.`, 'margin-top:18px;')}
+    ${p('Equipe GovHealth AI', 'margin:0;color:#0f172a;font-weight:600;')}`
+
+  const assunto = params.senhaTemporaria
+    ? `Seu acesso ao GovHealth AI está liberado — plano ${nomePlano}`
+    : `Assinatura confirmada — plano ${nomePlano} do GovHealth AI`
+  return enviar(params.email, assunto, moldura('Boas-vindas ao GovHealth AI', corpo))
 }
 
 /**
