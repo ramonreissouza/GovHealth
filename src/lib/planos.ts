@@ -8,6 +8,15 @@
 
 import { CONTATO_EMAIL } from '@/lib/pix'
 
+/**
+ * Duração do teste grátis do autocadastro. FONTE ÚNICA: a rota de cadastro calcula o
+ * expira_em com ela, e a landing, a tela de criar conta e o e-mail de boas-vindas do teste
+ * escrevem o número a partir dela. Era 3 até 05/10/2026, quando passou a 7 — quem vende ao
+ * governo leva mais que 3 dias para decidir. Contas criadas antes guardam o expira_em que
+ * receberam; mudar isto não estende nem encurta teste em andamento.
+ */
+export const DIAS_TESTE_GRATIS = 7
+
 export interface Plano {
   id: 'essencial' | 'pro' | 'empresa'
   nome: string

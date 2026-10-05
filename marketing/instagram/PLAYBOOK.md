@@ -88,7 +88,7 @@ A primeira versão ficou com cara de "gerada por IA". A linguagem atual imita o 
 
 Cabeçalho com: formato, pilar, data sugerida, fonte e data dos números, status "aguardando aprovação". Depois:
 
-- **Legenda pronta para colar**: gancho na 1ª linha (aparece antes do "mais"), 3 a 5 frases curtas, chamada para ação ("Teste grátis 3 dias, link na bio" ou "Comente GOVHEALTH"), 8 a 14 hashtags de nicho (#licitacao #pregaoeletronico #saudepublica #equipamentosmedicos #engenhariaclinica #fornecedoresdogoverno #govhealth #techealth ...).
+- **Legenda pronta para colar**: gancho na 1ª linha (aparece antes do "mais"), 3 a 5 frases curtas, chamada para ação ("Teste grátis 7 dias, link na bio" ou "Comente GOVHEALTH"), 8 a 14 hashtags de nicho (#licitacao #pregaoeletronico #saudepublica #equipamentosmedicos #engenhariaclinica #fornecedoresdogoverno #govhealth #techealth ...).
 - **Sugestão de story** do dia (1 a 3 telas, com enquete ou caixinha).
 - **Sugestões** (opcional): print que faltou, ideia de pauta futura.
 
