@@ -38,6 +38,7 @@
     "radar:aviso:e2e": "tsx scripts/radar/latencia-aviso-e2e.teste.mts",
     "radar:entrega:e2e": "tsx scripts/radar/entrega-e2e.teste.mts",
     "push:teste": "tsx --test scripts/push.teste.ts",
+    "pecas:teste": "tsx --test scripts/pecas-juridicas.teste.ts",
     "radar:link-idx:migrate": "node scripts/radar/migrate-link-externo-idx.mjs",
     "radar:ciclo:teste": "node --test scripts/radar/ciclo-cobertura.teste.mjs",
     "trgm:migrate": "node scripts/migrate-trgm.mjs",

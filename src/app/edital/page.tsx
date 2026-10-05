@@ -17,6 +17,7 @@ import { IA_HABILITADA } from '@/lib/features'
 import { IADesativada } from '@/components/ui/IADesativada'
 import HistoricoConversas, { useHistorico } from '@/components/ia/HistoricoConversas'
 import PerguntasEdital, { type TurnoEdital } from '@/components/edital/PerguntasEdital'
+import PecasJuridicas from '@/components/edital/PecasJuridicas'
 
 const SEV_STYLE: Record<string, string> = {
   alta:  'bg-red-500/15 text-red-400 border-red-500/30',
@@ -150,6 +151,13 @@ export default function EditalPage() {
     setDuvidasAbertas(true)
     setPedidoFoco((n) => n + 1)
   }, [])
+  // Esclarecimento, recurso e contrarrazões: mesmo padrão do painel de dúvidas.
+  const [pecasAbertas, setPecasAbertas] = useState(false)
+  const [pedidoPecas, setPedidoPecas] = useState(0)
+  const abrirPecas = useCallback(() => {
+    setPecasAbertas(true)
+    setPedidoPecas((n) => n + 1)
+  }, [])
   // Criação da conversa em voo. Duas perguntas seguidas antes da primeira gravar (ou
   // uma pergunta junto com o "Analisar edital") criariam DUAS conversas do mesmo
   // edital na lista; quem chegar depois espera nesta promessa.
@@ -244,7 +252,7 @@ export default function EditalPage() {
     setConversaId(null)
     criacaoRef.current = null
     setTexto(''); setAnalise(null); setErro(null); setPdfStatus(null); setFileName(null)
-    setTurnos([]); setTrechoParcial(false); setDuvidasAbertas(false)
+    setTurnos([]); setTrechoParcial(false); setDuvidasAbertas(false); setPecasAbertas(false)
     try { localStorage.removeItem(LS_EDITAL) } catch { /* noop */ }
   }, [])
 
@@ -460,7 +468,10 @@ export default function EditalPage() {
                       uma pergunta só ("preciso de registro na ANVISA?") e não vale
                       esperar o relatório inteiro. */}
                   {texto.trim().length >= 200 && !analise && (
-                    <BotaoDuvidas onClick={abrirDuvidas} n={nPerguntas} />
+                    <>
+                      <BotaoPecas onClick={abrirPecas} />
+                      <BotaoDuvidas onClick={abrirDuvidas} n={nPerguntas} />
+                    </>
                   )}
                   {texto && (
                     <button onClick={limpar} className="px-3 py-2 rounded-lg bg-bg3 border border-subtle text-[12px] text-muted hover:text-strong transition-colors">
@@ -492,6 +503,7 @@ export default function EditalPage() {
                   <span className="text-[11px] font-mono-custom text-faint">Análise salva neste navegador — continua aqui quando você voltar.</span>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     {/* Aqui é onde a dúvida costuma nascer: logo depois de ler a análise. */}
+                    <BotaoPecas onClick={abrirPecas} />
                     <BotaoDuvidas onClick={abrirDuvidas} n={nPerguntas} />
                     <button
                       onClick={() => baixarRelatorio(analise, fileName)}
@@ -503,6 +515,10 @@ export default function EditalPage() {
                 </div>
                 <Resultado a={analise} />
               </>
+            )}
+
+            {texto.trim().length >= 200 && pecasAbertas && (
+              <PecasJuridicas texto={texto} pedidoFoco={pedidoPecas} onFechar={() => setPecasAbertas(false)} />
             )}
 
             {/* Perguntas livres. Não exige a análise pronta, e fica DEPOIS do resultado:
@@ -544,6 +560,20 @@ function BotaoDuvidas({ onClick, n }: { onClick: () => void; n: number }) {
           {n}
         </span>
       )}
+    </button>
+  )
+}
+
+/** Esclarecimento, recurso e contrarrazões — a impugnação já sai na análise. */
+function BotaoPecas({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Pedido de esclarecimento, recurso e contrarrazões"
+      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-bg3 border border-amber-500/40 hover:border-amber-500/70 text-[12px] font-semibold text-strong transition-colors"
+    >
+      <Gavel size={14} className="text-amber-400" />
+      Outras peças
     </button>
   )
 }
