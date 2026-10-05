@@ -62,6 +62,17 @@ export function normalizarMensagem(raw, licitacaoId) {
  * Vive aqui, e não em um conector, porque TODO portal brasileiro escreve a data
  * assim: nasceu no PCP e o BLL/BNC usa exatamente o mesmo formato.
  */
+/**
+ * Fuso do navegador de TODO conector que lê mensagem. horarioBrParaISO assume que a hora
+ * da página é de Brasília, mas o PCP monta a hora do chat no navegador, no fuso da
+ * MÁQUINA do coletor: no notebook em fuso da Europa (UTC+2), "12:10" virava "17:10" e o
+ * horario_origem ficava 5 h no futuro — 4.528 de 6.298 mensagens do PCP em set/2026
+ * chegaram "antes" de serem escritas, e o e-mail do aviso dizia a hora errada. Com o
+ * navegador em Brasília, a página escreve a hora certa em qualquer máquina. Portal que
+ * escreve a hora no servidor (BLL, BNC, Licitanet) não muda.
+ */
+export const FUSO_NAVEGADOR = { timezoneId: 'America/Sao_Paulo' }
+
 export function horarioBrParaISO(s) {
   const m = String(s ?? '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\D+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
   if (!m) return null

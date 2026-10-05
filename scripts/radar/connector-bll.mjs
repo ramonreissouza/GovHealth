@@ -35,6 +35,7 @@ import {
   PortalRecusou,
   SIMULADO_FIXTURES,
   withBackoff,
+  FUSO_NAVEGADOR,
 } from './connector-base.mjs'
 import { portalMeta } from './portais.mjs'
 import { contadorDeConsumo } from './rodizio.mjs'
@@ -362,7 +363,7 @@ export function criarConectorBllBnc({ id }) {
     let recusa = null
     try {
       browser = await withBackoff(() => chromium.launch({ headless: true }))
-      const context = await browser.newContext({ userAgent: UA_NAVEGADOR })
+      const context = await browser.newContext({ ...FUSO_NAVEGADOR, userAgent: UA_NAVEGADOR })
       const page = await context.newPage()
       const estadoLeitura = novoEstadoLeitura()
 

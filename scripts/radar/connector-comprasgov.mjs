@@ -13,7 +13,7 @@
 //  - Os seletores de DOM abaixo são pontos de ajuste (o portal muda de tempos em
 //    tempos); qualquer falha inesperada vira 'falha' e alarme na saúde do conector.
 
-import { SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
+import { FUSO_NAVEGADOR, SIMULADO_FIXTURES, normalizarMensagem, withBackoff } from './connector-base.mjs'
 import { PORTAIS } from './portais.mjs'
 import { serializarSessaoRecortada } from './sessao-escopo.mjs'
 
@@ -51,7 +51,7 @@ export async function sync({ credencial, processos, simulado }) {
   try {
     browser = await withBackoff(() => chromium.launch({ headless: true }))
     const context = await browser.newContext(
-      credencial.storageState ? { storageState: JSON.parse(credencial.storageState) } : {},
+      { ...FUSO_NAVEGADOR, ...(credencial.storageState ? { storageState: JSON.parse(credencial.storageState) } : {}) },
     )
     const page = await context.newPage()
 
