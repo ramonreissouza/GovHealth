@@ -53,6 +53,14 @@ spec:
             runAsUser: 70
             runAsGroup: 70
             fsGroup: 70
+          {{/* Sem esperar o banco, o pg_dump falhava com "Connection refused" no
+               primeiro segundo do pod: o controle de rede do k3s só libera o IP de
+               um pod novo depois de registrá-lo (medido em 05/10/2026: recusado em
+               t+0 s, aceito em t+2 s). As duas tentativas do job nasciam em pods
+               novos e caíam no mesmo buraco, então nenhum backup saía. App, worker
+               e mineração já esperavam pelo mesmo helper. */}}
+          initContainers:
+{{ include "govhealth.waitForDb" . | indent 12 }}
           containers:
             - name: pg-dump
               image: {{ .Values.db.image }}

@@ -110,17 +110,44 @@ A CronJob `backup-banco` (`templates/backup.yaml`) roda às 03:15, como o cron q
 na VM Oracle. Ela grava um `pg_dump -Fc` no PVC `backup-banco`, confere que o arquivo
 abre com `pg_restore --list` e apaga as cópias com mais de `backup.manterDias` (7).
 
-Ligar junto com a mineração, no `helm upgrade`:
+**Ligado em 05/10/2026** (revisão 17 do release), antes da mineração. Até então a VPS
+não tinha backup nenhum. O primeiro teste falhou com `Connection refused`: o controle
+de rede do k3s só libera o IP de um pod novo uns 2 s depois que ele nasce, e o
+`pg_dump` conectava no primeiro segundo. O job agora espera o banco
+(`govhealth.waitForDb`, o mesmo de app, worker e mineração).
 
-```bash
-helm upgrade govhealth deploy/helm/govhealth -n govhealth --reuse-values --set backup.enabled=true
-```
+Na VPS, o usuário `deploy` precisa de `export KUBECONFIG=$HOME/.kube/config` num shell
+não interativo (o `.bashrc` não é lido).
 
 Para conferir o último backup:
 
 ```bash
-kubectl -n govhealth logs -l app=backup --tail=20
+kubectl -n govhealth logs -l app=backup -c pg-dump --tail=20
 ```
+
+Para testar um backup agora, fora da agenda:
+
+```bash
+kubectl -n govhealth create job --from=cronjob/backup-banco backup-manual-$(date +%s)
+```
+
+**Teste de restauração** (feito em 05/10/2026: 41 de 41 tabelas, contagens iguais às da
+produção, 17 min). Restaure num Postgres descartável com a mesma imagem do chart, nunca
+no banco de produção:
+
+```bash
+docker run -d --name restore-teste -e POSTGRES_USER=govhealth -e POSTGRES_DB=govhealth -e POSTGRES_PASSWORD=descartavel postgres:18.6-alpine
+```
+
+```bash
+docker cp govhealth-AAAA-MM-DD_HHMM.dump restore-teste:/tmp/b.dump
+```
+
+```bash
+docker exec restore-teste pg_restore -U govhealth -d govhealth -j 4 --exit-on-error /tmp/b.dump
+```
+
+Depois, compare a contagem de linhas por tabela com a produção e apague o container.
 
 O dump fica no mesmo disco da VPS. Ele cobre erro humano e banco corrompido, mas não a
 perda da máquina. Copiar para fora (outro servidor, ou um bucket) é o próximo passo.
