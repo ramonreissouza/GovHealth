@@ -398,7 +398,7 @@ export default function EditalPage() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar title="Copiloto de Edital" subtitle="Análise de edital/TR com IA" />
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         <HistoricoConversas
           tipo="edital"
           conversas={conversas}
@@ -409,7 +409,7 @@ export default function EditalPage() {
           rotuloNovo="Novo edital"
           vazio="Cada edital analisado fica salvo aqui — dá para reabrir a análise depois sem colar o texto de novo."
         />
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6">
           <div className="max-w-[920px] mx-auto">
 
             {/* Intro */}

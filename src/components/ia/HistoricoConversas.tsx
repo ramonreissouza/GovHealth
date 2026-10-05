@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { clsx } from 'clsx'
-import { MessageSquarePlus, Trash2, History } from 'lucide-react'
+import { MessageSquarePlus, Trash2, History, X } from 'lucide-react'
 
 export interface ConversaResumo {
   id: string
@@ -52,6 +52,7 @@ export default function HistoricoConversas({
   vazio?: string
 }) {
   const [apagando, setApagando] = useState<string | null>(null)
+  const [gaveta, setGaveta] = useState(false)
 
   async function apagar(id: string, e: React.MouseEvent) {
     e.stopPropagation()          // não abrir a conversa que está sendo apagada
@@ -62,55 +63,100 @@ export default function HistoricoConversas({
     } finally { setApagando(null) }
   }
 
-  return (
-    <aside className="w-[248px] flex-shrink-0 border-r border-subtle bg-bg2/40 flex flex-col overflow-hidden">
-      <div className="p-3 border-b border-subtle">
-        <button
-          onClick={onNova}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-accent text-black font-mono-custom font-bold text-[11px] rounded-lg hover:bg-accent/90 transition-colors"
+  // Abrir/criar fecha a gaveta do celular: quem tocou numa conversa quer lê-la.
+  const abrir = (id: string) => { setGaveta(false); onAbrir(id) }
+  const nova = () => { setGaveta(false); onNova() }
+
+  const lista = (
+    <div className="flex-1 overflow-y-auto px-2 pb-3">
+      {conversas.length === 0 ? (
+        <p className="text-[11px] text-faint px-2 py-3 leading-snug">
+          {vazio ?? 'Suas conversas ficam salvas aqui e você pode voltar nelas depois.'}
+        </p>
+      ) : conversas.map((c) => (
+        <div
+          key={c.id}
+          onClick={() => abrir(c.id)}
+          className={clsx(
+            'group flex items-start gap-1.5 px-2 py-2 rounded-lg cursor-pointer transition-colors',
+            c.id === ativaId ? 'bg-accent/10 border border-accent/30' : 'hover:bg-bg3 border border-transparent',
+          )}
         >
-          <MessageSquarePlus size={13} /> {rotuloNovo}
+          <div className="flex-1 min-w-0">
+            <div className={clsx('text-[12px] leading-snug line-clamp-2', c.id === ativaId ? 'text-strong font-medium' : 'text-muted')}>
+              {c.titulo}
+            </div>
+            <div className="text-[9px] font-mono-custom text-faint mt-0.5">
+              {quando(c.atualizado_em)}{tipo === 'copiloto' && c.n > 0 ? ` · ${c.n} msg` : ''}
+            </div>
+          </div>
+          {/* No toque não existe hover: no celular a lixeira fica sempre visível. */}
+          <button
+            onClick={(e) => apagar(c.id, e)}
+            disabled={apagando === c.id}
+            title="Apagar conversa"
+            className="md:opacity-0 md:group-hover:opacity-100 text-faint hover:text-brand-red transition-all flex-shrink-0 mt-0.5 disabled:opacity-40"
+          >
+            <Trash2 size={12} />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+
+  const titulo = (
+    <div className="px-3 pt-3 pb-1 flex items-center gap-1.5">
+      <History size={11} className="text-faint" />
+      <span className="text-[9px] font-mono-custom text-faint uppercase tracking-wider">Conversas anteriores</span>
+    </div>
+  )
+
+  const botaoNovo = (
+    <button
+      onClick={nova}
+      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-accent text-black font-mono-custom font-bold text-[11px] rounded-lg hover:bg-accent/90 transition-colors"
+    >
+      <MessageSquarePlus size={13} /> {rotuloNovo}
+    </button>
+  )
+
+  return (
+    <>
+      {/* Celular: a coluna fixa de 248px tomava a tela inteira. Aqui ela vira uma barra
+          e a lista abre numa gaveta. O pai precisa ser `flex-col md:flex-row`. */}
+      <div className="md:hidden flex items-center gap-2 px-3 py-2 border-b border-subtle bg-bg2/40 flex-shrink-0">
+        <div className="flex-1">{botaoNovo}</div>
+        <button
+          onClick={() => setGaveta(true)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-subtle2 text-[11px] font-mono-custom text-muted hover:text-strong transition-colors"
+        >
+          <History size={12} /> Anteriores{conversas.length > 0 ? ` (${conversas.length})` : ''}
         </button>
       </div>
 
-      <div className="px-3 pt-3 pb-1 flex items-center gap-1.5">
-        <History size={11} className="text-faint" />
-        <span className="text-[9px] font-mono-custom text-faint uppercase tracking-wider">Conversas anteriores</span>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-2 pb-3">
-        {conversas.length === 0 ? (
-          <p className="text-[11px] text-faint px-2 py-3 leading-snug">
-            {vazio ?? 'Suas conversas ficam salvas aqui e você pode voltar nelas depois.'}
-          </p>
-        ) : conversas.map((c) => (
-          <div
-            key={c.id}
-            onClick={() => onAbrir(c.id)}
-            className={clsx(
-              'group flex items-start gap-1.5 px-2 py-2 rounded-lg cursor-pointer transition-colors',
-              c.id === ativaId ? 'bg-accent/10 border border-accent/30' : 'hover:bg-bg3 border border-transparent',
-            )}
+      {gaveta && (
+        <div className="md:hidden fixed inset-0 z-[70] bg-black/50" onClick={() => setGaveta(false)}>
+          <aside
+            className="absolute inset-y-0 left-0 w-[85%] max-w-[320px] bg-bg2 border-r border-subtle flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex-1 min-w-0">
-              <div className={clsx('text-[12px] leading-snug line-clamp-2', c.id === ativaId ? 'text-strong font-medium' : 'text-muted')}>
-                {c.titulo}
-              </div>
-              <div className="text-[9px] font-mono-custom text-faint mt-0.5">
-                {quando(c.atualizado_em)}{tipo === 'copiloto' && c.n > 0 ? ` · ${c.n} msg` : ''}
-              </div>
+            <div className="p-3 border-b border-subtle flex items-center gap-2">
+              <div className="flex-1">{botaoNovo}</div>
+              <button onClick={() => setGaveta(false)} aria-label="Fechar" className="p-1.5 text-faint hover:text-strong">
+                <X size={16} />
+              </button>
             </div>
-            <button
-              onClick={(e) => apagar(c.id, e)}
-              disabled={apagando === c.id}
-              title="Apagar conversa"
-              className="opacity-0 group-hover:opacity-100 text-faint hover:text-brand-red transition-all flex-shrink-0 mt-0.5 disabled:opacity-40"
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
-        ))}
-      </div>
-    </aside>
+            {titulo}
+            {lista}
+          </aside>
+        </div>
+      )}
+
+      <aside className="hidden md:flex w-[248px] flex-shrink-0 border-r border-subtle bg-bg2/40 flex-col overflow-hidden">
+        <div className="p-3 border-b border-subtle">{botaoNovo}</div>
+        {titulo}
+        {lista}
+      </aside>
+    </>
   )
 }
