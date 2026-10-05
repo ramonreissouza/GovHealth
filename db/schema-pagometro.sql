@@ -49,15 +49,22 @@ CREATE TABLE IF NOT EXISTS pagometro (
 -- a coleta do PNCP no meio de uma transação longa o ALTER esperaria na fila e TRAVARIA
 -- atrás dele as consultas da tela. Então: só quando a coluna falta, e desistindo em 5 s
 -- (a carga falha e tenta de novo na próxima rodada, sem travar o app).
+-- O índice do filtro (idx_contratacoes_pagometro_dias) não mora aqui: é CONCURRENTLY,
+-- que não roda dentro deste arquivo (uma transação só). Quem cria é
+-- scripts/migrate-pagometro.mjs, que o deploy aplica.
 DO $$
 BEGIN
   IF to_regclass('contratacoes') IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-                      WHERE table_name = 'contratacoes' AND column_name = 'pagometro_fonte') THEN
+                      WHERE table_name = 'contratacoes' AND column_name = 'pagador_tipo') THEN
     SET LOCAL lock_timeout = '5s';
     ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagometro_dias    numeric;
     ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagometro_pagador text;
     ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagometro_fonte   text;   -- 'siconfi' | 'portal'
+    -- Quem paga (pagadorDe): 'municipio' | 'estado' | 'federal' | 'outro', em TODA linha,
+    -- com ou sem prazo medido. A CAPAG do score é a desse pagador: a esfera do PNCP vem
+    -- vazia em ~98% da base, e aí a decisão é pelo nome do órgão, que o SQL não repete.
+    ALTER TABLE contratacoes ADD COLUMN IF NOT EXISTS pagador_tipo      text;
   END IF;
 END $$;
 

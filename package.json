@@ -77,6 +77,7 @@
     "pagometro:ingest": "node scripts/ingest-pagometro.mjs",
     "pagometro:federal": "node scripts/ingest-pagometro-federal.mjs",
     "pagometro:contratacoes": "node scripts/pagometro-contratacoes.mjs",
+    "pagometro:migrate": "node scripts/migrate-pagometro.mjs",
     "pagometro:produto:e2e": "tsx scripts/pagometro-produto-e2e.teste.mts",
     "pagometro:teste": "tsx --test scripts/pagometro.teste.mjs",
     "feedback:migrate": "node scripts/migrate-feedback.mjs",

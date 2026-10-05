@@ -105,8 +105,19 @@ export class IndiceCapag {
     const mun = key ? this.municipios.get(`${UF}:${key}`) : undefined
     if (mun) return { fonte: 'capag', nota: mun, score: scoreDaNota(mun), label: `CAPAG ${mun}`, detalhe: `Município ${municipio}/${UF}` }
     const est = this.estados.get(UF)
-    if (est) return { fonte: 'capag', nota: est, score: scoreDaNota(est), label: `CAPAG ${est}`, detalhe: `Estado ${UF} (município sem classificação própria)` }
+    if (est) return { fonte: 'capag', nota: est, score: scoreDaNota(est), label: `CAPAG ${est}`, detalhe: key ? `Estado ${UF} (município sem classificação própria)` : `Estado ${UF}` }
     return capacidadeNeutra('sem CAPAG')
+  }
+
+  // A capacidade de QUEM PAGA a compra (tipo de pagadorDe, pagometro-calculo.mjs): a
+  // compra federal é paga pela União, que não tem CAPAG (neutro), e a estadual pelo
+  // estado — não pelo município onde a unidade fica (a CAPAG do Rio não mede o INCA).
+  // Municipal, 'outro' (consórcio, fundação) ou sem tipo: a localidade, como antes.
+  // Espelhada em SQL no capagSql de /api/opportunities.
+  resolvePorPagador(uf: string | null | undefined, municipio: string | null | undefined, tipo: string | null | undefined): CapacidadePagamento {
+    if (tipo === 'federal') return capacidadeNeutra('federal (União)')
+    if (tipo === 'estado') return this.resolvePublico(uf, null)
+    return this.resolvePublico(uf, municipio)
   }
 }
 

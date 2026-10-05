@@ -23,7 +23,7 @@ import { getCached, setCached, TTL } from '@/lib/server-cache'
 import { ultimaColetaResultados } from '@/lib/coleta-meta'
 import { carregarIndiceCapag, type IndiceCapag } from '@/lib/capacidade-pagamento'
 import { carregarIndicePagometro } from '@/lib/pagometro'
-import { scorePagometro } from '@/lib/pagometro-calculo.mjs'
+import { pagadorDaEsfera, pagadorDe, scorePagometro } from '@/lib/pagometro-calculo.mjs'
 import { normalizeText } from '@/lib/text'
 import { Oportunidade, Licitacao, TipoFornecimento } from '@/lib/types'
 
@@ -87,6 +87,9 @@ function montarOportunidade(input: {
   tipo?: TipoFornecimento
   /** contratacoes.pagometro_dias: o prazo que o SQL usa no score (aplicarCapacidade). */
   diasPagamento?: number | null
+  /** Quem paga, para a CAPAG (aplicarCapacidade). Do banco vem o que o SQL usa
+   *  (contratacoes.pagador_tipo, senão a esfera); sem ele, pagadorDe na hora. */
+  tipoPagador?: Oportunidade['tipoPagador']
   agora: string
 }): Oportunidade {
   const { objeto, uf, municipio, hospital, valor, aberto, agora } = input
@@ -114,6 +117,9 @@ function montarOportunidade(input: {
     acaoRecomendada: aberto ? 'Edital publicado — preparar proposta' : 'Monitorar — licitação prevista',
     licitacaoRelacionada: input.licitacao,
     diasPagamento: input.diasPagamento ?? null,
+    tipoPagador: input.tipoPagador !== undefined
+      ? input.tipoPagador
+      : pagadorDe(hospital, input.licitacao.orgaoEntidade.esferaId),
     createdAt: agora,
     updatedAt: agora,
   }
@@ -121,12 +127,13 @@ function montarOportunidade(input: {
 
 // Enriquece a oportunidade com a capacidade de pagamento (CAPAG) da instituição e
 // mistura como fator aditivo ponderado (15%) no score: score' = 0,85·base + 0,15·cap.
-// Sem dado (federal/União ou ente sem CAPAG) → neutro, não distorce o lead.
+// A CAPAG é a de quem paga (resolvePorPagador): compra federal → neutro, estadual → a
+// do estado. Sem dado (ente sem CAPAG) → neutro, não distorce o lead.
 // Com prazo de quem paga gravado (diasPagamento), a capacidade é a média da CAPAG com a
 // nota do prazo — o MESMO cálculo de scoreExprSql, para a ordem do banco bater com o
 // número da tela.
 function aplicarCapacidade(o: Oportunidade, idx: IndiceCapag): Oportunidade {
-  const cap = idx.resolvePublico(o.uf, o.municipio)
+  const cap = idx.resolvePorPagador(o.uf, o.municipio, o.tipoPagador)
   const notaPrazo = o.diasPagamento != null ? scorePagometro(o.diasPagamento) : null
   const capacidade = notaPrazo != null ? (cap.score + notaPrazo) / 2 : cap.score
   const score = Math.round(0.85 * o.score + 0.15 * capacidade)
@@ -158,8 +165,9 @@ interface ContratacaoRow {
   link_externo: string | null
   esfera: string | null
   codigo_unidade: string | null
-  /** Só quando a coluna existe (conferirColunaPagometro). */
+  /** Só quando as colunas existem (conferirColunaPagometro). */
   pagometro_dias?: number | null
+  pagador_tipo?: string | null
   usuario_nome: string | null
   aberto: boolean
 }
@@ -188,16 +196,28 @@ const semAcento = (expr: string) => `translate(lower(${expr}), '${SEM_ACENTO_DE}
 // a contratação tem prazo gravado (contratacoes.pagometro_dias, ver
 // scripts/lib/pagometro-contratacoes.mjs). Sem prazo, só a CAPAG, como antes. O peso
 // continua 15%. Espelho em JS: aplicarCapacidade.
-const capagSql = (ref: string) => `COALESCE(
+//
+// A CAPAG é a de QUEM PAGA (IndiceCapag.resolvePorPagador): federal → neutro (a União
+// não tem CAPAG), estadual → só a do estado, o resto → município, senão estado. Quem
+// paga vem gravado em contratacoes.pagador_tipo (pagadorDe, que olha o nome do órgão
+// quando a esfera do PNCP falta — ~98% da base); linha que a gravação ainda não viu cai
+// na parte da esfera (pagadorDaEsfera). O JS usa o mesmo par (buscarDoBanco).
+const tipoPagadorSql = (ref: string) => {
+  const daEsfera = `(CASE UPPER(TRIM(COALESCE(${ref}.esfera, ''))) WHEN 'F' THEN 'federal'
+                       WHEN 'E' THEN 'estado' WHEN 'D' THEN 'estado' WHEN 'M' THEN 'municipio' END)`
+  return temColunaPagometro ? `COALESCE(${ref}.pagador_tipo, ${daEsfera})` : daEsfera
+}
+const capagSql = (ref: string) => `(CASE WHEN ${tipoPagadorSql(ref)} = 'federal' THEN 60 ELSE COALESCE(
+      CASE WHEN ${tipoPagadorSql(ref)} = 'estado' THEN NULL ELSE
       (SELECT CASE cap_m.nota WHEN 'A' THEN 100 WHEN 'B' THEN 70 WHEN 'C' THEN 40 WHEN 'D' THEN 10 END
          FROM capag cap_m
         WHERE cap_m.ente_tipo = 'municipio' AND cap_m.uf = ${ref}.uf
           AND cap_m.municipio_key = UPPER(${semAcento(`${ref}.municipio`)})
-        LIMIT 1),
+        LIMIT 1) END,
       (SELECT CASE cap_e.nota WHEN 'A' THEN 100 WHEN 'B' THEN 70 WHEN 'C' THEN 40 WHEN 'D' THEN 10 END
          FROM capag cap_e WHERE cap_e.ente_tipo = 'estado' AND cap_e.uf = ${ref}.uf LIMIT 1),
       60
-    )`
+    ) END)`
 const scoreExprSql = (ref: string) => `ROUND(
   0.85 * (CASE WHEN ${abertoExpr(ref)} THEN 85 ELSE 70 END)
   + 0.15 * ${temColunaPagometro
@@ -207,16 +227,18 @@ const scoreExprSql = (ref: string) => `ROUND(
     : capagSql(ref)}
 )`
 
-// A coluna contratacoes.pagometro_dias só existe depois que a carga do Pagômetro aplicou
-// db/schema-pagometro.sql. O app pode subir antes: conferida no começo de cada pedido
-// (cacheada 10 min), e sem ela o score, a ordenação e o filtro ficam como eram.
+// As colunas pagometro_* e pagador_tipo de contratacoes só existem depois que
+// db/schema-pagometro.sql foi aplicado (migrate-pagometro.mjs ou uma carga). O app pode
+// subir antes: conferida no começo de cada pedido (cacheada 10 min), e sem elas o
+// score, a ordenação e o filtro ficam como eram. pagador_tipo é a última que o schema
+// acrescenta: com ela, todas existem.
 let temColunaPagometro = false
 let colunaConferidaEm = 0
 async function conferirColunaPagometro() {
   if (Date.now() - colunaConferidaEm < 10 * 60_000) return
   colunaConferidaEm = Date.now()
   try {
-    const r = await query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'contratacoes' AND column_name = 'pagometro_dias'`)
+    const r = await query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'contratacoes' AND column_name = 'pagador_tipo'`)
     temColunaPagometro = r.length > 0
   } catch { /* banco fora: mantém o último valor; a consulta principal trata o erro */ }
 }
@@ -505,7 +527,7 @@ async function buscarDoBanco(params: {
             valor_total_estimado::float8 AS valor_total_estimado,
             to_char(data_publicacao, 'YYYY-MM-DD') AS data_publicacao,
             situacao_id, categoria_saude, tipo_fornecimento, fonte, link_externo,
-            usuario_nome, esfera, codigo_unidade${temColunaPagometro ? ', pagometro_dias::float8 AS pagometro_dias' : ''}`
+            usuario_nome, esfera, codigo_unidade${temColunaPagometro ? ', pagometro_dias::float8 AS pagometro_dias, pagador_tipo' : ''}`
   const lim = Math.min(Math.max(Math.floor(params.limit ?? 4000), 1), 4000)
   const off = Math.max(0, Math.floor(params.offset ?? 0))
   // Sem coluna válida: mesmo default de sempre (score desc, data, e a PK no fim).
@@ -573,6 +595,9 @@ async function buscarDoBanco(params: {
       categoria: catBanco && CATEGORIAS_VALIDAS.has(catBanco) ? catBanco : undefined,
       tipo: isTipoFornecimento(r.tipo_fornecimento) ? r.tipo_fornecimento : undefined,
       diasPagamento: r.pagometro_dias ?? null,
+      // O mesmo par do tipoPagadorSql: o gravado, senão a esfera. Não pagadorDe pelo
+      // nome aqui: o SQL não o tem, e o número da tela divergiria da ordem do banco.
+      tipoPagador: (r.pagador_tipo as Oportunidade['tipoPagador']) ?? pagadorDaEsfera(r.esfera),
       agora: params.agora,
     })
   })

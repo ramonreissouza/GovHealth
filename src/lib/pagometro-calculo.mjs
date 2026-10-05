@@ -171,11 +171,22 @@ export function classificarPagador(orgao) {
  * @returns {'municipio' | 'estado' | 'federal' | 'outro'}
  */
 export function pagadorDe(orgao, esfera) {
+  return pagadorDaEsfera(esfera) ?? classificarPagador(orgao)
+}
+
+/**
+ * Só a parte da esfera de pagadorDe: null quando ela não decide (vazia ou 'N'). É o que
+ * o SQL consegue reproduzir sozinho (ver capagSql em /api/opportunities) para as
+ * contratações que a gravação ainda não classificou.
+ * @param {string | null | undefined} esfera
+ * @returns {'municipio' | 'estado' | 'federal' | null}
+ */
+export function pagadorDaEsfera(esfera) {
   const e = String(esfera ?? '').trim().toUpperCase()
   if (e === 'F') return 'federal'
   if (e === 'E' || e === 'D') return 'estado'
   if (e === 'M') return 'municipio'
-  return classificarPagador(orgao)
+  return null
 }
 
 // ── Uma decisão só: quem paga a compra e qual número mostrar ─────────────────────────
