@@ -5,6 +5,7 @@ import { runAlertasEmail } from '@/jobs/alertasEmail'
 import { runTrialReminders } from '@/jobs/trialReminders'
 import { runRadarNotify } from '@/jobs/radarNotify'
 import { runRadarResumo } from '@/jobs/radarResumo'
+import { comSpan } from '@/lib/rastreio'
 
 const TZ = 'America/Sao_Paulo'
 
@@ -40,7 +41,9 @@ async function main() {
       // Os jobs frequentes logam só quando há o que contar (o próprio job decide).
       if (!job.silencioso) console.log(`[pg-boss] iniciando ${job.name}`)
       try {
-        await job.run()
+        // Um span por rodada: as queries e os fetch do job ficam pendurados nele, e
+        // uma falha aparece no SigNoz (TS-540), não só neste log.
+        await comSpan(`job ${job.name}`, job.run, { 'job.nome': job.name })
       } catch (err) {
         // O pg-boss marca o job como falho sem imprimir nada. Sem esta linha, um job
         // silencioso que quebra toda rodada não deixa rastro no log do worker.

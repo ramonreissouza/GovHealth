@@ -36,6 +36,14 @@ image:
   tag: definir-no-install
   pullPolicy: IfNotPresent
 
+# Telemetria para o SigNoz do k3s (TS-540): traces e erros do app e do worker. O
+# SigNoz e a NetworkPolicy que deixa este namespace falar com ele vivem no
+# repositório `infra` (signoz/). Vazio desliga: o código só liga o SDK com
+# OTEL_EXPORTER_OTLP_ENDPOINT definido.
+otel:
+  endpoint: http://signoz-otel-collector.observability.svc.cluster.local:4318
+  ambiente: producao
+
 ingress:
   className: traefik
   host: govhealth.techealth.com.br

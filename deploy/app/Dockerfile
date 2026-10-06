@@ -94,7 +94,9 @@ COPY package.json tsconfig.json ./
 COPY src ./src
 
 USER nextjs
-CMD ["npx", "tsx", "src/worker/index.ts"]
+# O `--import` sobe o OpenTelemetry antes do código (src/worker/otel.mjs). Sem
+# OTEL_EXPORTER_OTLP_ENDPOINT no env, ele não faz nada.
+CMD ["npx", "tsx", "--import", "./src/worker/otel.mjs", "src/worker/index.ts"]
 
 # Coletor oficial, sem navegador. Habilitado pelo profile radar-comprasgov.
 FROM worker AS radar-comprasgov

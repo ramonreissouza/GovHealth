@@ -70,8 +70,10 @@ export async function middleware(req: NextRequest) {
   // ── NextAuth, cron e Stripe não passam pela auth de sessão do middleware ──────
   // NextAuth gerencia o próprio fluxo; o cron é protegido pelo CRON_SECRET; o
   // webhook do Stripe é validado pela assinatura HMAC na própria rota; o "Vi" do aviso
-  // do Radar, pelo token assinado do link (src/lib/radar/vi-token.ts).
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro') || pathname.startsWith('/api/senha') || pathname.startsWith('/api/equipe/aceitar') || pathname === '/api/radar/vi') {
+  // do Radar, pelo token assinado do link (src/lib/radar/vi-token.ts). O health e o
+  // erro do navegador são públicos de propósito (TS-540): o monitor externo não tem
+  // sessão, e a landing e o login também quebram.
+  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/cron/') || pathname.startsWith('/api/stripe/') || pathname.startsWith('/api/assinaturas') || pathname.startsWith('/api/cadastro') || pathname.startsWith('/api/senha') || pathname.startsWith('/api/equipe/aceitar') || pathname === '/api/radar/vi' || pathname === '/api/health' || pathname === '/api/erro-cliente') {
     return NextResponse.next()
   }
 

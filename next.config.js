@@ -71,7 +71,18 @@ const nextConfig = {
   // `node_modules` inteiro — aqui isso é a diferença entre ~1,4 GB e ~250 MB, e a
   // Vercel ignora a opção, então não muda nada no deploy atual.
   output: 'standalone',
-  serverExternalPackages: ['maplibre-gl'],
+  // Os pacotes do OpenTelemetry (src/lib/otel.mjs) ficam fora do bundle: eles
+  // instrumentam o `pg` interceptando o `require` do Node, e precisam ser o mesmo
+  // módulo que o Node carrega, não uma cópia empacotada.
+  serverExternalPackages: [
+    'maplibre-gl',
+    '@opentelemetry/sdk-trace-node',
+    '@opentelemetry/exporter-trace-otlp-http',
+    '@opentelemetry/instrumentation',
+    '@opentelemetry/instrumentation-pg',
+    '@opentelemetry/instrumentation-undici',
+    '@opentelemetry/resources',
+  ],
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'api.portaldatransparencia.gov.br' },
