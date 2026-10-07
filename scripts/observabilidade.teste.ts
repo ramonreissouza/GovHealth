@@ -169,7 +169,11 @@ test('consulta travada: erro no teto, o cliente é destruído e a conexão fecha
 
 // ── exportador, de ponta a ponta ─────────────────────────────────────────────
 
-test('nada depois de ? (nem e-mail) sai do processo, em span automático ou manual', async () => {
+/**
+ * Roda o filho com o bootstrap real do worker apontando para um coletor OTLP falso
+ * e devolve tudo o que chegou a ele, cru.
+ */
+async function exportadoPeloFilho(env: Record<string, string> = {}): Promise<string> {
   const corpos: string[] = []
   const coletor = http.createServer((req, res) => {
     let corpo = ''
@@ -177,21 +181,56 @@ test('nada depois de ? (nem e-mail) sai do processo, em span automático ou manu
     req.on('end', () => { corpos.push(corpo); res.setHeader('content-type', 'application/json'); res.end('{}') })
   })
   await ouvir(coletor)
+  try {
+    const filho = spawn(process.execPath, ['--import', './src/worker/otel.mjs', 'scripts/observabilidade.filho.teste.mjs'], {
+      env: { ...process.env, ...env, OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${porta(coletor)}`, OTEL_SERVICE_NAME: 'teste' },
+      stdio: ['ignore', 'inherit', 'inherit'],
+    })
+    assert.equal(await new Promise((fim) => filho.on('exit', fim)), 0)
+  } finally {
+    coletor.close()
+  }
+  return corpos.join('\n')
+}
 
-  const filho = spawn(process.execPath, ['--import', './src/worker/otel.mjs', 'scripts/observabilidade.filho.teste.mjs'], {
-    env: { ...process.env, OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${porta(coletor)}`, OTEL_SERVICE_NAME: 'teste' },
-    stdio: ['ignore', 'inherit', 'inherit'],
+/** Postgres falso que aceita o login e responde toda query com erro, na hora. */
+async function bancoQueRecusa() {
+  const campo = (tipo: string, valor: string) => Buffer.concat([Buffer.from(tipo), Buffer.from(valor), Buffer.from([0])])
+  const corpoErro = Buffer.concat([campo('S', 'ERROR'), campo('C', 'XX000'), campo('M', 'banco falso'), Buffer.from([0])])
+  const erro = Buffer.alloc(5); erro.write('E'); erro.writeInt32BE(4 + corpoErro.length, 1)
+  const pronto = Buffer.from([0x5a, 0, 0, 0, 5, 0x49])
+  const servidor = net.createServer((s) => {
+    let logado = false
+    s.on('data', (msg) => {
+      if (!logado) { logado = true; s.write(Buffer.concat([Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0]), pronto])); return }
+      if (msg[0] === 0x58) { s.end(); return } // Terminate, do pool.end()
+      s.write(Buffer.concat([erro, corpoErro, pronto]))
+    })
   })
-  const codigo = await new Promise((fim) => filho.on('exit', fim))
-  coletor.close()
-  assert.equal(codigo, 0)
+  await ouvir(servidor)
+  return servidor
+}
 
-  const tudo = corpos.join('\n')
+test('nada depois de ? (nem e-mail) sai do processo, em span automático ou manual', async () => {
+  const tudo = await exportadoPeloFilho()
   // Sem isto o teste passaria com o exportador desligado.
   assert.ok(tudo.includes('/busca'), 'o span do fetch não chegou')
   assert.ok(tudo.includes('/oportunidades'), 'o span manual não chegou')
   assert.ok(tudo.includes('[email]'), 'a exceção não chegou')
   for (const vazado of ['segredo', '12345678000190', 'fulano@exemplo.com', 'url.query']) {
     assert.ok(!tudo.includes(vazado), `"${vazado}" saiu para o coletor`)
+  }
+})
+
+test('query solta (polling do pg-boss) não vira span; a do job vira; pool.connect nunca', async () => {
+  const banco = await bancoQueRecusa()
+  try {
+    const tudo = await exportadoPeloFilho({ PG_FALSO_URL: `postgres://u:p@127.0.0.1:${porta(banco)}/x` })
+    assert.ok(tudo.includes('job teste'), 'o span do job não chegou')
+    assert.ok(tudo.includes('dentro-do-job'), 'a query dentro do job não virou span')
+    assert.ok(!tudo.includes('fora-de-span'), 'a query solta virou span')
+    assert.ok(!tudo.includes('pg-pool.connect') && !tudo.includes('"pg.connect"'), 'o connect virou span')
+  } finally {
+    banco.close()
   }
 })
