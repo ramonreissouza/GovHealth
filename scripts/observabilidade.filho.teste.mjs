@@ -3,8 +3,12 @@
 // e gera spans cheios de dado sensível: um fetch com query string (instrumentação
 // automática) e um span com os atributos que o Next usa. O teste confere, no
 // coletor falso, que nada disso saiu do processo.
+//
+// Com PG_FALSO_URL, faz também duas queries num Postgres falso: uma solta, como o
+// polling do pg-boss, e uma dentro de um span de job. Só a segunda pode virar span.
 import http from 'node:http'
 import { trace } from '@opentelemetry/api'
+import pg from 'pg'
 import { encerrarOtel } from '../src/lib/otel.mjs'
 
 const alvo = http.createServer((_, res) => res.end('ok'))
@@ -24,6 +28,17 @@ trace.getTracer('teste').startActiveSpan('GET /oportunidades?q=segredo-nome', {
   span.recordException(new Error('falhou para fulano@exemplo.com em /conta?token=segredo-excecao'))
   span.end()
 })
+
+if (process.env.PG_FALSO_URL) {
+  const pool = new pg.Pool({ connectionString: process.env.PG_FALSO_URL, ssl: false })
+  pool.on('error', () => {})
+  await pool.query('select 1 /* fora-de-span */').catch(() => {})
+  await trace.getTracer('teste').startActiveSpan('job teste', async (span) => {
+    await pool.query('select 2 /* dentro-do-job */').catch(() => {})
+    span.end()
+  })
+  await pool.end()
+}
 
 await encerrarOtel()
 alvo.close()

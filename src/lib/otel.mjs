@@ -74,7 +74,13 @@ export function iniciarOtel({ fetchDeSaida = false } = {}) {
     instrumentations: [
       // Sem o texto dos parâmetros: o `pg` registra só a query com `$1`, `$2`.
       // Os valores (e-mail, CNPJ, hash de senha) nunca saem do processo.
-      new PgInstrumentation(),
+      //
+      // Só a query que roda dentro de um span (requisição do Next, `job <nome>`
+      // do worker), e sem o span de cada `pool.connect`. Sem isso, o polling do
+      // pg-boss, que consulta a fila a cada poucos segundos, era 99% dos spans do
+      // worker: ~30 mil por hora, contra 15 dos jobs. Falha de conexão continua
+      // aparecendo no erro da query e no `health: banco fora`.
+      new PgInstrumentation({ requireParentSpan: true, ignoreConnectSpans: true }),
       ...(fetchDeSaida ? [new UndiciInstrumentation()] : []),
     ],
   })
