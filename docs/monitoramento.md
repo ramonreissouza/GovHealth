@@ -86,20 +86,39 @@ Consumo de CPU, memória e restarts dos pods já vinha antes desta mudança, pel
 `k8s-infra` do SigNoz: **Infrastructure Monitoring → Kubernetes**, filtrando
 `k8s.namespace.name = govhealth`.
 
-## Alertas a criar no SigNoz
+## Alertas e dashboard no SigNoz
 
-Alertas moram no banco do SigNoz, não em arquivo, então são criados na UI
-(**Alerts → New alert**). O canal é o e-mail que o SigNoz já usa, pela Resend.
+Criados em 07/10/2026. Moram no banco do SigNoz, não em arquivo: mudar é na UI
+(ou pela API, com uma conta de serviço de papel Editor).
 
-| Alerta | Consulta | Dispara quando |
-|---|---|---|
-| Erro no servidor | traces, `service.name = govhealth-app`, `name = erro no servidor`, count | > 5 em 15 min |
-| Taxa de erro do app | traces, `service.name = govhealth-app`, `has_error = true` / total | > 5 % em 10 min |
-| Job do worker falhou | traces, `service.name = govhealth-worker`, `name like job %`, `has_error = true`, count | > 0 em 1 h |
-| Pod reiniciando | métrica `k8s.container.restarts`, `k8s.namespace.name = govhealth`, aumento | > 2 em 30 min |
+**Dashboard:** "Plataforma - GovHealth" (tag `govhealth`), em **Dashboards**.
+Mostra requisições por minuto, latência p50/p95/p99, erros registrados,
+respostas 4xx/5xx, rodadas e falhas dos jobs, rotas e queries mais lentas
+(p95), e memória e CPU por pod.
+
+**Alertas** (**Alerts**, todos com nome `GovHealth: …`), para o canal
+`email-alysson`:
+
+| Alerta | Consulta | Dispara quando | Severidade |
+|---|---|---|---|
+| erros no servidor | traces, `service.name = 'govhealth-app' AND name = 'erro no servidor'`, count | ≥ 5 em 15 min | critical |
+| respostas 5xx | traces, `service.name = 'govhealth-app' AND http.status_code >= 500`, count | ≥ 10 em 10 min | critical |
+| job do worker falhou | traces, `service.name = 'govhealth-worker' AND name LIKE 'job %' AND has_error = true`, count por job | ≥ 1 em 1 h | warning |
+| pod reiniciando | métrica `k8s.container.restarts`, `k8s.namespace.name = 'govhealth'`, aumento por pod | > 2 em 30 min | warning |
+
+As respostas 5xx são **contagem, não taxa**. Com o tráfego de hoje, algumas
+centenas de requisições por hora, uma taxa de 5% dispararia de madrugada com 1
+erro em 2 requisições.
+
+O canal é o e-mail de uma pessoa. Quando houver uma caixa da equipe, crie o canal
+em **Settings → Notification Channels** e troque nos quatro alertas.
 
 Os limiares são um ponto de partida. Ajuste depois de uma ou duas semanas vendo
 o ruído real.
+
+O botão de testar alerta (e o `POST /api/v1/testRule`) manda e-mail para **toda
+série existente**, ignorando o limiar. É de propósito: serve para testar o canal.
+Num alerta por pod, isso é um e-mail por pod.
 
 ## Conferir depois do deploy
 
