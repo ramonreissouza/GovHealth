@@ -12,7 +12,10 @@ mesmo k3s do GovHealth: se a VPS cair, ele cai junto e ninguém é avisado.
 
 ## `/api/health`
 
-Faz `select 1` no Postgres, com teto de 3 s:
+Faz `select 1` no Postgres por um pool só dele, de uma conexão, com teto de 1,5 s
+em cada etapa (esperar vaga e conectar; a consulta). Com o banco travado, a
+resposta é um 503 em ~1,5 s, e nenhuma consulta fica presa: pedidos repetidos
+nunca ocupam as conexões do app. Ver `pingBanco` em `src/lib/db.ts`.
 
 - `200 {"status":"ok","banco":"ok","ms":12}`: o app está de pé e o banco responde.
 - `503 {"status":"erro","banco":"fora"}`: o app está de pé, mas o banco não responde.
@@ -49,11 +52,31 @@ O `digest` que a tela de erro mostra ao usuário (`código 2262999834`) é o atr
 `erro.digest` no SigNoz. Com o código que o cliente mandou pelo "Reporte um
 problema", filtre por ele em **Exceptions** para achar o erro do servidor.
 
-O que **não** vai, por decisão:
+### Redação
+
+Todo span passa por `src/lib/redigir.mjs` antes de sair do processo, inclusive os
+nativos do Next e os do fetch, que trazem a URL completa. Some do nome, dos
+atributos e das exceções:
+
+- query string e fragmento de qualquer URL ou caminho (`url.query` sai inteiro);
+- e-mail, CPF, celular, `Bearer`, JWT, `token=`/`senha=`… e chaves longas.
+
+É uma rede, não uma licença: o código continua sem pôr dado pessoal em span.
+`npm run observabilidade:teste` sobe um coletor falso e falha se algo depois de
+`?` (ou um e-mail) chegar até ele.
+
+O `/api/erro-cliente` é público, então vai menos ainda:
+
+- **Sem sessão:** só a mensagem normalizada (números viram `#`, texto entre aspas
+  vira `…`), sem stack. Ninguém de fora consegue gravar texto livre no SigNoz.
+- **Com sessão:** mensagem e stack, redigidas.
+- **Nos dois casos:** `erro.fingerprint`, que agrupa o mesmo erro com números
+  diferentes, e `erro.sessao`.
+
+### O que não vai, por decisão
 
 - **Parâmetros das queries.** O `pg` registra a query com `$1`, `$2`, sem os
-  valores. Também nunca vai a query string das URLs, que pode trazer o que o
-  usuário digitou.
+  valores.
 - **Logs (`console.*`).** Só traces e erros. Os logs seguem no `kubectl logs`.
 - **As minerações.** As CronJobs ainda não carregam o SDK.
 - **Stack legível do navegador.** Ela chega minificada, porque os source maps de

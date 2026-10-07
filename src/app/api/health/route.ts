@@ -6,28 +6,24 @@
 // Postgres respondeu. Pública e sem sessão (liberada no middleware), por isso não
 // devolve nada além de ok/fora: nem versão, nem mensagem de erro.
 //
+// O `select 1` usa um pool só dele, de uma conexão, com teto de 1,5 s em cada etapa
+// (`pingBanco`, em src/lib/db.ts). Com o banco travado, a resposta é um 503 em no
+// máximo ~3 s, e nenhuma consulta fica presa ocupando conexão do app.
+//
 // Não serve de probe do k8s. Com o banco fora, tirar o app do Service troca a tela
 // de erro por um 502 do Traefik e não conserta nada.
 
 import { NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { pingBanco } from '@/lib/db'
 import { registrarErro } from '@/lib/rastreio'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// Menor que o timeout dos monitores (30 s no UptimeRobot), para a resposta ser um 503
-// legível e não um timeout sem corpo.
-const TETO_MS = 3000
-
 export async function GET() {
   const inicio = Date.now()
-  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    await Promise.race([
-      query('select 1'),
-      new Promise((_, rejeita) => { timer = setTimeout(() => rejeita(new Error(`banco sem resposta em ${TETO_MS} ms`)), TETO_MS) }),
-    ])
+    await pingBanco()
     return NextResponse.json(
       { status: 'ok', banco: 'ok', ms: Date.now() - inicio },
       { headers: { 'Cache-Control': 'no-store' } },
@@ -38,7 +34,5 @@ export async function GET() {
       { status: 'erro', banco: 'fora' },
       { status: 503, headers: { 'Cache-Control': 'no-store' } },
     )
-  } finally {
-    clearTimeout(timer)
   }
 }
