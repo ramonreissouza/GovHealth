@@ -13,3 +13,14 @@
     requests: { cpu: 10m, memory: 32Mi }
     limits: { cpu: 200m, memory: 64Mi }
 {{- end -}}
+
+{{/* Env do OpenTelemetry (TS-540). Recebe o nome do serviço no SigNoz. A versão é
+     o SHA da imagem, para separar o antes e o depois de cada deploy. */}}
+{{- define "govhealth.otelEnv" -}}
+{{- $ctx := index . 0 -}}
+{{- if $ctx.Values.otel.endpoint -}}
+- { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ $ctx.Values.otel.endpoint | quote }} }
+- { name: OTEL_SERVICE_NAME, value: {{ index . 1 | quote }} }
+- { name: OTEL_RESOURCE_ATTRIBUTES, value: {{ printf "service.version=%s,deployment.environment=%s" $ctx.Values.image.tag $ctx.Values.otel.ambiente | quote }} }
+{{- end -}}
+{{- end -}}

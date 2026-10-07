@@ -29,6 +29,7 @@ spec:
             {{/* Fuso de São Paulo, como no compose: os crons do pg-boss
                  (sync-pncp às 3h, alertas às 11h) são horário local. */}}
             - { name: TZ, value: America/Sao_Paulo }
+{{- include "govhealth.otelEnv" (list . "govhealth-worker") | nindent 12 }}
           {{/* Sem probe HTTP: o worker não abre porta nenhuma. Se o processo
                morrer, o container sai e o kubelet reinicia. */}}
           resources: {{ toYaml .Values.worker.resources | nindent 12 }}

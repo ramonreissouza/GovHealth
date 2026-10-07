@@ -8,6 +8,7 @@ import NotificationsWatcher from '@/components/NotificationsWatcher'
 import PushReconcilia from '@/components/PushReconcilia'
 import PageViewTracker from '@/components/PageViewTracker'
 import FeedbackWidget from '@/components/feedback/FeedbackWidget'
+import ErrosDoNavegador from '@/components/ErrosDoNavegador'
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -55,6 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <NotificationsWatcher />
           <PushReconcilia />
           <PageViewTracker />
+          <ErrosDoNavegador />
           {children}
           <FeedbackWidget />
         </SessionProvider>

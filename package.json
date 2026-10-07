@@ -40,6 +40,7 @@
     "push:teste": "tsx --test scripts/push.teste.ts",
     "pecas:teste": "tsx --test scripts/pecas-juridicas.teste.ts",
     "crm:teste": "tsx --test scripts/crm-checklist.teste.ts",
+    "observabilidade:teste": "tsx --test scripts/observabilidade.teste.ts",
     "radar:link-idx:migrate": "node scripts/radar/migrate-link-externo-idx.mjs",
     "radar:ciclo:teste": "node --test scripts/radar/ciclo-cobertura.teste.mjs",
     "trgm:migrate": "node scripts/migrate-trgm.mjs",
@@ -129,6 +130,13 @@
     "radar:prova": "node scripts/radar/prova-live.mjs"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
+    "@opentelemetry/instrumentation": "^0.223.0",
+    "@opentelemetry/instrumentation-pg": "^0.74.0",
+    "@opentelemetry/instrumentation-undici": "^0.32.0",
+    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
     "@stripe/react-stripe-js": "^6.7.0",
     "@stripe/stripe-js": "^9.9.0",
     "@tanstack/react-query": "^5.101.4",
