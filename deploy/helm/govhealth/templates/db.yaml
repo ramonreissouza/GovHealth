@@ -52,12 +52,18 @@ spec:
           {{/* Cada `pg_isready` é um processo novo no container. A cada 5s
                (readiness) e 10s (liveness), nos três Postgres da VPS, ele
                aparecia com 150% de CPU no painel da Hostinger quando ela
-               limitou a VPS pelos picos (infra docs/18). Um banco de uma
-               réplica só não precisa disso: 30s e 60s. */}}
+               limitou a VPS pelos picos (infra docs/18).
+
+               A readiness passou a ser TCP na 5432: quem testa é o kubelet,
+               sem processo nenhum no container, então a cada 5s não custa
+               nada, e depois de um restart o banco volta ao Service em até 5s.
+               A porta abre uns segundos antes de o Postgres aceitar consulta;
+               com uma réplica só não há outro para onde mandar a conexão, e
+               ela falharia do mesmo jeito. */}}
           readinessProbe:
-            exec: { command: [pg_isready, -h, 127.0.0.1, -U, govhealth, -d, govhealth] }
+            tcpSocket: { port: 5432 }
             initialDelaySeconds: 5
-            periodSeconds: 30
+            periodSeconds: 5
           {{/* Liveness muito mais tolerante que readiness: um Postgres ocupado
                demais para responder deve sair do balanceamento, não ser morto
                no meio de uma escrita. 5 x 60s = 5 minutos, o mesmo prazo de
