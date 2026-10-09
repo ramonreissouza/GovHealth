@@ -49,17 +49,23 @@ spec:
                  mount. Com o caminho antigo o container sobe, escreve no lugar
                  errado e o dado some no próximo restart. */}}
             - { name: data, mountPath: /var/lib/postgresql }
+          {{/* Cada `pg_isready` é um processo novo no container. A cada 5s
+               (readiness) e 10s (liveness), nos três Postgres da VPS, ele
+               aparecia com 150% de CPU no painel da Hostinger quando ela
+               limitou a VPS pelos picos (infra docs/18). Um banco de uma
+               réplica só não precisa disso: 30s e 60s. */}}
           readinessProbe:
             exec: { command: [pg_isready, -h, 127.0.0.1, -U, govhealth, -d, govhealth] }
             initialDelaySeconds: 5
-            periodSeconds: 5
+            periodSeconds: 30
           {{/* Liveness muito mais tolerante que readiness: um Postgres ocupado
                demais para responder deve sair do balanceamento, não ser morto
-               no meio de uma escrita. 30 x 10s = 5 minutos. */}}
+               no meio de uma escrita. 5 x 60s = 5 minutos, o mesmo prazo de
+               antes. */}}
           livenessProbe:
             exec: { command: [pg_isready, -h, 127.0.0.1, -U, govhealth, -d, govhealth] }
             initialDelaySeconds: 30
-            periodSeconds: 10
-            failureThreshold: 30
+            periodSeconds: 60
+            failureThreshold: 5
           resources: {{ toYaml .Values.db.resources | nindent 12 }}
       terminationGracePeriodSeconds: 120
