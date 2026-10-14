@@ -89,7 +89,7 @@ mineracao:
   # Desligado até: 1) o banco ter sido restaurado e conferido; 2) as tarefas
   # "GovHealth *" do Windows estarem desativadas. As duas pontas juntas disputam o
   # PNCP (cada máquina só enxerga a própria trava da pista).
-  enabled: false
+  enabled: true
   # Alvo `mineracao` do deploy/app/Dockerfile, importado no containerd como as
   # outras duas. Usa a mesma `image.tag`.
   image: govhealth.local/mineracao
