@@ -5,7 +5,7 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { verificarLogin, buscarUsuario, sessaoRevogada } from '@/lib/users'
 import { cookies } from 'next/headers'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
-import { COOKIE_DISPOSITIVO, dispositivoConfiavel, emitirDispositivo, opcoesCookieDispositivo } from '@/lib/dispositivo-confiavel'
+import { nomeCookieDispositivo, dispositivoConfiavel, emitirDispositivo, opcoesCookieDispositivo } from '@/lib/dispositivo-confiavel'
 import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao, loginContaLiberado } from '@/lib/seguranca'
 
 export const authOptions: NextAuthOptions = {
@@ -44,12 +44,12 @@ export const authOptions: NextAuthOptions = {
         // o navegador — o cookie sai na resposta desta própria rota do NextAuth.
         if (FLAG_2FA && !isMaster) {
           const jar = await cookies()
-          if (!dispositivoConfiavel(jar.get(COOKIE_DISPOSITIVO)?.value, user.id, user.senha_alterada_em)) {
+          if (!dispositivoConfiavel(jar.get(nomeCookieDispositivo())?.value, user.id, user.senha_alterada_em)) {
             const otp = credentials?.otp?.trim()
             if (!otp) return null
             if (!(await verificarOtp(user.id, otp))) throw new Error('OTP_INVALIDO')
             const d = emitirDispositivo(user.id, user.senha_alterada_em)
-            jar.set(COOKIE_DISPOSITIVO, d.valor, opcoesCookieDispositivo(d.maxAge))
+            jar.set(nomeCookieDispositivo(), d.valor, opcoesCookieDispositivo(d.maxAge))
           }
         }
         // Registra a sessão desta máquina (para o controle de sessão única).

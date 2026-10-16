@@ -57,7 +57,8 @@ export type ResultadoOtp =
 
 /**
  * Gera, armazena (hash) e envia o OTP.
- *  - Reenvio antes de OTP_REENVIO_SEG não gera código novo ('aguarde').
+ *  - Reenvio antes de OTP_REENVIO_SEG não gera código novo ('aguarde') — só enquanto o
+ *    código anterior ainda vale; consumido ou vencido, o novo sai na hora.
  *  - As tentativas erradas NÃO zeram no reenvio enquanto o código anterior vale (antes,
  *    cada reenvio dava mais 5 chutes) — e, com o teto já atingido, o reenvio é RECUSADO
  *    ('bloqueado'): mandar código novo com o contador em 5 entregava um código que o
@@ -82,7 +83,11 @@ export async function enviarOtp(user: { id: string; email: string; nome: string 
             otp_tentativas = CASE WHEN ant.otp_expira > now() THEN COALESCE(ant.otp_tentativas,0) ELSE 0 END
        FROM ant
       WHERE u.id=$1
-        AND (ant.otp_enviado_em IS NULL OR ant.otp_enviado_em < now() - make_interval(secs => $4))
+        -- O intervalo só vale enquanto há um código válido esperando. Consumido (hash
+        -- limpo) ou vencido, envia já: senão o login em outro navegador logo depois de um
+        -- código usado caía em 'aguarde' sem nenhum código que pudesse funcionar (revisão da #68).
+        AND (ant.otp_hash IS NULL OR ant.otp_expira IS NULL OR ant.otp_expira <= now()
+             OR ant.otp_enviado_em IS NULL OR ant.otp_enviado_em < now() - make_interval(secs => $4))
         AND NOT (ant.otp_expira > now() AND COALESCE(ant.otp_tentativas,0) >= $5)
       RETURNING ant.otp_hash AS hash, ant.otp_expira AS expira, ant.otp_tentativas AS tentativas,
                 ant.otp_enviado_em AS enviado_em`,

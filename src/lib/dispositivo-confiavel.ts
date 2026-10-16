@@ -12,7 +12,19 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export const DISPOSITIVO_DIAS = 7
-export const COOKIE_DISPOSITIVO = 'gh-dispositivo-2fa'
+
+// Fail-safe: produção é decidida pelo NODE_ENV, não pelo NEXTAUTH_URL. Este cookie vale o
+// segundo fator por uma semana; com NEXTAUTH_URL ausente ou errado ele saía sem Secure e
+// podia trafegar em HTTP (revisão da #68). Fora de produção (next dev em http) não há TLS.
+const emProducao = () => process.env.NODE_ENV === 'production'
+
+/**
+ * Nome do cookie. Em produção, `__Host-`: o próprio navegador recusa o cookie sem Secure,
+ * com Domain ou fora de Path=/ — nem um subdomínio consegue plantar um.
+ */
+export function nomeCookieDispositivo(): string {
+  return emProducao() ? '__Host-gh-dispositivo-2fa' : 'gh-dispositivo-2fa'
+}
 
 interface Carga { u: string; exp: number; s: number }
 
@@ -54,8 +66,7 @@ export function dispositivoConfiavel(
   }
 }
 
-/** Opções do cookie. `secure` só fora de localhost (o teste local roda em http). */
+/** Opções do cookie. `secure` SEMPRE em produção; só o next dev local (http) fica sem. */
 export function opcoesCookieDispositivo(maxAge: number) {
-  const https = (process.env.NEXTAUTH_URL ?? '').startsWith('https://')
-  return { httpOnly: true, sameSite: 'lax' as const, secure: https, path: '/', maxAge }
+  return { httpOnly: true, sameSite: 'lax' as const, secure: emProducao(), path: '/', maxAge }
 }

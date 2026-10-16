@@ -143,7 +143,7 @@ export async function anonimizarUsuario(id: string): Promise<void> {
        email = 'anon+' || left(md5(id), 16) || '@anonimizado.local',
        nome = NULL, empresa = NULL, telefone = NULL, instituicao = NULL,
        endereco = NULL, cpf = NULL, cnpj = NULL,
-       senha_hash = '', suspenso = true, deleted_at = COALESCE(deleted_at, now()),
+       senha_hash = '', senha_alterada_em = now(), suspenso = true, deleted_at = COALESCE(deleted_at, now()),
        anonimizado_em = now(), atualizado_em = now()
      WHERE id = $1`,
     [alvo],

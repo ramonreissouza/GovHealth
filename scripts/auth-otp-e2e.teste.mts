@@ -2,20 +2,23 @@
 // consumo atômico do código, teto de tentativas sob concorrência, reenvio bloqueado depois
 // de 5 erros e falha do provedor de e-mail sem perder o código anterior (revisão da #68).
 //
-//   docker run -d --rm --name e2e -e POSTGRES_PASSWORD=teste -e POSTGRES_DB=e2e -p 55494:5432 postgres:18-alpine
-//   E2E_DATABASE_URL=postgres://postgres:teste@localhost:55494/e2e npm run auth:otp:e2e
+//   docker run -d --rm --name e2e -e POSTGRES_PASSWORD=teste -e POSTGRES_DB=auth_e2e -p 55494:5432 postgres:18-alpine
+//   ALLOW_DESTRUCTIVE_E2E=apagar-banco-descartavel \
+//   E2E_DATABASE_URL=postgres://postgres:teste@localhost:55494/auth_e2e npm run auth:otp:e2e
 //
-// O banco é APAGADO no começo. Só aceita host local. Nenhum e-mail sai da máquina.
+// O banco é APAGADO no começo. A guarda (scripts/lib/e2e-guarda.mjs) exige host local, nome
+// do banco terminado em _e2e (lido do servidor) e a confirmação acima — um port-forward para
+// a produção também é localhost. Nenhum e-mail sai da máquina.
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import pg from 'pg'
+import { conferirHostE2E, exigirBancoDescartavel } from './lib/e2e-guarda.mjs'
 
 const URL_E2E = process.env.E2E_DATABASE_URL
 if (!URL_E2E) { console.log('E2E_DATABASE_URL ausente — teste pulado (precisa de um Postgres descartável).'); process.exit(0) }
-const host = new URL(URL_E2E).hostname
-if (!['localhost', '127.0.0.1'].includes(host)) { console.error(`recuso apagar o banco em ${host}: só localhost`); process.exit(1) }
+try { conferirHostE2E(URL_E2E) } catch (e) { console.error((e as Error).message); process.exit(1) }
 
 // Antes de qualquer import do app: o db.ts e o SDK do Resend leem o ambiente na hora do uso.
 process.env.DATABASE_URL = URL_E2E
@@ -40,6 +43,7 @@ globalThis.fetch = (async (url: string | URL | Request, init: RequestInit = {}) 
 // o deploy repete migrations e a segunda não pode falhar).
 const admin = new pg.Client({ connectionString: URL_E2E })
 await admin.connect()
+try { await exigirBancoDescartavel(admin) } catch (e) { console.error((e as Error).message); await admin.end(); process.exit(1) }
 await admin.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
 for (const arq of ['schema-admin.sql', 'schema-equipe.sql']) {
   await admin.query(fs.readFileSync(path.join('db', arq), 'utf8'))
@@ -106,6 +110,15 @@ const simult = await Promise.all([enviarOtp(USER), enviarOtp(USER), enviarOtp(US
 assert.equal(simult.filter((r) => r.status === 'enviado').length, 1)
 assert.equal(simult.filter((r) => r.status === 'aguarde').length, 2)
 console.log('ok 4 — reenvio cedo: aguarde; 3 simultâneos: 1 envia')
+
+// ── 4b. Código usado no navegador A → login no B logo em seguida: código novo na hora ──
+await zerar()
+assert.equal((await enviarOtp(USER)).status, 'enviado')
+assert.equal(await verificarOtp(USER.id, ultimo()), true) // consumido em A
+const noB = await enviarOtp(USER) // B pede dentro dos 60 s
+assert.equal(noB.status, 'enviado', 'sem código válido esperando, o intervalo não pode segurar o envio')
+assert.equal(await verificarOtp(USER.id, ultimo()), true, 'o código novo do B entra')
+console.log('ok 4b — código consumido em A: B recebe código novo sem esperar o intervalo')
 
 // ── 5. Provedor falha: o código anterior segue válido e dá para tentar de novo na hora ─
 await zerar()
