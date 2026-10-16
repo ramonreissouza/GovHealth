@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verificarLogin } from '@/lib/users'
 import { FLAG_2FA, FLAG_SESSAO_UNICA, sessaoAtiva, enviarOtp, loginContaLiberado } from '@/lib/seguranca'
+import { COOKIE_DISPOSITIVO, dispositivoConfiavel } from '@/lib/dispositivo-confiavel'
 
 export const runtime = 'nodejs'
 
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ erro: 'sessao_ativa' }, { status: 409 })
   }
   if (FLAG_2FA && !isMaster) {
+    // Navegador já confirmado com código nos últimos DISPOSITIVO_DIAS: entra sem código.
+    if (dispositivoConfiavel(req.cookies.get(COOKIE_DISPOSITIVO)?.value, user.id, user.senha_alterada_em)) {
+      return NextResponse.json({ precisaOtp: false })
+    }
     const r = await enviarOtp({ id: user.id, email: user.email, nome: user.nome })
     return NextResponse.json({ precisaOtp: true, enviado: r.enviado, aguardeSeg: r.aguardeSeg ?? null })
   }

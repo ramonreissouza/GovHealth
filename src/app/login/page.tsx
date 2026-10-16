@@ -83,6 +83,7 @@ function Auth() {
 /* ───────────────────────── Login (2 etapas: senha → código) ───────────────────────── */
 
 const REENVIO_SEG = 60 // o mesmo intervalo de OTP_REENVIO_SEG em src/lib/seguranca.ts
+const DISPOSITIVO_DIAS_UI = 7 // o mesmo de DISPOSITIVO_DIAS em src/lib/dispositivo-confiavel.ts (server-only)
 
 // ?motivo= de quem foi mandado de volta ao login.
 const MOTIVOS: Record<string, string> = {
@@ -250,6 +251,7 @@ function Entrar({ router, recemCriada }: { router: ReturnType<typeof useRouter>;
             <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} required autoFocus value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} placeholder="000000"
               className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[18px] font-mono-custom tracking-[8px] text-center text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors" />
+            <p className="text-[11px] text-faint mt-1.5">Neste navegador, o código só será pedido de novo em {DISPOSITIVO_DIAS_UI} dias.</p>
           </div>
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading || otp.length < 6}

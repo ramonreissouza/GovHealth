@@ -25,6 +25,8 @@ export interface Usuario {
   deleted_at: string | null
   criado_em: string
   ultimo_acesso?: string | null
+  /** Última troca de senha. Vem no verificarLogin (SELECT *); invalida dispositivos lembrados. */
+  senha_alterada_em?: string | null
 }
 
 interface UsuarioComHash extends Usuario { senha_hash: string }
