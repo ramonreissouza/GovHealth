@@ -13,10 +13,12 @@ const Schema = z.object({ email: z.string().email() })
 
 export async function POST(req: NextRequest) {
   const parsed = Schema.safeParse(await req.json().catch(() => ({})))
-  // Mesmo com e-mail inválido, respondemos ok para não vazar informação.
+  // Mesmo com e-mail inválido, respondemos ok para não vazar informação. E sem esperar
+  // o envio: gerar o token e falar com a Resend leva centenas de ms só quando a conta
+  // existe, e esse tempo de resposta revelava o cadastro. O app roda como servidor Node
+  // (k3s), então a promise termina depois da resposta.
   if (parsed.success) {
-    try { await solicitarResetSenha(parsed.data.email) }
-    catch (e) { console.error('[senha/solicitar]', e) }
+    solicitarResetSenha(parsed.data.email).catch((e) => console.error('[senha/solicitar]', e))
   }
   return NextResponse.json({ ok: true })
 }

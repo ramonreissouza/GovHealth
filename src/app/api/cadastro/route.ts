@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { emailExiste, criarUsuario } from '@/lib/users'
+import { emailExiste, criarUsuario, senhaForteOk } from '@/lib/users'
 import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { enviarBoasVindasTrial } from '@/lib/email'
 
@@ -16,7 +16,7 @@ const DIAS_TRIAL = DIAS_TESTE_GRATIS
 const Schema = z.object({
   nome: z.string().min(2, 'Informe seu nome').max(120),
   email: z.string().email('E-mail inválido'),
-  senha: z.string().min(6, 'A senha precisa de ao menos 6 caracteres').max(72),
+  senha: z.string().max(72).refine(senhaForteOk, 'A senha precisa ter ao menos 8 caracteres, com letras e números.'),
   plano: z.enum(['essencial', 'pro']),
   empresa: z.string().max(160).optional(),
   cnpj: z.string().max(20).optional(),

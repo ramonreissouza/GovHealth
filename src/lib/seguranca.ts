@@ -11,6 +11,7 @@ import { query, queryOne } from '@/lib/db'
 import { enviarCodigoAcesso, enviarRedefinicaoSenha } from '@/lib/email'
 import { senhaForteOk } from '@/lib/users'
 import { appUrl } from '@/lib/stripe'
+import { rateLimit } from '@/lib/rate-limit'
 
 export const FLAG_2FA = process.env.AUTH_2FA === 'on'
 export const FLAG_SESSAO_UNICA = process.env.AUTH_SESSAO_UNICA === 'on'
@@ -33,14 +34,50 @@ function codigo6(): string {
   return String(randomInt(100000, 1000000))
 }
 
-/** Gera, armazena (hash) e envia o OTP. Retorna se o e-mail saiu. */
-export async function enviarOtp(user: { id: string; email: string; nome: string | null }): Promise<boolean> {
+const OTP_REENVIO_SEG = 60 // intervalo mínimo entre dois envios do código
+const LOGIN_CONTA_MAX = 10           // tentativas de senha/código por e-mail…
+const LOGIN_CONTA_JANELA_MS = 15 * 60_000 // …nesta janela
+
+/**
+ * Limite de tentativas de login POR E-MAIL, independente do IP (que o atacante troca).
+ * Conta igual para e-mail cadastrado ou não, então não revela quem tem conta. Em memória
+ * por instância (o app tem 1 réplica) ou no Upstash, quando configurado.
+ */
+export async function loginContaLiberado(email: string): Promise<boolean> {
+  const r = await rateLimit(`login-conta:${email.trim().toLowerCase()}`, LOGIN_CONTA_MAX, LOGIN_CONTA_JANELA_MS)
+  return r.ok
+}
+
+/**
+ * Gera, armazena (hash) e envia o OTP. Reenvio antes de OTP_REENVIO_SEG não gera código
+ * novo e devolve quantos segundos faltam. As tentativas erradas NÃO zeram no reenvio
+ * enquanto o código anterior vale: antes, cada reenvio dava mais 5 chutes.
+ */
+export async function enviarOtp(user: { id: string; email: string; nome: string | null })
+  : Promise<{ enviado: boolean; aguardeSeg?: number }> {
   const codigo = codigo6()
   const hash = await bcrypt.hash(codigo, 8)
   const expira = new Date(Date.now() + OTP_TTL_MIN * 60_000)
-  await query(`UPDATE usuarios SET otp_hash=$2, otp_expira=$3, otp_tentativas=0 WHERE id=$1`, [user.id, hash, expira])
+  const gravado = await query<{ id: string }>(
+    `UPDATE usuarios
+        SET otp_hash=$2, otp_expira=$3, otp_enviado_em=now(),
+            otp_tentativas = CASE WHEN otp_expira > now() THEN COALESCE(otp_tentativas,0) ELSE 0 END
+      WHERE id=$1
+        AND (otp_enviado_em IS NULL OR otp_enviado_em < now() - make_interval(secs => $4))
+      RETURNING id`, [user.id, hash, expira, OTP_REENVIO_SEG])
+  if (gravado.length === 0) {
+    const row = await queryOne<{ falta: number }>(
+      `SELECT CEIL(EXTRACT(EPOCH FROM otp_enviado_em + make_interval(secs => $2) - now()))::int AS falta
+         FROM usuarios WHERE id=$1`, [user.id, OTP_REENVIO_SEG])
+    return { enviado: false, aguardeSeg: Math.max(1, row?.falta ?? OTP_REENVIO_SEG) }
+  }
   const r = await enviarCodigoAcesso({ to: user.email, nome: user.nome, codigo })
-  return r.enviado
+  // Sem Resend no ambiente local, o código só existiria no banco (em hash): mostra no
+  // console para dar para testar o login. Nunca em produção.
+  if (!r.enviado && process.env.NODE_ENV !== 'production') {
+    console.info(`[2fa:dev] código de ${user.email}: ${codigo}`)
+  }
+  return { enviado: r.enviado }
 }
 
 /** Verifica o OTP; limpa em sucesso; conta tentativas (bloqueia após 5). */
@@ -107,7 +144,11 @@ export async function solicitarResetSenha(email: string): Promise<void> {
     `SELECT id, email, nome FROM usuarios WHERE id=$1 AND deleted_at IS NULL AND suspenso=false`, [id])
   if (!row) return
   const link = await emitirLinkDeSenha(id, RESET_TTL_MIN)
-  await enviarRedefinicaoSenha({ to: row.email, nome: row.nome, link })
+  const r = await enviarRedefinicaoSenha({ to: row.email, nome: row.nome, link })
+  // Mesmo motivo do código em enviarOtp: sem Resend local, o link só aparece aqui.
+  if (!r.enviado && process.env.NODE_ENV !== 'production') {
+    console.info(`[reset:dev] link de ${row.email}: ${link}`)
+  }
 }
 
 /**
@@ -152,7 +193,7 @@ export async function redefinirSenhaComToken(params: { email: string; token: str
   const hash = await bcrypt.hash(params.novaSenha.trim(), 10)
   await query(
     `UPDATE usuarios
-        SET senha_hash=$2, reset_hash=NULL, reset_expira=NULL,
+        SET senha_hash=$2, senha_alterada_em=now(), reset_hash=NULL, reset_expira=NULL,
             otp_hash=NULL, otp_expira=NULL, otp_tentativas=0,
             sessao_id=NULL, sessao_expira=NULL, sessao_ultimo_visto=NULL,
             atualizado_em=now()

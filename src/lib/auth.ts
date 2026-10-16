@@ -2,9 +2,9 @@
 import type { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import CredentialsProvider from 'next-auth/providers/credentials'
-import { verificarLogin, buscarUsuario } from '@/lib/users'
+import { verificarLogin, buscarUsuario, sessaoRevogada } from '@/lib/users'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
-import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao } from '@/lib/seguranca'
+import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao, loginContaLiberado } from '@/lib/seguranca'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -26,6 +26,8 @@ export const authOptions: NextAuthOptions = {
         // senhas das contas não têm espaço nas bordas, então isso só ajuda.
         const senha = credentials?.password?.trim()
         if (!email || !senha) return null
+        // Mesmo limite por e-mail do passo 1: o callback também é porta de senha e de código.
+        if (!(await loginContaLiberado(email))) throw new Error('BLOQUEADO')
 
         const { user } = await verificarLogin(email, senha)
         if (!user) return null
@@ -79,20 +81,31 @@ export const authOptions: NextAuthOptions = {
         token.status = u.status ?? null
         token.expiraEm = u.expiraEm ?? null
         token.sessaoId = u.sessaoId ?? null
+        token.loginEm = Date.now()
         token.rev = Date.now()
         return token
       }
-      // Revalida plano/status/expiração no banco no máximo a cada ~60s por sessão.
-      // Assim, quando o admin ativa a conta (status→'ativa'), o acesso volta sem
-      // exigir novo login. O master é isento (não sofre gate de plano/trial).
+      // Revalida no banco no máximo a cada ~60s por sessão:
+      //  - revogação (TODOS, inclusive o master): conta suspensa, excluída ou com senha
+      //    trocada depois deste login. O token fica marcado e o middleware passa a
+      //    tratá-lo como deslogado. Antes, a sessão sobrevivia à suspensão por 7 dias
+      //    renováveis. Token anterior a esta versão não tem loginEm: vale 0, e como
+      //    senha_alterada_em nasce NULL, só cai quem trocar a senha depois do deploy.
+      //  - plano/status/expiração (exceto master, que não sofre gate de plano/trial):
+      //    quando o admin ativa a conta, o acesso volta sem exigir novo login.
       const rev = typeof token.rev === 'number' ? token.rev : 0
-      if (token.id && token.role !== 'master' && Date.now() - rev > 60_000) {
+      if (token.id && !token.revogado && Date.now() - rev > 60_000) {
         try {
-          const atual = await buscarUsuario(token.id as string)
-          if (atual) {
-            token.plano = atual.plano ?? null
-            token.status = atual.status_assinatura ?? null
-            token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+          const loginEm = typeof token.loginEm === 'number' ? token.loginEm : 0
+          if (await sessaoRevogada(token.id as string, loginEm)) {
+            token.revogado = true
+          } else if (token.role !== 'master') {
+            const atual = await buscarUsuario(token.id as string)
+            if (atual) {
+              token.plano = atual.plano ?? null
+              token.status = atual.status_assinatura ?? null
+              token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+            }
           }
         } catch { /* mantém o token atual se o banco falhar */ }
         token.rev = Date.now()

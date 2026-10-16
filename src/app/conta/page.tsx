@@ -11,6 +11,8 @@ import {
   Building2, ExternalLink, KeyRound, Eye, EyeOff, Sparkles, XCircle,
 } from 'lucide-react'
 import { PLANOS, planoPorId, precoLabel } from '@/lib/planos'
+import { signOut } from 'next-auth/react'
+import { clearLocalData } from '@/lib/synced'
 
 const SUPORTE = 'contato@techealth.com.br'
 
@@ -341,7 +343,12 @@ function SenhaCard() {
     try {
       const r = await fetch('/api/conta/senha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ senhaAtual: atual, novaSenha: nova }) })
       const j = await r.json().catch(() => ({}))
-      if (r.ok) { setOk(true); setAtual(''); setNova(''); setConfirma(''); setTimeout(() => setOk(false), 3000) }
+      if (r.ok) {
+        // A troca derruba as sessões abertas antes dela, inclusive esta (sessaoRevogada
+        // em lib/users): sai já, em vez de cair sozinho no próximo refresh.
+        setOk(true); setAtual(''); setNova(''); setConfirma('')
+        setTimeout(() => { clearLocalData(); signOut({ callbackUrl: '/login?motivo=senha' }) }, 1500)
+      }
       else setErro(j.error ?? 'Não foi possível trocar a senha.')
     } catch {
       setErro('Não foi possível trocar a senha.')
@@ -383,7 +390,7 @@ function SenhaCard() {
       </div>
 
       {erro && <div className="mt-3 flex items-center gap-2 text-[12px] text-red-400"><AlertTriangle size={13} /> {erro}</div>}
-      {ok && <div className="mt-3 flex items-center gap-2 text-[12px] text-emerald-400"><CheckCircle2 size={13} /> Senha alterada com sucesso.</div>}
+      {ok && <div className="mt-3 flex items-center gap-2 text-[12px] text-emerald-400"><CheckCircle2 size={13} /> Senha alterada com sucesso. Entre de novo com a nova senha…</div>}
 
       <div className="mt-4">
         <button
