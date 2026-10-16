@@ -33,7 +33,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ precisaOtp: false })
     }
     const r = await enviarOtp({ id: user.id, email: user.email, nome: user.nome })
-    return NextResponse.json({ precisaOtp: true, enviado: r.enviado, aguardeSeg: r.aguardeSeg ?? null })
+    switch (r.status) {
+      case 'enviado':
+      case 'so_no_console':
+        return NextResponse.json({ precisaOtp: true, enviado: r.status === 'enviado', aguardeSeg: null })
+      case 'aguarde': // o código enviado há pouco continua valendo: segue para a etapa do código
+        return NextResponse.json({ precisaOtp: true, enviado: false, aguardeSeg: r.segundos })
+      case 'bloqueado': // 5 erros no código atual: nada de código novo até ele vencer
+        return NextResponse.json({ erro: 'otp_bloqueado', aguardeSeg: r.segundos }, { status: 429 })
+      case 'falhou': // a tela fica na etapa de senha; pode tentar de novo na hora
+        return NextResponse.json({ erro: 'envio_falhou' }, { status: 503 })
+    }
   }
   return NextResponse.json({ precisaOtp: false })
 }

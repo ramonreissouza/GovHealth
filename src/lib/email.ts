@@ -7,12 +7,15 @@ import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { SLA_ESCALONA_MIN } from '@/lib/radar/entrega'
 import { CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE, CONTATO_EMAIL } from '@/lib/empresa-legal'
 
+/** Motivo de `enviar` quando não há chave — distinto de uma falha da Resend. */
+export const MOTIVO_SEM_RESEND = 'sem RESEND_API_KEY'
+
 /** Envia um HTML via Resend. Retorna se enviou (best-effort). */
 async function enviar(to: string, subject: string, html: string): Promise<{ enviado: boolean; motivo?: string }> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     console.warn('[email] não enviado, sem RESEND_API_KEY:', subject)
-    return { enviado: false, motivo: 'sem RESEND_API_KEY' }
+    return { enviado: false, motivo: MOTIVO_SEM_RESEND }
   }
   const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
   try {

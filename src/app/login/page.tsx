@@ -135,6 +135,11 @@ function Entrar({ router, recemCriada }: { router: ReturnType<typeof useRouter>;
       body: JSON.stringify({ email: email.trim().toLowerCase(), senha: password }),
     })
     const d = await r.json().catch(() => ({}))
+    if (d.erro === 'otp_bloqueado') {
+      const min = Math.max(1, Math.ceil((d.aguardeSeg ?? 600) / 60))
+      setError(`Código digitado errado muitas vezes. Peça um novo código em ${min} min.`); return false
+    }
+    if (d.erro === 'envio_falhou') { setError('Não conseguimos enviar o código agora. Tente de novo em instantes.'); return false }
     if (r.status === 429) { setError('Muitas tentativas. Aguarde alguns minutos e tente de novo.'); return false }
     if (d.erro === 'sessao_ativa') { setError('Já existe uma sessão ativa em outro dispositivo. Saia de lá ou aguarde alguns minutos e tente de novo.'); return false }
     if (d.erro === 'credenciais' || !r.ok) { setError('Email ou senha incorretos.'); return false }

@@ -8,7 +8,7 @@
 import bcrypt from 'bcryptjs'
 import { randomUUID, randomBytes, randomInt } from 'node:crypto'
 import { query, queryOne } from '@/lib/db'
-import { enviarCodigoAcesso, enviarRedefinicaoSenha } from '@/lib/email'
+import { enviarCodigoAcesso, enviarRedefinicaoSenha, MOTIVO_SEM_RESEND } from '@/lib/email'
 import { senhaForteOk } from '@/lib/users'
 import { appUrl } from '@/lib/stripe'
 import { rateLimit } from '@/lib/rate-limit'
@@ -48,53 +48,98 @@ export async function loginContaLiberado(email: string): Promise<boolean> {
   return r.ok
 }
 
+export type ResultadoOtp =
+  | { status: 'enviado' }
+  | { status: 'so_no_console' }                // dev sem RESEND_API_KEY: código só no log
+  | { status: 'aguarde'; segundos: number }    // reenvio antes do intervalo; o código atual vale
+  | { status: 'bloqueado'; segundos: number }  // 5 erros no código atual: espera ele vencer
+  | { status: 'falhou' }                       // provedor falhou; estado anterior restaurado
+
 /**
- * Gera, armazena (hash) e envia o OTP. Reenvio antes de OTP_REENVIO_SEG não gera código
- * novo e devolve quantos segundos faltam. As tentativas erradas NÃO zeram no reenvio
- * enquanto o código anterior vale: antes, cada reenvio dava mais 5 chutes.
+ * Gera, armazena (hash) e envia o OTP.
+ *  - Reenvio antes de OTP_REENVIO_SEG não gera código novo ('aguarde').
+ *  - As tentativas erradas NÃO zeram no reenvio enquanto o código anterior vale (antes,
+ *    cada reenvio dava mais 5 chutes) — e, com o teto já atingido, o reenvio é RECUSADO
+ *    ('bloqueado'): mandar código novo com o contador em 5 entregava um código que o
+ *    verificador recusaria (revisão da #68).
+ *  - Se a Resend falhar, o estado anterior volta (código antigo, contador e intervalo):
+ *    com 2FA obrigatório, uma falha transitória não pode deixar a conta sem código válido
+ *    nem presa no intervalo de reenvio (revisão da #68).
  */
-export async function enviarOtp(user: { id: string; email: string; nome: string | null })
-  : Promise<{ enviado: boolean; aguardeSeg?: number }> {
+export async function enviarOtp(user: { id: string; email: string; nome: string | null }): Promise<ResultadoOtp> {
   const codigo = codigo6()
   const hash = await bcrypt.hash(codigo, 8)
   const expira = new Date(Date.now() + OTP_TTL_MIN * 60_000)
-  const gravado = await query<{ id: string }>(
-    `UPDATE usuarios
+  // Um comando só: trava a linha, confere intervalo e teto, grava o código novo e devolve o
+  // estado ANTERIOR (para desfazer se o envio falhar). Dois reenvios simultâneos: o segundo
+  // espera o lock, relê a linha já com otp_enviado_em=now() e não grava.
+  const anterior = await queryOne<{ hash: string | null; expira: string | null; tentativas: number | null; enviado_em: string | null }>(
+    `WITH ant AS (
+       SELECT otp_hash, otp_expira, otp_tentativas, otp_enviado_em FROM usuarios WHERE id=$1 FOR UPDATE
+     )
+     UPDATE usuarios u
         SET otp_hash=$2, otp_expira=$3, otp_enviado_em=now(),
-            otp_tentativas = CASE WHEN otp_expira > now() THEN COALESCE(otp_tentativas,0) ELSE 0 END
-      WHERE id=$1
-        AND (otp_enviado_em IS NULL OR otp_enviado_em < now() - make_interval(secs => $4))
-      RETURNING id`, [user.id, hash, expira, OTP_REENVIO_SEG])
-  if (gravado.length === 0) {
-    const row = await queryOne<{ falta: number }>(
-      `SELECT CEIL(EXTRACT(EPOCH FROM otp_enviado_em + make_interval(secs => $2) - now()))::int AS falta
-         FROM usuarios WHERE id=$1`, [user.id, OTP_REENVIO_SEG])
-    return { enviado: false, aguardeSeg: Math.max(1, row?.falta ?? OTP_REENVIO_SEG) }
+            otp_tentativas = CASE WHEN ant.otp_expira > now() THEN COALESCE(ant.otp_tentativas,0) ELSE 0 END
+       FROM ant
+      WHERE u.id=$1
+        AND (ant.otp_enviado_em IS NULL OR ant.otp_enviado_em < now() - make_interval(secs => $4))
+        AND NOT (ant.otp_expira > now() AND COALESCE(ant.otp_tentativas,0) >= $5)
+      RETURNING ant.otp_hash AS hash, ant.otp_expira AS expira, ant.otp_tentativas AS tentativas,
+                ant.otp_enviado_em AS enviado_em`,
+    [user.id, hash, expira, OTP_REENVIO_SEG, OTP_MAX_TENTATIVAS])
+
+  if (!anterior) {
+    const st = await queryOne<{ bloqueado: boolean; falta_bloqueio: number | null; falta_reenvio: number | null }>(
+      `SELECT (otp_expira > now() AND COALESCE(otp_tentativas,0) >= $2) AS bloqueado,
+              CEIL(EXTRACT(EPOCH FROM otp_expira - now()))::int AS falta_bloqueio,
+              CEIL(EXTRACT(EPOCH FROM otp_enviado_em + make_interval(secs => $3) - now()))::int AS falta_reenvio
+         FROM usuarios WHERE id=$1`, [user.id, OTP_MAX_TENTATIVAS, OTP_REENVIO_SEG])
+    if (st?.bloqueado) return { status: 'bloqueado', segundos: Math.max(1, st.falta_bloqueio ?? OTP_TTL_MIN * 60) }
+    return { status: 'aguarde', segundos: Math.max(1, st?.falta_reenvio ?? OTP_REENVIO_SEG) }
   }
+
   const r = await enviarCodigoAcesso({ to: user.email, nome: user.nome, codigo })
-  // Sem Resend no ambiente local, o código só existiria no banco (em hash): mostra no
-  // console para dar para testar o login. Nunca em produção.
-  if (!r.enviado && process.env.NODE_ENV !== 'production') {
+  if (r.enviado) return { status: 'enviado' }
+
+  // Ambiente local sem Resend: o código só existiria no banco (em hash). Mostra no console
+  // para dar para testar o login. Só sem chave e nunca em produção.
+  if (r.motivo === MOTIVO_SEM_RESEND && process.env.NODE_ENV !== 'production') {
     console.info(`[2fa:dev] código de ${user.email}: ${codigo}`)
+    return { status: 'so_no_console' }
   }
-  return { enviado: r.enviado }
+
+  // Desfaz: volta o código anterior (se ainda valia, segue valendo) e o otp_enviado_em
+  // anterior, o que libera tentar de novo na hora. Só se ninguém gravou outro código no meio
+  // (condição no hash novo). GREATEST: não perde erros contados contra o código novo.
+  await query(
+    `UPDATE usuarios
+        SET otp_hash=$3, otp_expira=$4, otp_enviado_em=$6,
+            otp_tentativas = GREATEST(COALESCE(otp_tentativas,0), COALESCE($5::int,0))
+      WHERE id=$1 AND otp_hash=$2`,
+    [user.id, hash, anterior.hash, anterior.expira, anterior.tentativas, anterior.enviado_em])
+  console.error('[2fa] código de acesso não enviado:', r.motivo)
+  return { status: 'falhou' }
 }
 
-/** Verifica o OTP; limpa em sucesso; conta tentativas (bloqueia após 5). */
+/**
+ * Verifica o OTP. Atômico nas duas pontas (revisão da #68):
+ *  - a tentativa é RESERVADA antes do bcrypt, com condição no teto: chutes em paralelo não
+ *    passam de OTP_MAX_TENTATIVAS, porque cada um precisa ganhar o UPDATE;
+ *  - o código certo só vale para quem o CONSUMIR (UPDATE condicionado ao hash): dois pedidos
+ *    simultâneos com o mesmo código não abrem duas sessões.
+ */
 export async function verificarOtp(userId: string, codigo: string): Promise<boolean> {
-  const row = await queryOne<{ otp_hash: string | null; otp_expira: string | null; otp_tentativas: number | null }>(
-    `SELECT otp_hash, otp_expira, otp_tentativas FROM usuarios WHERE id=$1`, [userId],
-  )
-  if (!row?.otp_hash || !row.otp_expira) return false
-  if (new Date(row.otp_expira).getTime() < Date.now()) return false
-  if ((row.otp_tentativas ?? 0) >= OTP_MAX_TENTATIVAS) return false
-  const ok = await bcrypt.compare((codigo ?? '').trim(), row.otp_hash)
-  if (!ok) {
-    await query(`UPDATE usuarios SET otp_tentativas=COALESCE(otp_tentativas,0)+1 WHERE id=$1`, [userId])
-    return false
-  }
-  await query(`UPDATE usuarios SET otp_hash=NULL, otp_expira=NULL, otp_tentativas=0 WHERE id=$1`, [userId])
-  return true
+  const reserva = await queryOne<{ otp_hash: string }>(
+    `UPDATE usuarios SET otp_tentativas = COALESCE(otp_tentativas,0) + 1
+      WHERE id=$1 AND otp_hash IS NOT NULL AND otp_expira > now() AND COALESCE(otp_tentativas,0) < $2
+      RETURNING otp_hash`, [userId, OTP_MAX_TENTATIVAS])
+  if (!reserva) return false
+  if (!(await bcrypt.compare((codigo ?? '').trim(), reserva.otp_hash))) return false
+  const consumido = await query<{ id: string }>(
+    `UPDATE usuarios SET otp_hash=NULL, otp_expira=NULL, otp_tentativas=0
+      WHERE id=$1 AND otp_hash=$2 AND otp_expira > now()
+      RETURNING id`, [userId, reserva.otp_hash])
+  return consumido.length === 1
 }
 
 /** Há sessão ativa (recente) em outro dispositivo? */
