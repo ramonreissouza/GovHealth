@@ -2,6 +2,7 @@
 // não estiver configurada, apenas loga e segue (não quebra o fluxo).
 
 import { appUrl } from '@/lib/stripe'
+import { EMAIL_LOGO_CID, EMAIL_LOGO_PNG_BASE64 } from '@/lib/email-logo'
 import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { SLA_ESCALONA_MIN } from '@/lib/radar/entrega'
 import { CONTROLADOR_RAZAO_SOCIAL, CONTROLADOR_CNPJ, CONTROLADOR_SEDE, CONTATO_EMAIL } from '@/lib/empresa-legal'
@@ -16,7 +17,11 @@ async function enviar(to: string, subject: string, html: string): Promise<{ envi
   const from = process.env.RESEND_FROM_EMAIL ?? 'contato@techealth.com.br'
   try {
     const { Resend } = await import('resend')
-    const { error } = await new Resend(apiKey).emails.send({ from, to, subject, html })
+    // A logo do cabeçalho (moldura) vai anexada inline; ver src/lib/email-logo.ts.
+    const attachments = html.includes(`cid:${EMAIL_LOGO_CID}`)
+      ? [{ filename: 'logo-govhealth.png', content: Buffer.from(EMAIL_LOGO_PNG_BASE64, 'base64'), contentType: 'image/png', contentId: EMAIL_LOGO_CID }]
+      : undefined
+    const { error } = await new Resend(apiKey).emails.send({ from, to, subject, html, attachments })
     if (error) { console.warn('[email] falha Resend:', error.message); return { enviado: false, motivo: error.message } }
     return { enviado: true }
   } catch (e) {
@@ -32,7 +37,7 @@ function moldura(titulo: string, corpo: string): string {
       <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
         <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;">
           <tr><td style="padding:20px 26px;border-bottom:1px solid #eef2f7;">
-            <img src="${appUrl()}/logo-govhealth.png" alt="GovHealth" height="26" style="height:26px;width:auto;display:block;" />
+            <img src="cid:${EMAIL_LOGO_CID}" alt="GovHealth" width="58" height="26" style="height:26px;width:auto;display:block;" />
           </td></tr>
           <tr><td style="padding:26px;">
             <h1 style="font-size:19px;color:#0f172a;margin:0 0 12px;">${titulo}</h1>
@@ -223,7 +228,9 @@ export async function enviarCodigoAcesso(params: { to: string; nome?: string | n
     <p style="font-size:15px;color:#334155;">Use o código abaixo para concluir o acesso à sua conta:</p>
     <p style="font-size:30px;font-weight:bold;letter-spacing:6px;color:#0f172a;margin:18px 0;">${params.codigo}</p>
     <p style="font-size:13px;color:#64748b;">O código expira em 10 minutos. Se você não tentou entrar, ignore este e-mail e troque sua senha.</p>`
-  return enviar(params.to, `Seu código de acesso GovHealth: ${params.codigo}`, moldura('Código de acesso', corpo))
+  // O código fica só no corpo: no assunto ele aparecia na notificação e na tela de
+  // bloqueio do celular, à vista de quem estivesse perto.
+  return enviar(params.to, 'Seu código de acesso — GovHealth AI', moldura('Código de acesso', corpo))
 }
 
 /** Redefinição de senha ("esqueci minha senha"): link com token de uso único. */
