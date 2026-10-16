@@ -9,12 +9,13 @@ import { NextResponse } from 'next/server'
 
 const ADMIN_SESSAO_MAX_S = 8 * 60 * 60 // 8h de frescor para o master
 
-export interface TokenAdmin { id?: string; email?: string | null; role?: string; iat?: number }
+export interface TokenAdmin { id?: string; email?: string | null; role?: string; iat?: number; revogado?: boolean }
 
 /** Retorna o token se for um master válido e "fresco"; senão null. */
 export async function tokenMaster(req: NextRequest): Promise<TokenAdmin | null> {
   const token = (await getToken({ req, secret: process.env.NEXTAUTH_SECRET })) as TokenAdmin | null
-  if (!token || token.role !== 'master') return null
+  // revogado: senha trocada ou conta suspensa depois do login (callback jwt em lib/auth).
+  if (!token || token.role !== 'master' || token.revogado) return null
 
   // Checagem redundante por env (se ADMIN_EMAIL estiver definido, exige match).
   const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase()

@@ -44,6 +44,15 @@ otel:
   endpoint: http://signoz-otel-collector.observability.svc.cluster.local:4318
   ambiente: producao
 
+# Login. Não é segredo (só liga/desliga um comportamento), por isso fica aqui e não no
+# Secret. Vira variável de ambiente do app em templates/app.yaml e tem precedência
+# sobre o mesmo nome no Secret.
+auth:
+  # 2FA por e-mail (AUTH_2FA, src/lib/seguranca.ts): todo login de usuário pede o
+  # código de 6 dígitos enviado pela Resend. O master é isento. Exige RESEND_API_KEY
+  # no Secret: sem ela o código não sai e ninguém além do master entra.
+  doisFatores: true
+
 ingress:
   className: traefik
   host: govhealth.techealth.com.br

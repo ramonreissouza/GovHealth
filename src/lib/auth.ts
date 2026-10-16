@@ -2,9 +2,11 @@
 import type { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import CredentialsProvider from 'next-auth/providers/credentials'
-import { verificarLogin, buscarUsuario } from '@/lib/users'
+import { verificarLogin, buscarUsuario, sessaoRevogada } from '@/lib/users'
+import { cookies } from 'next/headers'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
-import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao } from '@/lib/seguranca'
+import { nomeCookieDispositivo, dispositivoConfiavel, emitirDispositivo, opcoesCookieDispositivo } from '@/lib/dispositivo-confiavel'
+import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao, loginContaLiberado } from '@/lib/seguranca'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -26,6 +28,8 @@ export const authOptions: NextAuthOptions = {
         // senhas das contas não têm espaço nas bordas, então isso só ajuda.
         const senha = credentials?.password?.trim()
         if (!email || !senha) return null
+        // Mesmo limite por e-mail do passo 1: o callback também é porta de senha e de código.
+        if (!(await loginContaLiberado(email))) throw new Error('BLOQUEADO')
 
         const { user } = await verificarLogin(email, senha)
         if (!user) return null
@@ -35,11 +39,18 @@ export const authOptions: NextAuthOptions = {
         if (FLAG_SESSAO_UNICA && !isMaster && (await sessaoAtiva(user.id))) {
           throw new Error('SESSAO_ATIVA')
         }
-        // 2FA por e-mail: exige OTP válido (o /api/auth/otp já enviou o código).
+        // 2FA por e-mail: exige OTP válido (o /api/auth/otp já enviou o código), salvo
+        // neste navegador já confirmado nos últimos DISPOSITIVO_DIAS. O código certo marca
+        // o navegador — o cookie sai na resposta desta própria rota do NextAuth.
         if (FLAG_2FA && !isMaster) {
-          const otp = credentials?.otp?.trim()
-          if (!otp) return null
-          if (!(await verificarOtp(user.id, otp))) throw new Error('OTP_INVALIDO')
+          const jar = await cookies()
+          if (!dispositivoConfiavel(jar.get(nomeCookieDispositivo())?.value, user.id, user.senha_alterada_em)) {
+            const otp = credentials?.otp?.trim()
+            if (!otp) return null
+            if (!(await verificarOtp(user.id, otp))) throw new Error('OTP_INVALIDO')
+            const d = emitirDispositivo(user.id, user.senha_alterada_em)
+            jar.set(nomeCookieDispositivo(), d.valor, opcoesCookieDispositivo(d.maxAge))
+          }
         }
         // Registra a sessão desta máquina (para o controle de sessão única).
         const sessaoId = await iniciarSessao(user.id)
@@ -79,20 +90,31 @@ export const authOptions: NextAuthOptions = {
         token.status = u.status ?? null
         token.expiraEm = u.expiraEm ?? null
         token.sessaoId = u.sessaoId ?? null
+        token.loginEm = Date.now()
         token.rev = Date.now()
         return token
       }
-      // Revalida plano/status/expiração no banco no máximo a cada ~60s por sessão.
-      // Assim, quando o admin ativa a conta (status→'ativa'), o acesso volta sem
-      // exigir novo login. O master é isento (não sofre gate de plano/trial).
+      // Revalida no banco no máximo a cada ~60s por sessão:
+      //  - revogação (TODOS, inclusive o master): conta suspensa, excluída ou com senha
+      //    trocada depois deste login. O token fica marcado e o middleware passa a
+      //    tratá-lo como deslogado. Antes, a sessão sobrevivia à suspensão por 7 dias
+      //    renováveis. Token anterior a esta versão não tem loginEm: vale 0, e como
+      //    senha_alterada_em nasce NULL, só cai quem trocar a senha depois do deploy.
+      //  - plano/status/expiração (exceto master, que não sofre gate de plano/trial):
+      //    quando o admin ativa a conta, o acesso volta sem exigir novo login.
       const rev = typeof token.rev === 'number' ? token.rev : 0
-      if (token.id && token.role !== 'master' && Date.now() - rev > 60_000) {
+      if (token.id && !token.revogado && Date.now() - rev > 60_000) {
         try {
-          const atual = await buscarUsuario(token.id as string)
-          if (atual) {
-            token.plano = atual.plano ?? null
-            token.status = atual.status_assinatura ?? null
-            token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+          const loginEm = typeof token.loginEm === 'number' ? token.loginEm : 0
+          if (await sessaoRevogada(token.id as string, loginEm)) {
+            token.revogado = true
+          } else if (token.role !== 'master') {
+            const atual = await buscarUsuario(token.id as string)
+            if (atual) {
+              token.plano = atual.plano ?? null
+              token.status = atual.status_assinatura ?? null
+              token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+            }
           }
         } catch { /* mantém o token atual se o banco falhar */ }
         token.rev = Date.now()

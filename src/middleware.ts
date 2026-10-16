@@ -15,6 +15,7 @@ import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
+import { ipCliente } from '@/lib/ip'
 import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 
 const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/privacidade', '/termos', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
@@ -30,8 +31,7 @@ function trialExpirado(expiraEm: string): boolean {
 }
 
 function ipDe(req: NextRequest): string {
-  const xff = req.headers.get('x-forwarded-for')
-  return (xff ? xff.split(',')[0].trim() : '') || req.headers.get('x-real-ip') || 'desconhecido'
+  return ipCliente((n) => req.headers.get(n)) || 'desconhecido'
 }
 
 function resp429(r: RateResult): NextResponse {
@@ -91,6 +91,20 @@ export async function middleware(req: NextRequest) {
 
   // ── Auth de sessão (páginas e demais APIs) ───────────────────────────────────
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+
+  // Sessão revogada (conta suspensa/excluída ou senha trocada depois do login; marcada
+  // no callback jwt de lib/auth): vale como deslogado e o cookie é apagado.
+  if (token?.revogado) {
+    let res: NextResponse
+    if (pathname.startsWith('/api/')) res = NextResponse.json({ error: 'Sessão encerrada. Entre novamente.' }, { status: 401 })
+    else if (ehPublica(pathname)) res = NextResponse.next()
+    else res = NextResponse.redirect(new URL('/login?motivo=revogada', req.url))
+    // O prefixo __Secure- só aceita ser sobrescrito por cookie com Secure.
+    for (const nome of ['next-auth.session-token', '__Secure-next-auth.session-token']) {
+      res.cookies.set(nome, '', { path: '/', maxAge: 0, httpOnly: true, sameSite: 'lax', secure: nome.startsWith('__Secure-') })
+    }
+    return res
+  }
 
   if (token) {
     const t = token as { status?: string | null; expiraEm?: string | null; plano?: string | null; role?: string | null }

@@ -2,7 +2,7 @@
 // src/app/redefinir-senha/page.tsx — cria a nova senha a partir do link do e-mail.
 // Lê ?token=...&e=... da URL; valida força e confirma; ao concluir, leva ao login.
 
-import { useState, Suspense, FormEvent } from 'react'
+import { useState, useEffect, Suspense, FormEvent } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -20,8 +20,15 @@ export default function RedefinirSenhaPage() {
 function Redefinir() {
   const sp = useSearchParams()
   const router = useRouter()
-  const token = sp.get('token') ?? ''
-  const email = (sp.get('e') ?? '').toLowerCase()
+  // Lidos uma vez e guardados no estado: logo abaixo a URL perde o token.
+  const [token] = useState(() => sp.get('token') ?? '')
+  const [email] = useState(() => (sp.get('e') ?? '').toLowerCase())
+
+  // Tira o token do histórico do navegador (quem abrir o histórico depois não reaproveita
+  // o link enquanto ele valer). Fica só no estado da página.
+  useEffect(() => {
+    if (globalThis.location?.search) globalThis.history.replaceState(null, '', '/redefinir-senha')
+  }, [])
 
   const [nova, setNova] = useState('')
   const [confirma, setConfirma] = useState('')
