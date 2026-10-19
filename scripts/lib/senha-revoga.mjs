@@ -5,8 +5,11 @@
 // qualquer lugar do literal, e `... WHERE id=$2 AND senha_alterada_em IS NOT NULL` passava
 // sem revogar nada (revisão da #68). Comentários SQL são ignorados pelo mesmo motivo.
 
-const ATRIB_SENHA = /senha_hash\s*=(?!=)/g
-const ATRIB_VERSAO = /\bsenha_alterada_em\s*=(?!=)/i
+// Sem distinção de caixa: o Postgres normaliza identificador sem aspas para minúsculas, e
+// `SET SENHA_HASH = $1` grava a mesma coluna — a 1ª regra era case-sensitive e deixava
+// passar (revisão da #68). Aspas opcionais: `"senha_hash"` também é a mesma coluna.
+export const ATRIB_SENHA = /"?\bsenha_hash"?\s*=(?!=)/gi
+const ATRIB_VERSAO = /"?\bsenha_alterada_em"?\s*=(?!=)/i
 const FIM_DO_SET = /\b(WHERE|RETURNING|FROM)\b/gi
 
 /** Troca comentários SQL por espaços do mesmo tamanho (as posições continuam valendo). */
@@ -28,7 +31,7 @@ export function violacoesSenha(texto) {
 
     const sql = semComentarios(texto.slice(ini + 1, fim))
     const pos = m.index - (ini + 1)
-    if (sql.slice(pos, pos + 'senha_hash'.length) !== 'senha_hash') continue // estava num comentário
+    if (sql.slice(pos, pos + m[0].length) !== m[0]) continue // estava num comentário (virou espaço)
 
     // O SET que contém esta atribuição: o último SET antes dela…
     let inicioSet = -1

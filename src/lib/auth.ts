@@ -3,7 +3,7 @@ import type { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { verificarLogin, buscarUsuario } from '@/lib/users'
-import { sessaoRevogada } from '@/lib/revogacao'
+import { sessaoRevogada, marcaDo, versaoSenha } from '@/lib/revogacao'
 import { cookies } from 'next/headers'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
 import { nomeCookieDispositivo, dispositivoConfiavel, emitirDispositivo, opcoesCookieDispositivo } from '@/lib/dispositivo-confiavel'
@@ -70,6 +70,10 @@ export const authOptions: NextAuthOptions = {
         return {
           id: user.id, name: user.nome, email: user.email, image: null, role: user.role,
           plano: user.plano, status: user.status_assinatura, expiraEm, sessaoId,
+          // A versão da senha lida NA MESMA consulta que conferiu o hash (verificarLogin):
+          // se a senha mudar daqui até o token ser emitido, ele já nasce revogado
+          // (lib/revogacao MarcaSessao — revisão da #68).
+          senhaVersao: versaoSenha(user.senha_alterada_em),
         }
       },
     }),
@@ -84,30 +88,30 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null; sessaoId?: string }
+        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null; sessaoId?: string; senhaVersao?: number }
         token.id = u.id
         token.role = u.role ?? 'user'
         token.plano = u.plano ?? null
         token.status = u.status ?? null
         token.expiraEm = u.expiraEm ?? null
         token.sessaoId = u.sessaoId ?? null
+        // senhaVersao vem do authorize (a leitura que validou a senha), não deste instante.
+        // Provedor sem ela (Google) cai na regra legada do loginEm em lib/revogacao.
+        if (typeof u.senhaVersao === 'number') token.senhaVersao = u.senhaVersao
         token.loginEm = Date.now()
         token.rev = Date.now()
         return token
       }
       // Revalida no banco no máximo a cada ~60s por sessão:
       //  - revogação (TODOS, inclusive o master): conta suspensa, excluída ou com senha
-      //    trocada depois deste login. O token fica marcado e o middleware passa a
-      //    tratá-lo como deslogado. Antes, a sessão sobrevivia à suspensão por 7 dias
-      //    renováveis. Token anterior a esta versão não tem loginEm: vale 0, e como
-      //    senha_alterada_em nasce NULL, só cai quem trocar a senha depois do deploy.
+      //    trocada (lib/revogacao). O token fica marcado e o navegador é deslogado. Quem
+      //    barra o token usado direto nas APIs é o proxy, que confere o banco sempre.
       //  - plano/status/expiração (exceto master, que não sofre gate de plano/trial):
       //    quando o admin ativa a conta, o acesso volta sem exigir novo login.
       const rev = typeof token.rev === 'number' ? token.rev : 0
       if (token.id && !token.revogado && Date.now() - rev > 60_000) {
         try {
-          const loginEm = typeof token.loginEm === 'number' ? token.loginEm : 0
-          if (await sessaoRevogada(token.id as string, loginEm)) {
+          if (await sessaoRevogada(token.id as string, marcaDo(token))) {
             token.revogado = true
           } else if (token.role !== 'master') {
             const atual = await buscarUsuario(token.id as string)

@@ -16,7 +16,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import assert from 'node:assert/strict'
-import { violacoesSenha } from './lib/senha-revoga.mjs'
+import { violacoesSenha, ATRIB_SENHA } from './lib/senha-revoga.mjs'
 
 const RAIZES = ['src', 'scripts']
 const EXT = /\.(ts|tsx|js|mjs|mts|cjs)$/
@@ -34,12 +34,14 @@ function arquivos(dir) {
 // Sanidade da regra: se ela deixar de pegar o caso da revisão, a guarda passaria calada.
 assert.equal(violacoesSenha('q(`UPDATE usuarios SET senha_hash=$1 WHERE id=$2 AND senha_alterada_em IS NOT NULL`)').length, 1,
   'a regra parou de exigir a ATRIBUIÇÃO de senha_alterada_em')
+assert.equal(violacoesSenha('q(`UPDATE usuarios SET SENHA_HASH = $1 WHERE id=$2`)').length, 1,
+  'a regra voltou a distinguir maiúsculas (o Postgres não distingue)')
 
 const violacoes = []
 let atribuicoes = 0
 for (const arq of RAIZES.flatMap(arquivos)) {
   const txt = fs.readFileSync(arq, 'utf8')
-  atribuicoes += [...txt.matchAll(/senha_hash\s*=(?!=)/g)].length
+  atribuicoes += [...txt.matchAll(ATRIB_SENHA)].length // a MESMA regex da regra (sem distinção de caixa)
   for (const v of violacoesSenha(txt)) violacoes.push(`${arq}:${v.linha} — ${v.motivo}`)
 }
 

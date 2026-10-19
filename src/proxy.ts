@@ -23,7 +23,7 @@ import { getToken } from 'next-auth/jwt'
 import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
 import { ipCliente } from '@/lib/ip'
-import { sessaoRevogadaAgora, loginEmDo } from '@/lib/revogacao'
+import { sessaoRevogadaAgora, marcaDo } from '@/lib/revogacao'
 import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 
 const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/privacidade', '/termos', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
@@ -107,7 +107,7 @@ export async function proxy(req: NextRequest) {
   let revogado = !!token?.revogado
   if (token?.id && !revogado) {
     try {
-      revogado = await sessaoRevogadaAgora(String(token.id), loginEmDo(token))
+      revogado = await sessaoRevogadaAgora(String(token.id), marcaDo(token))
     } catch (e) {
       // Sem banco não dá para saber se a sessão vale: nega o que é privado (fail-closed).
       console.error('[proxy] revogação indisponível:', e)

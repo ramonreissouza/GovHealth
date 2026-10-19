@@ -22,6 +22,7 @@ try { conferirHostE2E(URL_E2E) } catch (e) { console.error((e as Error).message)
 process.env.DATABASE_URL = URL_E2E
 process.env.NEXTAUTH_SECRET = 'segredo-so-do-teste'
 delete process.env.NEXTAUTH_URL // cookie sem __Secure-, como no http local
+delete process.env.AUTH_2FA // o authorize da corrida (caso 7) entra só com a senha
 
 const admin = new pg.Client({ connectionString: URL_E2E })
 await admin.connect()
@@ -32,10 +33,14 @@ for (const arq of ['schema-admin.sql', 'schema-equipe.sql']) {
 }
 execFileSync(process.execPath, ['scripts/migrate-auth.mjs'], { env: { ...process.env, DATABASE_URL: URL_E2E }, stdio: 'pipe' })
 
-const contas = ['senha@teste.local', 'suspensa@teste.local', 'excluida@teste.local', 'cache@teste.local']
+const contas = ['senha@teste.local', 'suspensa@teste.local', 'excluida@teste.local', 'cache@teste.local', 'legado@teste.local']
 for (const id of contas) {
   await admin.query(`INSERT INTO usuarios (id, email, senha_hash, plano, status_assinatura) VALUES ($1, $1, 'x', 'pro', 'ativa')`, [id])
 }
+// Conta com senha de verdade, para o authorize da corrida (caso 7).
+const bcrypt = (await import('bcryptjs')).default
+await admin.query(`INSERT INTO usuarios (id, email, senha_hash, plano, status_assinatura) VALUES ('corrida@teste.local', 'corrida@teste.local', $1, 'pro', 'ativa')`,
+  [bcrypt.hashSync('SenhaAntiga1', 10)])
 await admin.query(`INSERT INTO usuarios (id, email, senha_hash, role, plano, status_assinatura) VALUES ('master@teste.local', 'master@teste.local', 'x', 'master', 'empresa', 'ativa')`)
 
 const { encode } = await import('next-auth/jwt')
@@ -44,10 +49,16 @@ const { proxy } = await import('../src/proxy')
 const { exigirMaster } = await import('../src/lib/admin-guard')
 const { limparCacheRevogacao } = await import('../src/lib/revogacao')
 
-/** JWT como o authorize emitiria: login 1 s atrás, sem `revogado`. */
-const tokenDe = (id: string, role = 'user') => encode({
+/**
+ * JWT como o authorize emitiria: senha nunca trocada (senhaVersao 0), login 1 s atrás, sem
+ * `revogado`. `legado`: token de antes da senhaVersao existir (só loginEm).
+ */
+const tokenDe = (id: string, role = 'user', legado = false) => encode({
   secret: process.env.NEXTAUTH_SECRET!,
-  token: { id, email: id, role, plano: role === 'master' ? 'empresa' : 'pro', status: 'ativa', expiraEm: null, sessaoId: 's', loginEm: Date.now() - 1000, rev: Date.now() },
+  token: {
+    id, email: id, role, plano: role === 'master' ? 'empresa' : 'pro', status: 'ativa', expiraEm: null, sessaoId: 's',
+    loginEm: Date.now() - 1000, rev: Date.now(), ...(legado ? {} : { senhaVersao: 0 }),
+  },
 })
 const pedido = (caminho: string, jwt: string) =>
   new NextRequest(new URL(caminho, 'http://localhost:3000'), { headers: { cookie: `next-auth.session-token=${jwt}` } })
@@ -102,6 +113,37 @@ console.log('ok 5 — sem intervenção no cache: negado em até 5 s')
 const pub = await proxy(pedido('/login', t1))
 assert.ok(passou(pub) && cookieApagado(pub), '/login abre e limpa o cookie, para entrar de novo')
 console.log('ok 6 — /login com token revogado: abre e apaga o cookie')
+
+// ── 7. Corrida: senha validada → trocada → callback jwt conclui. O token já nasce morto ──
+// Antes, o token levava loginEm = instante do CALLBACK, posterior à troca, e era aceito embora
+// autenticado com a senha revogada (revisão da #68). Agora leva a versão da senha lida na
+// mesma consulta que conferiu o hash.
+const { authOptions } = await import('../src/lib/auth')
+type Cred = { id: string; options: { authorize: (c: Record<string, string>, r: { headers: Record<string, string> }) => Promise<Record<string, unknown> | null> } }
+const cred = authOptions.providers.find((p) => p.id === 'credentials') as unknown as Cred
+const jwtCallback = authOptions.callbacks!.jwt! as unknown as (a: { token: Record<string, unknown>; user?: unknown }) => Promise<Record<string, unknown>>
+const emitirPeloLogin = async (trocarNoMeio: boolean) => {
+  const user = await cred.options.authorize({ email: 'corrida@teste.local', password: 'SenhaAntiga1', otp: '' }, { headers: {} })
+  assert.ok(user, 'a senha antiga ainda confere no authorize')
+  if (trocarNoMeio) { // a "pausa": a troca é confirmada entre a validação e o callback
+    await admin.query(`UPDATE usuarios SET senha_hash=$2, senha_alterada_em=now() WHERE id=$1`,
+      ['corrida@teste.local', bcrypt.hashSync('SenhaNova123', 10)])
+    limparCacheRevogacao()
+  }
+  const token = await jwtCallback({ token: {}, user })
+  return encode({ secret: process.env.NEXTAUTH_SECRET!, token })
+}
+assert.ok(passou(await proxy(pedido('/api/conta', await emitirPeloLogin(false)))), 'controle: sem troca, o login vale')
+const tCorrida = await emitirPeloLogin(true)
+assert.equal((await proxy(pedido('/api/conta', tCorrida))).status, 401, 'token autenticado com a senha revogada é negado')
+console.log('ok 7 — corrida: senha trocada entre a validação e o callback → token negado')
+
+// ── 8. Token legado (sem senhaVersao) segue a regra do loginEm: cai na troca de senha ───
+const tl = await tokenDe('legado@teste.local', 'user', true)
+assert.ok(passou(await proxy(pedido('/api/conta', tl))))
+await revogar(`UPDATE usuarios SET senha_alterada_em = now() WHERE id=$1`, 'legado@teste.local')
+assert.equal((await proxy(pedido('/api/conta', tl))).status, 401)
+console.log('ok 8 — token legado (só loginEm): cai na troca de senha')
 
 await admin.end()
 console.log('OK: token revogado é negado direto nas APIs, sem depender do navegador')

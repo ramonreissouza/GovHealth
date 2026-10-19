@@ -23,6 +23,17 @@ test('senha_alterada_em só no RETURNING, numa comparação ou num comentário: 
   assert.equal(viola('UPDATE usuarios SET senha_hash=$1 /* senha_alterada_em = now() */ WHERE id=$2'), 1)
 })
 
+test('maiúsculas, caixa mista e aspas: a mesma coluna para o Postgres (revisão da #68)', () => {
+  assert.equal(viola('UPDATE usuarios SET SENHA_HASH = $1 WHERE id = $2'), 1)
+  assert.equal(viola('UPDATE usuarios SET Senha_Hash = $1 WHERE id = $2'), 1)
+  assert.equal(viola('UPDATE usuarios SET "senha_hash" = $1 WHERE id = $2'), 1)
+  assert.equal(viola('update usuarios set senha_hash = $1 where id = $2'), 1, 'palavras-chave em minúsculas')
+  assert.equal(viola('UPDATE usuarios SET SENHA_HASH = $1, SENHA_ALTERADA_EM = now() WHERE id = $2'), 0)
+  assert.equal(viola('UPDATE usuarios SET "senha_hash" = $1, "senha_alterada_em" = now() WHERE id = $2'), 0)
+  assert.equal(viola('UPDATE usuarios SET Senha_Hash = $1 WHERE id = $2 AND SENHA_ALTERADA_EM IS NOT NULL'), 1)
+  assert.equal(viola('UPDATE usuarios u SET u.senha_hash = $1 WHERE u.id = $2'), 1, 'qualificado pela tabela')
+})
+
 test('upsert: o DO UPDATE SET também precisa atribuir', () => {
   const base = 'INSERT INTO usuarios (id,senha_hash) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET '
   assert.equal(viola(base + 'senha_hash=EXCLUDED.senha_hash, senha_alterada_em=now(), nome=EXCLUDED.nome'), 0)
