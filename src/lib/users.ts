@@ -438,21 +438,9 @@ export async function alterarSenha(
   if (!confere) return { ok: false, erro: 'credenciais' }
   if (!senhaForteOk(novaSenha)) return { ok: false, erro: 'senha_fraca' }
   const hash = await bcrypt.hash(novaSenha.trim(), 10)
-  // senha_alterada_em derruba as sessões abertas antes da troca (sessaoRevogada).
+  // senha_alterada_em derruba as sessões abertas antes da troca (lib/revogacao).
   await query(`UPDATE usuarios SET senha_hash=$1, senha_alterada_em=now(), atualizado_em=now() WHERE id=$2`, [hash, uid])
   return { ok: true }
-}
-
-/**
- * A sessão iniciada em `loginEm` (ms) deve cair? Sim se a conta foi suspensa, excluída
- * (inclui membro removido da equipe e anonimização LGPD) ou teve a senha trocada
- * depois do login. Conta que sumiu do banco também cai.
- */
-export async function sessaoRevogada(id: string, loginEm: number): Promise<boolean> {
-  const row = await queryOne<{ suspenso: boolean; deleted_at: string | null; senha_alterada_em: string | null }>(
-    `SELECT suspenso, deleted_at, senha_alterada_em FROM usuarios WHERE id=$1`, [norm(id)])
-  if (!row || row.suspenso || row.deleted_at) return true
-  return !!row.senha_alterada_em && new Date(row.senha_alterada_em).getTime() > loginEm
 }
 
 export interface ContaResumo {

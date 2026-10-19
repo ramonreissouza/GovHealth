@@ -1,4 +1,11 @@
-// src/middleware.ts — roteamento de acesso + rate limiting.
+// src/proxy.ts — roteamento de acesso + rate limiting + revogação de sessão.
+//
+// Era src/middleware.ts. O Next 16 trocou a convenção por `proxy`, que roda SEMPRE em
+// Node.js (o middleware rodava no Edge). A troca veio com a revisão da #68: o proxy é o
+// único ponto por onde passam todas as rotas, e só em Node ele consegue perguntar ao banco
+// se a sessão foi revogada (src/lib/revogacao.ts) — um JWT capturado e usado direto nas
+// APIs não passa pelo callback jwt, que era quem marcava a revogação.
+//
 // Roteamento (item 1 do TOP10 v2):
 //  - Visitante NÃO logado no apex "/"  → landing pública "/inicio"
 //  - Visitante NÃO logado em rota interna → "/login" (com callbackUrl)
@@ -16,6 +23,7 @@ import { getToken } from 'next-auth/jwt'
 import { rateLimit, type RateResult } from '@/lib/rate-limit'
 import { tokenMaster } from '@/lib/admin-guard'
 import { ipCliente } from '@/lib/ip'
+import { sessaoRevogadaAgora, loginEmDo } from '@/lib/revogacao'
 import { ehRotaPro, ehRotaEmpresa, temAcessoPro, temAcessoEmpresa } from '@/lib/plano-gating'
 
 const ROTAS_PUBLICAS = ['/inicio', '/login', '/metodologia', '/privacidade', '/termos', '/assinar', '/aceitar-convite', '/esqueci-senha', '/redefinir-senha']
@@ -41,7 +49,7 @@ function resp429(r: RateResult): NextResponse {
   })
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   // ── Arquivos estáticos públicos (logo, screenshots, fontes, etc.) ────────────
@@ -92,9 +100,25 @@ export async function middleware(req: NextRequest) {
   // ── Auth de sessão (páginas e demais APIs) ───────────────────────────────────
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
 
-  // Sessão revogada (conta suspensa/excluída ou senha trocada depois do login; marcada
-  // no callback jwt de lib/auth): vale como deslogado e o cookie é apagado.
-  if (token?.revogado) {
+  // Sessão revogada (conta suspensa/excluída ou senha trocada depois do login): vale como
+  // deslogado e o cookie é apagado. Conferida no BANCO a cada requisição (com cache de
+  // segundos), não só pelo `revogado` que o callback jwt grava no token: o getToken apenas
+  // decifra o cookie, e um token usado direto nas APIs nunca passa pelo callback.
+  let revogado = !!token?.revogado
+  if (token?.id && !revogado) {
+    try {
+      revogado = await sessaoRevogadaAgora(String(token.id), loginEmDo(token))
+    } catch (e) {
+      // Sem banco não dá para saber se a sessão vale: nega o que é privado (fail-closed).
+      console.error('[proxy] revogação indisponível:', e)
+      if (!ehPublica(pathname)) {
+        return pathname.startsWith('/api/')
+          ? NextResponse.json({ error: 'Serviço indisponível. Tente de novo em instantes.' }, { status: 503 })
+          : new NextResponse('Serviço indisponível. Tente de novo em instantes.', { status: 503 })
+      }
+    }
+  }
+  if (revogado) {
     let res: NextResponse
     if (pathname.startsWith('/api/')) res = NextResponse.json({ error: 'Sessão encerrada. Entre novamente.' }, { status: 401 })
     else if (ehPublica(pathname)) res = NextResponse.next()

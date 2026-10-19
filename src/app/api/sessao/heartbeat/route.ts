@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { FLAG_SESSAO_UNICA, tocarSessao } from '@/lib/seguranca'
-import { sessaoRevogada } from '@/lib/users'
+import { sessaoRevogada } from '@/lib/revogacao'
 
 export const runtime = 'nodejs'
 

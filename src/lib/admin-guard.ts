@@ -6,10 +6,11 @@
 import { getToken } from 'next-auth/jwt'
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
+import { sessaoRevogadaAgora, loginEmDo } from '@/lib/revogacao'
 
 const ADMIN_SESSAO_MAX_S = 8 * 60 * 60 // 8h de frescor para o master
 
-export interface TokenAdmin { id?: string; email?: string | null; role?: string; iat?: number; revogado?: boolean }
+export interface TokenAdmin { id?: string; email?: string | null; role?: string; iat?: number; revogado?: boolean; loginEm?: number }
 
 /** Retorna o token se for um master válido e "fresco"; senão null. */
 export async function tokenMaster(req: NextRequest): Promise<TokenAdmin | null> {
@@ -23,6 +24,17 @@ export async function tokenMaster(req: NextRequest): Promise<TokenAdmin | null> 
 
   // Sessão do admin expira mais rápido que a do usuário comum.
   if (token.iat && Date.now() / 1000 - token.iat > ADMIN_SESSAO_MAX_S) return null
+
+  // Revogação conferida no BANCO, não só no `revogado` do token: um JWT de master capturado
+  // e usado direto em /api/admin/* não passa pelo callback jwt que marcaria o campo
+  // (revisão da #68). Banco indisponível nega — é a área mais sensível.
+  if (!token.id) return null
+  try {
+    if (await sessaoRevogadaAgora(token.id, loginEmDo(token))) return null
+  } catch (e) {
+    console.error('[admin-guard] revogação indisponível, acesso negado:', e)
+    return null
+  }
 
   return token
 }
