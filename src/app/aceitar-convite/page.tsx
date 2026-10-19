@@ -5,7 +5,8 @@ import { Suspense, useEffect, useState, FormEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Loader2, CheckCircle2 } from 'lucide-react'
+import { clsx } from 'clsx'
+import { Loader2, CheckCircle2, Check, AlertTriangle } from 'lucide-react'
 
 export default function AceitarConvitePage() {
   return (
@@ -18,7 +19,7 @@ export default function AceitarConvitePage() {
 const MSG: Record<string, string> = {
   invalido: 'Convite inválido ou expirado.',
   email_existe: 'Já existe uma conta com este e-mail.',
-  senha_curta: 'Escolha uma senha de ao menos 6 caracteres.',
+  senha_fraca: 'A senha precisa ter ao menos 8 caracteres, com letras e números.',
   sem_vagas: 'A equipe atingiu o limite de usuários do plano.',
 }
 
@@ -31,6 +32,8 @@ function Inner() {
   const [senha, setSenha] = useState('')
   const [erro, setErro] = useState('')
   const [loading, setLoading] = useState(false)
+  // Mesma regra do servidor (senhaForteOk em src/lib/users.ts).
+  const forteOk = senha.trim().length >= 8 && /[A-Za-z]/.test(senha) && /[0-9]/.test(senha)
 
   useEffect(() => {
     if (!token) { setEstado('invalido'); return }
@@ -42,7 +45,7 @@ function Inner() {
 
   async function submit(e: FormEvent) {
     e.preventDefault(); setErro('')
-    if (senha.length < 6) { setErro(MSG.senha_curta); return }
+    if (!forteOk) { setErro(MSG.senha_fraca); return }
     setLoading(true)
     const r = await fetch('/api/equipe/aceitar', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -100,7 +103,11 @@ function Inner() {
                 </div>
                 <div>
                   <label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">Criar senha *</label>
-                  <input type="password" className={inp} value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="mín. 6 caracteres" />
+                  <input type="password" className={inp} value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="mín. 8 caracteres" autoComplete="new-password" />
+                  <div className={clsx('text-[11px] mt-1.5 flex items-center gap-1', senha.length === 0 ? 'text-faint' : forteOk ? 'text-emerald-400' : 'text-amber-400')}>
+                    {senha.length > 0 && (forteOk ? <Check size={11} /> : <AlertTriangle size={11} />)}
+                    Mínimo 8 caracteres, com letras e números.
+                  </div>
                 </div>
                 {erro && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{erro}</p>}
                 <button type="submit" disabled={loading}

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { FLAG_SESSAO_UNICA, tocarSessao } from '@/lib/seguranca'
+import { sessaoRevogada, marcaDo } from '@/lib/revogacao'
 
 export const runtime = 'nodejs'
 
@@ -13,6 +14,9 @@ export async function POST(req: NextRequest) {
   const id = token?.id as string | undefined
   const sid = token?.sessaoId as string | undefined
   if (!id || !sid) return NextResponse.json({ ok: false }, { status: 401 })
+  // Revogação vale com ou sem a trava de sessão única: conta suspensa/excluída ou senha
+  // trocada depois deste login derruba a sessão em até um ciclo do heartbeat.
+  if (await sessaoRevogada(id, marcaDo(token!))) return NextResponse.json({ ok: false, motivo: 'revogada' })
   const atual = await tocarSessao(id, sid)
   // `iniciarSessao` roda em TODO login, mesmo com a trava desligada — então o
   // sessao_id do banco passa a ser o da máquina mais recente e o token das outras
