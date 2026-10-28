@@ -20,8 +20,8 @@ if (!process.env.STRIPE_SECRET_KEY) { console.error('ERRO: STRIPE_SECRET_KEY nã
 
 // Planos (espelho de src/lib/planos.ts — mantido simples para o script .mjs).
 const PLANOS = [
-  { id: 'essencial', nome: 'Essencial', preco: 490 },
-  { id: 'pro', nome: 'Pro', preco: 990 },
+  { id: 'essencial', nome: 'Essencial', preco: 990 },
+  { id: 'pro', nome: 'Pro', preco: 1990 },
 ]
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
