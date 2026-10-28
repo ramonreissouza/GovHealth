@@ -3,8 +3,11 @@ import type { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { verificarLogin, buscarUsuario } from '@/lib/users'
+import { sessaoRevogada, marcaDo, versaoSenha } from '@/lib/revogacao'
+import { cookies } from 'next/headers'
 import { registrarAcesso, extrairGeo } from '@/lib/acessos'
-import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao } from '@/lib/seguranca'
+import { nomeCookieDispositivo, dispositivoConfiavel, emitirDispositivo, opcoesCookieDispositivo } from '@/lib/dispositivo-confiavel'
+import { FLAG_2FA, FLAG_SESSAO_UNICA, verificarOtp, sessaoAtiva, iniciarSessao, encerrarSessao, loginContaLiberado } from '@/lib/seguranca'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -26,6 +29,8 @@ export const authOptions: NextAuthOptions = {
         // senhas das contas não têm espaço nas bordas, então isso só ajuda.
         const senha = credentials?.password?.trim()
         if (!email || !senha) return null
+        // Mesmo limite por e-mail do passo 1: o callback também é porta de senha e de código.
+        if (!(await loginContaLiberado(email))) throw new Error('BLOQUEADO')
 
         const { user } = await verificarLogin(email, senha)
         if (!user) return null
@@ -35,11 +40,18 @@ export const authOptions: NextAuthOptions = {
         if (FLAG_SESSAO_UNICA && !isMaster && (await sessaoAtiva(user.id))) {
           throw new Error('SESSAO_ATIVA')
         }
-        // 2FA por e-mail: exige OTP válido (o /api/auth/otp já enviou o código).
+        // 2FA por e-mail: exige OTP válido (o /api/auth/otp já enviou o código), salvo
+        // neste navegador já confirmado nos últimos DISPOSITIVO_DIAS. O código certo marca
+        // o navegador — o cookie sai na resposta desta própria rota do NextAuth.
         if (FLAG_2FA && !isMaster) {
-          const otp = credentials?.otp?.trim()
-          if (!otp) return null
-          if (!(await verificarOtp(user.id, otp))) throw new Error('OTP_INVALIDO')
+          const jar = await cookies()
+          if (!dispositivoConfiavel(jar.get(nomeCookieDispositivo())?.value, user.id, user.senha_alterada_em)) {
+            const otp = credentials?.otp?.trim()
+            if (!otp) return null
+            if (!(await verificarOtp(user.id, otp))) throw new Error('OTP_INVALIDO')
+            const d = emitirDispositivo(user.id, user.senha_alterada_em)
+            jar.set(nomeCookieDispositivo(), d.valor, opcoesCookieDispositivo(d.maxAge))
+          }
         }
         // Registra a sessão desta máquina (para o controle de sessão única).
         const sessaoId = await iniciarSessao(user.id)
@@ -58,6 +70,10 @@ export const authOptions: NextAuthOptions = {
         return {
           id: user.id, name: user.nome, email: user.email, image: null, role: user.role,
           plano: user.plano, status: user.status_assinatura, expiraEm, sessaoId,
+          // A versão da senha lida NA MESMA consulta que conferiu o hash (verificarLogin):
+          // se a senha mudar daqui até o token ser emitido, ele já nasce revogado
+          // (lib/revogacao MarcaSessao — revisão da #68).
+          senhaVersao: versaoSenha(user.senha_alterada_em),
         }
       },
     }),
@@ -72,27 +88,38 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null; sessaoId?: string }
+        const u = user as { id?: string; role?: string; plano?: string | null; status?: string | null; expiraEm?: string | null; sessaoId?: string; senhaVersao?: number }
         token.id = u.id
         token.role = u.role ?? 'user'
         token.plano = u.plano ?? null
         token.status = u.status ?? null
         token.expiraEm = u.expiraEm ?? null
         token.sessaoId = u.sessaoId ?? null
+        // senhaVersao vem do authorize (a leitura que validou a senha), não deste instante.
+        // Provedor sem ela (Google) cai na regra legada do loginEm em lib/revogacao.
+        if (typeof u.senhaVersao === 'number') token.senhaVersao = u.senhaVersao
+        token.loginEm = Date.now()
         token.rev = Date.now()
         return token
       }
-      // Revalida plano/status/expiração no banco no máximo a cada ~60s por sessão.
-      // Assim, quando o admin ativa a conta (status→'ativa'), o acesso volta sem
-      // exigir novo login. O master é isento (não sofre gate de plano/trial).
+      // Revalida no banco no máximo a cada ~60s por sessão:
+      //  - revogação (TODOS, inclusive o master): conta suspensa, excluída ou com senha
+      //    trocada (lib/revogacao). O token fica marcado e o navegador é deslogado. Quem
+      //    barra o token usado direto nas APIs é o proxy, que confere o banco sempre.
+      //  - plano/status/expiração (exceto master, que não sofre gate de plano/trial):
+      //    quando o admin ativa a conta, o acesso volta sem exigir novo login.
       const rev = typeof token.rev === 'number' ? token.rev : 0
-      if (token.id && token.role !== 'master' && Date.now() - rev > 60_000) {
+      if (token.id && !token.revogado && Date.now() - rev > 60_000) {
         try {
-          const atual = await buscarUsuario(token.id as string)
-          if (atual) {
-            token.plano = atual.plano ?? null
-            token.status = atual.status_assinatura ?? null
-            token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+          if (await sessaoRevogada(token.id as string, marcaDo(token))) {
+            token.revogado = true
+          } else if (token.role !== 'master') {
+            const atual = await buscarUsuario(token.id as string)
+            if (atual) {
+              token.plano = atual.plano ?? null
+              token.status = atual.status_assinatura ?? null
+              token.expiraEm = atual.expira_em ? String(atual.expira_em).slice(0, 10) : null
+            }
           }
         } catch { /* mantém o token atual se o banco falhar */ }
         token.rev = Date.now()

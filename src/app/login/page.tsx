@@ -4,7 +4,7 @@
 
 import { signIn, getSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState, useEffect, Suspense, FormEvent } from 'react'
+import { useState, useEffect, useRef, Suspense, FormEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { clsx } from 'clsx'
@@ -12,6 +12,7 @@ import { Loader2, Check, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco, DIAS_TESTE_GRATIS } from '@/lib/planos'
 
 type Modo = 'entrar' | 'criar'
+type Credenciais = { email: string; senha: string }
 
 export default function LoginPage() {
   return (
@@ -26,6 +27,8 @@ function Auth() {
   const sp = useSearchParams()
   const querPlano = planoPorId(sp.get('plano'))
   const [modo, setModo] = useState<Modo>(sp.get('criar') === '1' || querPlano ? 'criar' : 'entrar')
+  // Conta recém-criada com 2FA ligado: o Entrar já abre na etapa do código.
+  const [recemCriada, setRecemCriada] = useState<Credenciais | null>(null)
 
   useEffect(() => {
     getSession().then((s) => { if (s) router.replace('/') })
@@ -68,59 +71,126 @@ function Auth() {
         </div>
 
         {/* Empresa é sob consulta (contato) — não entra no fluxo de teste grátis. */}
-        {modo === 'entrar' ? <Entrar router={router} /> : <Criar router={router} planoInicial={querPlano && !querPlano.contato ? (querPlano.id as 'essencial' | 'pro') : undefined} />}
+        {modo === 'entrar'
+          ? <Entrar router={router} recemCriada={recemCriada} />
+          : <Criar router={router} planoInicial={querPlano && !querPlano.contato ? (querPlano.id as 'essencial' | 'pro') : undefined}
+              onPrecisaCodigo={(c) => { setRecemCriada(c); setModo('entrar') }} />}
       </div>
     </div>
   )
 }
 
 /* ───────────────────────── Login (2 etapas: senha → código) ───────────────────────── */
-function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
+
+const REENVIO_SEG = 60 // o mesmo intervalo de OTP_REENVIO_SEG em src/lib/seguranca.ts
+const DISPOSITIVO_DIAS_UI = 7 // o mesmo de DISPOSITIVO_DIAS em src/lib/dispositivo-confiavel.ts (server-only)
+
+// ?motivo= de quem foi mandado de volta ao login.
+const MOTIVOS: Record<string, string> = {
+  sessao: 'Você foi desconectado: sua conta foi acessada em outro dispositivo.',
+  revogada: 'Sua sessão foi encerrada (senha alterada ou acesso revogado). Entre novamente.',
+  senha: 'Senha alterada. Entre com a nova senha.',
+}
+
+// O erro do authorize (src/lib/auth.ts) chega aqui como res.error.
+function erroDoSignIn(erro: string, comCodigo: boolean): string {
+  if (erro === 'OTP_INVALIDO') return 'Código inválido ou expirado.'
+  if (erro === 'BLOQUEADO') return 'Muitas tentativas. Aguarde alguns minutos e tente de novo.'
+  if (erro === 'SESSAO_ATIVA') return 'Já existe uma sessão ativa em outro dispositivo. Saia de lá ou aguarde alguns minutos e tente de novo.'
+  return comCodigo ? 'Código inválido ou expirado.' : 'Email ou senha incorretos.'
+}
+function Entrar({ router, recemCriada }: { router: ReturnType<typeof useRouter>; recemCriada: Credenciais | null }) {
   const sp = useSearchParams()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [email, setEmail] = useState(recemCriada?.email ?? '')
+  const [password, setPassword] = useState(recemCriada?.senha ?? '')
+  // 1º acesso vai para o Setup da Empresa, como no cadastro sem 2FA (ver Criar).
+  const destino = recemCriada ? '/perfil?onboarding=1' : '/'
   const [otp, setOtp] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [etapa, setEtapa] = useState<'senha' | 'codigo'>('senha')
   const [error, setError] = useState('')
-  const [info, setInfo] = useState(sp.get('motivo') === 'sessao'
-    ? 'Você foi desconectado: sua conta foi acessada em outro dispositivo.' : '')
+  const [info, setInfo] = useState(MOTIVOS[sp.get('motivo') ?? ''] ?? '')
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
+  const [reenvioEm, setReenvioEm] = useState(0) // segundos até poder reenviar o código
+  const [reenviando, setReenviando] = useState(false)
+
+  useEffect(() => {
+    if (reenvioEm <= 0) return
+    const t = setTimeout(() => setReenvioEm((s) => s - 1), 1000)
+    return () => clearTimeout(t)
+  }, [reenvioEm])
 
   async function entrar(codigo?: string) {
     const res = await signIn('credentials', { email, password, otp: codigo ?? '', redirect: false })
-    if (res?.error) { setError(codigo ? 'Código inválido ou expirado.' : 'Email ou senha incorretos.'); return false }
-    router.replace('/'); return true
+    if (res?.error) { setError(erroDoSignIn(res.error, !!codigo)); return false }
+    router.replace(destino); return true
   }
 
-  // Etapa 1: valida senha, checa sessão única e dispara o código (se 2FA ligado).
+  // Valida a senha, checa sessão única e dispara o código (se 2FA ligado). Usada na
+  // etapa 1 e no "Reenviar código". Retorna false se parou num erro.
+  async function pedirCodigo(): Promise<false | { precisaOtp: boolean }> {
+    const r = await fetch('/api/auth/otp', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), senha: password }),
+    })
+    const d = await r.json().catch(() => ({}))
+    if (d.erro === 'otp_bloqueado') {
+      const min = Math.max(1, Math.ceil((d.aguardeSeg ?? 600) / 60))
+      setError(`Código digitado errado muitas vezes. Peça um novo código em ${min} min.`); return false
+    }
+    if (d.erro === 'envio_falhou') { setError('Não conseguimos enviar o código agora. Tente de novo em instantes.'); return false }
+    if (r.status === 429) { setError('Muitas tentativas. Aguarde alguns minutos e tente de novo.'); return false }
+    if (d.erro === 'sessao_ativa') { setError('Já existe uma sessão ativa em outro dispositivo. Saia de lá ou aguarde alguns minutos e tente de novo.'); return false }
+    if (d.erro === 'credenciais' || !r.ok) { setError('Email ou senha incorretos.'); return false }
+    if (d.precisaOtp) {
+      if (d.aguardeSeg) {
+        setReenvioEm(d.aguardeSeg)
+        setInfo(`Um código já foi enviado para ${email.trim()}. Para pedir outro, aguarde ${d.aguardeSeg}s.`)
+      } else {
+        setReenvioEm(REENVIO_SEG)
+        setInfo(d.enviado ? `Enviamos um código de 6 dígitos para ${email.trim()}.` : 'Código gerado — verifique seu e-mail (pode levar 1 min).')
+      }
+    }
+    return { precisaOtp: !!d.precisaOtp }
+  }
+
+  // Etapa 1: senha.
   async function handleCredentials(e: FormEvent) {
     e.preventDefault()
     setError(''); setInfo(''); setLoading(true)
     try {
-      const r = await fetch('/api/auth/otp', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), senha: password }),
-      })
-      const d = await r.json().catch(() => ({}))
-      if (r.status === 429) { setError('Muitas tentativas. Aguarde um minuto.'); return }
-      if (d.erro === 'sessao_ativa') { setError('Já existe uma sessão ativa em outro dispositivo. Saia de lá ou aguarde alguns minutos e tente de novo.'); return }
-      if (d.erro === 'credenciais' || !r.ok) { setError('Email ou senha incorretos.'); return }
-      if (d.precisaOtp) {
-        setEtapa('codigo')
-        setInfo(d.enviado ? `Enviamos um código de 6 dígitos para ${email.trim()}.` : 'Código gerado — verifique seu e-mail (pode levar 1 min).')
-        return
-      }
+      const r = await pedirCodigo()
+      if (!r) return
+      if (r.precisaOtp) { setEtapa('codigo'); return }
       await entrar() // 2FA desligado → entra direto
     } finally { setLoading(false) }
   }
 
+  // Etapa 2: código.
   async function handleOtp(e: FormEvent) {
     e.preventDefault()
     setError(''); setLoading(true)
     try { await entrar(otp.trim()) } finally { setLoading(false) }
   }
+
+  async function reenviar() {
+    setError(''); setInfo(''); setReenviando(true)
+    try { await pedirCodigo(); setOtp('') } finally { setReenviando(false) }
+  }
+
+  // Veio do cadastro: pede o código uma vez, sem o usuário digitar a senha de novo.
+  const pediuInicial = useRef(false)
+  useEffect(() => {
+    if (!recemCriada || pediuInicial.current) return
+    pediuInicial.current = true
+    setLoading(true)
+    pedirCodigo()
+      .then((r) => { if (r && r.precisaOtp) setEtapa('codigo') })
+      .catch(() => setError('Não foi possível enviar o código. Entre com seu e-mail e senha.'))
+      .finally(() => setLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só na montagem
+  }, [recemCriada])
 
   async function handleGoogle() { setGoogleLoading(true); await signIn('google', { callbackUrl: '/' }) }
 
@@ -155,13 +225,13 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
         <form onSubmit={handleCredentials} className="flex flex-col gap-3">
           <div>
             <label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">Email</label>
-            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="voce@empresa.com.br"
+            <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="voce@empresa.com.br"
               className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div>
             <label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">Senha</label>
             <div className="relative">
-              <input type={showPass ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+              <input type={showPass ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
                 className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 pr-10 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors" />
               <button type="button" onClick={() => setShowPass((v) => !v)} tabIndex={-1}
                 aria-label={showPass ? 'Ocultar senha' : 'Mostrar senha'}
@@ -183,17 +253,25 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
         <form onSubmit={handleOtp} className="flex flex-col gap-3">
           <div>
             <label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">Código de acesso (e-mail)</label>
-            <input inputMode="numeric" maxLength={6} required autoFocus value={otp}
+            <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} required autoFocus value={otp}
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} placeholder="000000"
               className="w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[18px] font-mono-custom tracking-[8px] text-center text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors" />
+            <p className="text-[11px] text-faint mt-1.5">Neste navegador, o código só será pedido de novo em {DISPOSITIVO_DIAS_UI} dias.</p>
           </div>
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
           <button type="submit" disabled={loading || otp.length < 6}
             className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60">
             {loading && <Loader2 size={14} className="animate-spin" />} Confirmar código
           </button>
-          <button type="button" onClick={() => { setEtapa('senha'); setError(''); setOtp('') }}
-            className="text-[11px] text-muted hover:text-strong transition-colors">← Voltar</button>
+          <div className="flex items-center justify-between">
+            <button type="button" onClick={() => { setEtapa('senha'); setError(''); setInfo(''); setOtp('') }}
+              className="text-[11px] text-muted hover:text-strong transition-colors">← Voltar</button>
+            <button type="button" onClick={reenviar} disabled={reenviando || reenvioEm > 0}
+              className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-accent transition-colors disabled:opacity-60 disabled:hover:text-muted">
+              {reenviando && <Loader2 size={11} className="animate-spin" />}
+              {reenvioEm > 0 ? `Reenviar código em ${reenvioEm}s` : 'Reenviar código'}
+            </button>
+          </div>
         </form>
       )}
 
@@ -207,7 +285,9 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
 }
 
 /* ───────────────────────── Cadastro + plano + trial ───────────────────────── */
-function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>; planoInicial?: 'essencial' | 'pro' }) {
+function Criar({ router, planoInicial, onPrecisaCodigo }: {
+  router: ReturnType<typeof useRouter>; planoInicial?: 'essencial' | 'pro'; onPrecisaCodigo: (c: Credenciais) => void
+}) {
   const [f, setF] = useState({ nome: '', email: '', senha: '', empresa: '', cnpj: '', telefone: '' })
   const [plano, setPlano] = useState<'essencial' | 'pro'>(planoInicial ?? 'pro')
   const [error, setError] = useState('')
@@ -215,13 +295,14 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
   const [showPass, setShowPass] = useState(false)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value })
   const inp = 'w-full bg-bg3 border border-subtle rounded-lg px-3 py-2.5 text-[13px] text-strong placeholder:text-faint focus:outline-none focus:border-accent transition-colors'
+  // Mesma regra do servidor (senhaForteOk em src/lib/users.ts).
+  const senhaOk = f.senha.trim().length >= 8 && /[A-Za-z]/.test(f.senha) && /[0-9]/.test(f.senha)
 
   async function handleCriar(e: FormEvent) {
     e.preventDefault()
     setError('')
-    if (f.nome.trim().length < 2 || !f.email.trim() || f.senha.length < 6) {
-      setError('Preencha nome, e-mail e uma senha de ao menos 6 caracteres.'); return
-    }
+    if (f.nome.trim().length < 2 || !f.email.trim()) { setError('Preencha nome e e-mail.'); return }
+    if (!senhaOk) { setError('A senha precisa ter ao menos 8 caracteres, com letras e números.'); return }
     setLoading(true)
     const res = await fetch('/api/cadastro', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -232,7 +313,8 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
     // loga automaticamente com as credenciais recém-criadas
     const login = await signIn('credentials', { email: f.email.trim().toLowerCase(), password: f.senha, redirect: false })
     setLoading(false)
-    if (login?.error) { setError('Conta criada, mas o login falhou. Tente entrar manualmente.'); return }
+    // Com 2FA ligado o login sem código é recusado: o 1º acesso também confirma o e-mail.
+    if (login?.error) { onPrecisaCodigo({ email: f.email.trim().toLowerCase(), senha: f.senha }); return }
     // 1º acesso: primeira tela é o Setup da Empresa (estados, produtos…). Após salvar,
     // o cliente cai no Dashboard já filtrado. (Ver src/lib/onboarding.ts)
     router.replace('/perfil?onboarding=1')
@@ -255,13 +337,16 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
           <div className="grid grid-cols-2 gap-3">
             <Campo label="Senha *">
               <div className="relative">
-                <input type={showPass ? 'text' : 'password'} className={inp + ' pr-10'} value={f.senha} onChange={set('senha')} placeholder="mín. 6 caracteres" />
+                <input type={showPass ? 'text' : 'password'} autoComplete="new-password" className={inp + ' pr-10'} value={f.senha} onChange={set('senha')} placeholder="mín. 8, letras e números" />
                 <button type="button" onClick={() => setShowPass((v) => !v)} tabIndex={-1}
                   aria-label={showPass ? 'Ocultar senha' : 'Mostrar senha'}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint hover:text-strong transition-colors">
                   {showPass ? <EyeOff size={15} /> : <Eye size={15} />}
                 </button>
               </div>
+              {f.senha.length > 0 && !senhaOk && (
+                <div className="text-[11px] mt-1.5 text-amber-400">Mínimo 8 caracteres, com letras e números.</div>
+              )}
             </Campo>
             <Campo label="Telefone"><input className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Campo>
           </div>

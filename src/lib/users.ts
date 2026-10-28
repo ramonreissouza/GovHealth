@@ -25,20 +25,29 @@ export interface Usuario {
   deleted_at: string | null
   criado_em: string
   ultimo_acesso?: string | null
+  /** Última troca de senha. Vem no verificarLogin (SELECT *); invalida dispositivos lembrados. */
+  senha_alterada_em?: string | null
 }
 
 interface UsuarioComHash extends Usuario { senha_hash: string }
 
 const norm = (email: string) => email.trim().toLowerCase()
 
+// Hash de uma senha que ninguém conhece, com o mesmo custo dos reais. Conta inexistente,
+// excluída ou suspensa também paga um bcrypt.compare: sem isso a resposta voltava em
+// ~1 ms em vez de ~80 ms e o tempo dizia quais e-mails têm conta.
+const HASH_FALSO = bcrypt.hashSync(randomBytes(16).toString('hex'), 10)
+
 /** Verifica login. Retorna o usuário (sem hash) ou um motivo de recusa. */
 export async function verificarLogin(email: string, senha: string): Promise<{ user?: Usuario; motivo?: string }> {
   const row = await queryOne<UsuarioComHash>(
     `SELECT * FROM usuarios WHERE id = $1`, [norm(email)],
   )
-  if (!row) return { motivo: 'credenciais' }
-  if (row.deleted_at) return { motivo: 'excluida' }
-  if (row.suspenso) return { motivo: 'suspensa' }
+  if (!row || row.deleted_at || row.suspenso) {
+    await bcrypt.compare(senha, HASH_FALSO)
+    if (!row) return { motivo: 'credenciais' }
+    return { motivo: row.deleted_at ? 'excluida' : 'suspensa' }
+  }
   const ok = await bcrypt.compare(senha, row.senha_hash)
   if (!ok) return { motivo: 'credenciais' }
   const { senha_hash: _omit, ...user } = row
@@ -134,7 +143,7 @@ export async function anonimizarUsuario(id: string): Promise<void> {
        email = 'anon+' || left(md5(id), 16) || '@anonimizado.local',
        nome = NULL, empresa = NULL, telefone = NULL, instituicao = NULL,
        endereco = NULL, cpf = NULL, cnpj = NULL,
-       senha_hash = '', suspenso = true, deleted_at = COALESCE(deleted_at, now()),
+       senha_hash = '', senha_alterada_em = now(), suspenso = true, deleted_at = COALESCE(deleted_at, now()),
        anonimizado_em = now(), atualizado_em = now()
      WHERE id = $1`,
     [alvo],
@@ -364,7 +373,7 @@ export async function aceitarConvite(params: { token: string; senha: string; nom
   const conv = await queryOne<{ id: string; email: string; titular_id: string; cnpj: string | null; plano: string | null }>(
     `SELECT id, email, titular_id, cnpj, plano FROM convites WHERE token=$1 AND aceito_em IS NULL AND expira_em>now()`, [params.token])
   if (!conv) return { ok: false, erro: 'invalido' }
-  if (params.senha.trim().length < 6) return { ok: false, erro: 'senha_curta' }
+  if (!senhaForteOk(params.senha)) return { ok: false, erro: 'senha_fraca' }
   const email = norm(conv.email)
   if (await emailExiste(email)) return { ok: false, erro: 'email_existe' }
   // Capacidade no aceite: comparar MEMBROS reais com os assentos — este convite já
@@ -429,7 +438,8 @@ export async function alterarSenha(
   if (!confere) return { ok: false, erro: 'credenciais' }
   if (!senhaForteOk(novaSenha)) return { ok: false, erro: 'senha_fraca' }
   const hash = await bcrypt.hash(novaSenha.trim(), 10)
-  await query(`UPDATE usuarios SET senha_hash=$1, atualizado_em=now() WHERE id=$2`, [hash, uid])
+  // senha_alterada_em derruba as sessões abertas antes da troca (lib/revogacao).
+  await query(`UPDATE usuarios SET senha_hash=$1, senha_alterada_em=now(), atualizado_em=now() WHERE id=$2`, [hash, uid])
   return { ok: true }
 }
 
