@@ -30,9 +30,7 @@ export function AceiteTermos({ aceito, onChange }: { aceito: boolean; onChange: 
       <div className={aceito ? 'rounded-lg border px-3 py-2.5 transition-colors border-accent/40 bg-accent/[0.06]' : 'rounded-lg border px-3 py-2.5 transition-colors border-subtle bg-bg3'}>
         <p className="text-[11.5px] text-muted leading-snug mb-2">
           Antes de continuar, leia os{' '}
-          <a href="/termos" onClick={(e) => { e.preventDefault(); setAberto(true) }} className="text-accent hover:underline font-medium">Termos de Uso</a>{' '}
-          — com as cláusulas de uso, <strong className="text-strong">confidencialidade</strong> e{' '}
-          <strong className="text-strong">proteção de dados (LGPD)</strong>, que protegem você e a nós.
+          <a href="/termos" onClick={(e) => { e.preventDefault(); setAberto(true) }} className="text-accent hover:underline font-medium">Termos de Uso</a>.
         </p>
         <label className="flex items-start gap-2 text-[12px] text-strong cursor-pointer select-none">
           <input type="checkbox" required checked={aceito} onChange={(e) => onChange(e.target.checked)}
