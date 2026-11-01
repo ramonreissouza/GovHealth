@@ -153,6 +153,10 @@ export async function excluirUsuario(id: string): Promise<void> {
  * O registro do aceite dos Termos: o IP (`aceite_ip`) é dado pessoal e sai junto; a
  * versão aceita e o instante ficam — sem e-mail, nome nem IP, não identificam ninguém,
  * e a linha segue mostrando que a conta foi criada com aceite (Política, seção 8).
+ * Vale também para o aceite gravado nas `assinaturas` da pessoa (ligadas pelo e-mail):
+ * o IP sai na MESMA transação da conta, para nunca sobrar "anonimizado" com IP guardado.
+ * O resto da linha da assinatura (nome, CPF/CNPJ, endereço) fica: é registro de
+ * cobrança, com guarda fiscal obrigatória — e o IP não serve a essa guarda.
  *
  * ⚠️ Limitação conhecida: `id` == e-mail (chave legada referenciada por FKs não
  * enforçadas). O e-mail é substituído por um marcador derivado do hash na COLUNA
@@ -162,16 +166,23 @@ export async function excluirUsuario(id: string): Promise<void> {
  */
 export async function anonimizarUsuario(id: string): Promise<void> {
   const alvo = norm(id)
-  await query(
-    `UPDATE usuarios SET
-       email = 'anon+' || left(md5(id), 16) || '@anonimizado.local',
-       nome = NULL, empresa = NULL, telefone = NULL, instituicao = NULL,
-       endereco = NULL, cpf = NULL, cnpj = NULL, aceite_ip = NULL,
-       senha_hash = '', senha_alterada_em = now(), suspenso = true, deleted_at = COALESCE(deleted_at, now()),
-       anonimizado_em = now(), atualizado_em = now()
-     WHERE id = $1`,
-    [alvo],
-  )
+  await transacao(async (tx) => {
+    await tx.query(
+      `UPDATE usuarios SET
+         email = 'anon+' || left(md5(id), 16) || '@anonimizado.local',
+         nome = NULL, empresa = NULL, telefone = NULL, instituicao = NULL,
+         endereco = NULL, cpf = NULL, cnpj = NULL, aceite_ip = NULL,
+         senha_hash = '', senha_alterada_em = now(), suspenso = true, deleted_at = COALESCE(deleted_at, now()),
+         anonimizado_em = now(), atualizado_em = now()
+       WHERE id = $1`,
+      [alvo],
+    )
+    // `id` da conta é o e-mail normalizado; o da assinatura veio do formulário como digitado.
+    await tx.query(
+      `UPDATE assinaturas SET aceite_ip = NULL WHERE lower(trim(email)) = $1 AND aceite_ip IS NOT NULL`,
+      [alvo],
+    )
+  })
   // Satélites com PII — best-effort (não falha a operação principal).
   try {
     await query(
