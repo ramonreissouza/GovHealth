@@ -27,7 +27,9 @@ const client = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: 
 await client.connect()
 try {
   const hash = bcrypt.hashSync(senha, 10)
-  const r = await client.query(`UPDATE usuarios SET senha_hash=$1, atualizado_em=now() WHERE id=$2 AND role='master' RETURNING id`, [hash, email])
+  // senha_alterada_em derruba as sessões abertas (lib/users sessaoRevogada): é a rotação
+  // de quem suspeita de vazamento, então a sessão antiga não pode sobreviver a ela.
+  const r = await client.query(`UPDATE usuarios SET senha_hash=$1, senha_alterada_em=now(), atualizado_em=now() WHERE id=$2 AND role='master' RETURNING id`, [hash, email])
   if (!r.rowCount) { console.error(`✖ Nenhum master com id=${email}. Rode o seed antes (npm run admin:seed).`); process.exitCode = 1 }
   else {
     console.log(`✓ Senha do master (${email}) atualizada.`)

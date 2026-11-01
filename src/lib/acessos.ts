@@ -5,6 +5,7 @@
 // pessoal — há expurgo automático > 90 dias e acesso restrito ao master.)
 
 import { query, queryOne } from '@/lib/db'
+import { ipCliente } from '@/lib/ip'
 
 // A sessão do Postgres roda em UTC (medido: current_setting('TimeZone') = 'Etc/UTC'),
 // então TODA hora mostrada ao admin precisa ser convertida — sem isso o painel exibe
@@ -26,7 +27,7 @@ export interface GeoInfo {
 export function extrairGeo(get: (n: string) => string | null | undefined): GeoInfo {
   const g = (n: string) => (get(n) ?? null) as string | null
   const dec = (v: string | null) => { if (!v) return null; try { return decodeURIComponent(v) } catch { return v } }
-  const ip = (g('x-forwarded-for')?.split(',')[0].trim()) || g('x-real-ip') || null
+  const ip = ipCliente(g)
   const cidade = dec(g('x-vercel-ip-city'))
   const pais = g('x-vercel-ip-country')
   const lat = g('x-vercel-ip-latitude')

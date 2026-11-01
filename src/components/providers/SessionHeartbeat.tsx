@@ -5,6 +5,7 @@
 
 import { useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
+import { clearLocalData } from '@/lib/synced'
 
 export default function SessionHeartbeat() {
   const { status } = useSession()
@@ -16,7 +17,11 @@ export default function SessionHeartbeat() {
         const r = await fetch('/api/sessao/heartbeat', { method: 'POST' })
         if (!vivo || r.status !== 200) return
         const j = await r.json().catch(() => ({}))
-        if (j && j.ok === false) signOut({ callbackUrl: '/login?motivo=sessao' })
+        if (j && j.ok === false) {
+          // Saída forçada também limpa o cache local da conta (o Sidebar faz o mesmo).
+          clearLocalData()
+          signOut({ callbackUrl: j.motivo === 'revogada' ? '/login?motivo=revogada' : '/login?motivo=sessao' })
+        }
       } catch { /* offline: ignora */ }
     }
     ping()

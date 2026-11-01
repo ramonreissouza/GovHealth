@@ -30,7 +30,8 @@ await client.connect()
 try {
   const hash = bcrypt.hashSync(senha, 10)
   const r = await client.query(
-    `UPDATE usuarios SET senha_hash=$1, atualizado_em=now() WHERE id=$2 AND deleted_at IS NULL RETURNING id, role`,
+    // senha_alterada_em derruba sessões e dispositivos 2FA lembrados (lib/users sessaoRevogada).
+    `UPDATE usuarios SET senha_hash=$1, senha_alterada_em=now(), atualizado_em=now() WHERE id=$2 AND deleted_at IS NULL RETURNING id, role`,
     [hash, email])
   if (!r.rowCount) { console.error(`✖ Nenhuma conta ativa com id=${email}.`); process.exitCode = 1 }
   else {

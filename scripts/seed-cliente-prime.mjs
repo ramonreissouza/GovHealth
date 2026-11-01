@@ -39,7 +39,7 @@ await c.query(
   `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,cnpj,plano,status_assinatura)
    VALUES ($1,$1,$2,$3,'user',$4,$5,$6,'ativa')
    ON CONFLICT (id) DO UPDATE SET
-     nome=EXCLUDED.nome, senha_hash=EXCLUDED.senha_hash, empresa=EXCLUDED.empresa,
+     nome=EXCLUDED.nome, senha_hash=EXCLUDED.senha_hash, senha_alterada_em=now(), empresa=EXCLUDED.empresa,
      cnpj=EXCLUDED.cnpj, plano=EXCLUDED.plano, status_assinatura='ativa',
      suspenso=false, deleted_at=NULL, atualizado_em=now()`,
   [id, u.nome, hash, u.empresa, u.cnpj, u.plano],
