@@ -104,3 +104,6 @@ marketing/instagram/*
 !marketing/instagram/exemplos/
 marketing/**/*.png
 marketing/**/*.zip
+
+# Permissões locais do Claude Code: guardam comandos com senha em texto (repo é PÚBLICO).
+.claude/settings.local.json
