@@ -143,9 +143,11 @@ export const SECOES_PRIVACIDADE: SecaoLegal[] = [
       <p>
         Mantemos os dados de cadastro enquanto sua conta estiver ativa. Os <strong className={forte}>logs de
         acesso</strong> (IP, geolocalização aproximada) são expurgados automaticamente após{' '}
-        <strong className={forte}>90 dias</strong>. O registro do aceite é mantido enquanto durar a relação e
-        pelo prazo em que possa ser necessário para defesa em processo. Encerrada a conta, os dados que
-        identificam o titular são anonimizados, ressalvadas hipóteses de guarda obrigatória por lei.
+        <strong className={forte}>90 dias</strong>. O registro do aceite (versão dos documentos, data e IP) é
+        mantido enquanto durar a relação e pelo prazo em que possa ser necessário para defesa em processo
+        (exercício regular de direitos). Encerrada a conta, os dados que identificam o titular são anonimizados
+        — incluindo o IP do aceite —, ressalvadas hipóteses de guarda obrigatória por lei; a versão aceita e a
+        data, que sozinhas não identificam ninguém, permanecem.
       </p>
     ),
   },

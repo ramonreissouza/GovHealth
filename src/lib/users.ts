@@ -3,7 +3,7 @@
 
 import bcrypt from 'bcryptjs'
 import { randomUUID, randomBytes, randomInt } from 'node:crypto'
-import { query, queryOne } from '@/lib/db'
+import { query, queryOne, transacao } from '@/lib/db'
 
 export type Role = 'master' | 'user'
 
@@ -88,46 +88,42 @@ export async function emailExiste(email: string): Promise<boolean> {
   return !!r
 }
 
-/** Cria usuário com senha (gera hash). Retorna o usuário criado. */
+/**
+ * O ACEITE dos Termos e da Privacidade: versão de cada documento e o IP de quem aceitou
+ * (o instante é o do servidor, `now()` no INSERT). É a prova de qual texto a pessoa
+ * aceitou ao criar o usuário — colunas em migrate-aceite-termos.mjs.
+ */
+export interface AceiteTermos { termosVersao: string; privacidadeVersao: string; ip: string | null }
+
+/**
+ * Cria a conta. Com `aceite`, a evidência vai NO MESMO INSERT: conta e aceite nascem
+ * juntos ou não nascem (revisão da #70 — gravar o aceite num UPDATE à parte deixava,
+ * numa falha entre os dois, uma conta válida sem prova, e a nova tentativa dava 409).
+ *
+ * Sem as colunas de aceite (migração não aplicada) o INSERT falha e NENHUMA conta é
+ * criada — de propósito: cadastro sem a prova que a tela diz ser obrigatória é pior que
+ * cadastro fora do ar. O deploy aplica a migração antes de subir o código
+ * (docs/migrations.md), então isto só acontece se alguém pular o pipeline.
+ */
 export async function criarUsuario(data: {
   email: string; nome?: string; senha: string; role?: Role
   empresa?: string; telefone?: string; instituicao?: string; endereco?: string; cpf?: string; cnpj?: string
   plano?: string; status_assinatura?: string; expira_em?: string | null
+  aceite?: AceiteTermos
 }): Promise<Usuario> {
   const id = norm(data.email)
   const hash = await bcrypt.hash(data.senha.trim(), 10)
+  const a = data.aceite
   await query(
-    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,expira_em)
-     VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,telefone,instituicao,endereco,cpf,cnpj,plano,status_assinatura,expira_em,
+                           termos_versao,privacidade_versao,aceite_em,aceite_ip)
+     VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,CASE WHEN $14::text IS NULL THEN NULL ELSE now() END,$16)`,
     [id, data.nome ?? null, hash, data.role ?? 'user', data.empresa ?? null, data.telefone ?? null,
      data.instituicao ?? null, data.endereco ?? null, data.cpf ?? null, data.cnpj ?? null,
-     data.plano ?? 'trial', data.status_assinatura ?? 'trial', data.expira_em ?? null],
+     data.plano ?? 'trial', data.status_assinatura ?? 'trial', data.expira_em ?? null,
+     a?.termosVersao ?? null, a?.privacidadeVersao ?? null, a?.ip ?? null],
   )
   return (await buscarUsuario(id))!
-}
-
-/**
- * Grava o ACEITE dos Termos e da Privacidade na conta: versão de cada documento, o
- * instante (do servidor) e o IP. É a prova de qual texto a pessoa aceitou ao criar o
- * usuário — autocadastro ou convite (colunas em migrate-aceite-termos.mjs).
- *
- * Mesmo desenho de registrarAceite (lib/assinaturas): fora do INSERT, e se a coluna ainda
- * não existe (42703, código no ar antes da migration) o erro fica no log e o cadastro
- * segue. Qualquer outro erro sobe.
- */
-export async function registrarAceiteUsuario(id: string, a: { termosVersao: string; privacidadeVersao: string; ip: string | null }): Promise<void> {
-  try {
-    await query(
-      `UPDATE usuarios SET termos_versao = $2, privacidade_versao = $3, aceite_em = now(), aceite_ip = $4 WHERE id = $1`,
-      [norm(id), a.termosVersao, a.privacidadeVersao, a.ip],
-    )
-  } catch (e) {
-    if ((e as { code?: string })?.code === '42703') {
-      console.error(`[aceite] migração pendente (npm run aceite:migrate): aceite do usuário ${norm(id)} NÃO gravado`, a)
-      return
-    }
-    throw e
-  }
 }
 
 export async function atualizarUsuario(id: string, patch: Partial<Pick<Usuario, 'nome' | 'empresa' | 'telefone' | 'instituicao' | 'endereco' | 'cpf' | 'cnpj' | 'plano' | 'status_assinatura' | 'expira_em' | 'suspenso'>>): Promise<void> {
@@ -154,6 +150,10 @@ export async function excluirUsuario(id: string): Promise<void> {
  * feedback_issues). A conta fica inutilizável (senha zerada, suspensa, soft-deletada).
  * Após isto o registro é anônimo e sai do escopo da LGPD.
  *
+ * O registro do aceite dos Termos: o IP (`aceite_ip`) é dado pessoal e sai junto; a
+ * versão aceita e o instante ficam — sem e-mail, nome nem IP, não identificam ninguém,
+ * e a linha segue mostrando que a conta foi criada com aceite (Política, seção 8).
+ *
  * ⚠️ Limitação conhecida: `id` == e-mail (chave legada referenciada por FKs não
  * enforçadas). O e-mail é substituído por um marcador derivado do hash na COLUNA
  * `email`, mas persiste como `id`. Erasure total exige migração para chave
@@ -166,7 +166,7 @@ export async function anonimizarUsuario(id: string): Promise<void> {
     `UPDATE usuarios SET
        email = 'anon+' || left(md5(id), 16) || '@anonimizado.local',
        nome = NULL, empresa = NULL, telefone = NULL, instituicao = NULL,
-       endereco = NULL, cpf = NULL, cnpj = NULL,
+       endereco = NULL, cpf = NULL, cnpj = NULL, aceite_ip = NULL,
        senha_hash = '', senha_alterada_em = now(), suspenso = true, deleted_at = COALESCE(deleted_at, now()),
        anonimizado_em = now(), atualizado_em = now()
      WHERE id = $1`,
@@ -393,30 +393,55 @@ export async function buscarConvite(token: string): Promise<{ email: string; emp
 }
 
 /** Aceita o convite: cria o usuário-membro com senha própria. */
+/**
+ * O convidado cria a própria conta. Tudo numa transação só (revisão da #70): criar o
+ * membro — já com o aceite no INSERT — e consumir o convite confirmam juntos, e qualquer
+ * falha desfaz os dois. Antes eram três escritas soltas: uma falha no meio deixava o
+ * membro criado e o convite pendente, e toda nova tentativa caía em `email_existe`.
+ *
+ * Concorrência: `FOR UPDATE` no convite faz dois envios do mesmo link esperarem um pelo
+ * outro (o segundo relê e já o encontra consumido); `FOR UPDATE` na linha do titular
+ * serializa convites DIFERENTES da mesma equipe, para dois aceites simultâneos não
+ * ocuparem juntos o último assento. A contagem de membros é feita dentro da transação,
+ * depois dos locks.
+ */
 export async function aceitarConvite(params: {
   token: string; senha: string; nome: string
-  aceite: { termosVersao: string; privacidadeVersao: string; ip: string | null }
+  aceite: AceiteTermos
 }): Promise<{ ok: true; email: string } | { ok: false; erro: string }> {
-  const conv = await queryOne<{ id: string; email: string; titular_id: string; cnpj: string | null; plano: string | null }>(
-    `SELECT id, email, titular_id, cnpj, plano FROM convites WHERE token=$1 AND aceito_em IS NULL AND expira_em>now()`, [params.token])
-  if (!conv) return { ok: false, erro: 'invalido' }
   if (!senhaForteOk(params.senha)) return { ok: false, erro: 'senha_fraca' }
-  const email = norm(conv.email)
-  if (await emailExiste(email)) return { ok: false, erro: 'email_existe' }
-  // Capacidade no aceite: comparar MEMBROS reais com os assentos — este convite já
-  // está "reservado" (conta em convitesPendentes), então não usamos `vagas` aqui,
-  // senão o último convite que preenche o plano nunca poderia ser aceito.
-  const eq = await equipeInfo(conv.titular_id)
-  if (eq.membros.length >= eq.assentos) return { ok: false, erro: 'sem_vagas' }
+  // bcrypt antes de abrir a transação: ~100 ms que não precisam segurar lock nenhum.
   const hash = await bcrypt.hash(params.senha.trim(), 10)
-  const tit = await queryOne<{ empresa: string | null }>(`SELECT empresa FROM usuarios WHERE id=$1`, [conv.titular_id])
-  await query(
-    `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,cnpj,plano,status_assinatura,titular_id,assentos)
-     VALUES ($1,$1,$2,$3,'user',$4,$5,$6,'ativa',$7,0)`,
-    [email, params.nome?.trim() || null, hash, tit?.empresa ?? null, conv.cnpj, conv.plano, conv.titular_id])
-  await registrarAceiteUsuario(email, params.aceite)
-  await query(`UPDATE convites SET aceito_em=now() WHERE id=$1`, [conv.id])
-  return { ok: true, email }
+
+  return transacao(async (tx) => {
+    const conv = await tx.queryOne<{ id: string; email: string; titular_id: string; cnpj: string | null; plano: string | null }>(
+      `SELECT id, email, titular_id, cnpj, plano FROM convites
+        WHERE token=$1 AND aceito_em IS NULL AND expira_em>now() FOR UPDATE`, [params.token])
+    if (!conv) return { ok: false, erro: 'invalido' } as const
+    const email = norm(conv.email)
+
+    const tit = await tx.queryOne<{ empresa: string | null; assentos: number | null; plano: string | null }>(
+      `SELECT empresa, assentos, plano FROM usuarios WHERE id=$1 FOR UPDATE`, [conv.titular_id])
+    if (await tx.queryOne(`SELECT 1 FROM usuarios WHERE id=$1`, [email])) return { ok: false, erro: 'email_existe' } as const
+
+    // Capacidade no aceite: comparar MEMBROS reais com os assentos — este convite já
+    // está "reservado" (conta em convitesPendentes), então não usamos `vagas` aqui,
+    // senão o último convite que preenche o plano nunca poderia ser aceito. Mesma
+    // regra de assentos de equipeInfo.
+    const assentos = tit?.assentos ?? ASSENTOS_DO_PLANO[tit?.plano ?? ''] ?? 1
+    const membros = await tx.queryOne<{ n: number }>(
+      `SELECT count(*)::int n FROM usuarios WHERE (id=$1 OR titular_id=$1) AND deleted_at IS NULL`, [conv.titular_id])
+    if ((membros?.n ?? 0) >= assentos) return { ok: false, erro: 'sem_vagas' } as const
+
+    await tx.query(
+      `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,cnpj,plano,status_assinatura,titular_id,assentos,
+                             termos_versao,privacidade_versao,aceite_em,aceite_ip)
+       VALUES ($1,$1,$2,$3,'user',$4,$5,$6,'ativa',$7,0,$8,$9,now(),$10)`,
+      [email, params.nome?.trim() || null, hash, tit?.empresa ?? null, conv.cnpj, conv.plano, conv.titular_id,
+       params.aceite.termosVersao, params.aceite.privacidadeVersao, params.aceite.ip])
+    await tx.query(`UPDATE convites SET aceito_em=now() WHERE id=$1`, [conv.id])
+    return { ok: true, email } as const
+  })
 }
 
 /** Remove um MEMBRO da equipe (soft-delete): a conta não loga mais e o assento é

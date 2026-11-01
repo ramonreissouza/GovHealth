@@ -44,6 +44,7 @@
     "radar:aviso:e2e": "tsx scripts/radar/latencia-aviso-e2e.teste.mts",
     "radar:entrega:e2e": "tsx scripts/radar/entrega-e2e.teste.mts",
     "push:teste": "tsx --test scripts/push.teste.ts",
+    "transacao:teste": "tsx --test scripts/transacao.teste.ts",
     "pecas:teste": "tsx --test scripts/pecas-juridicas.teste.ts",
     "crm:teste": "tsx --test scripts/crm-checklist.teste.ts",
     "observabilidade:teste": "tsx --test scripts/observabilidade.teste.ts",

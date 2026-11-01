@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { emailExiste, criarUsuario, senhaForteOk, registrarAceiteUsuario } from '@/lib/users'
+import { emailExiste, criarUsuario, senhaForteOk } from '@/lib/users'
 import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { enviarBoasVindasTrial } from '@/lib/email'
 import { camposAceite, erroDeAceite, ipDaRequisicao } from '@/lib/assinaturas'
@@ -62,8 +62,9 @@ export async function POST(req: NextRequest) {
       plano: plano.id,
       status_assinatura: 'trial',
       expira_em: trialAte,
+      // A prova do aceite vai no mesmo INSERT da conta: as duas nascem juntas ou nenhuma.
+      aceite: { termosVersao: d.termosVersao, privacidadeVersao: d.privacidadeVersao, ip: ipDaRequisicao(req.headers) },
     })
-    await registrarAceiteUsuario(email, { termosVersao: d.termosVersao, privacidadeVersao: d.privacidadeVersao, ip: ipDaRequisicao(req.headers) })
 
     // E-mail de boas-vindas do trial — best-effort, não bloqueia o cadastro.
     try {
@@ -74,6 +75,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, plano: plano.id, trialAte, diasTrial: DIAS_TRIAL })
   } catch (e) {
+    // Dois envios simultâneos passam juntos pelo emailExiste; o segundo INSERT bate na PK.
+    if ((e as { code?: string })?.code === '23505') {
+      return NextResponse.json({ error: 'Já existe uma conta com este e-mail. Faça login.' }, { status: 409 })
+    }
     console.error('[cadastro POST]', e)
     return NextResponse.json({ error: 'Não foi possível criar a conta.' }, { status: 500 })
   }
