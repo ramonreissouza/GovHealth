@@ -10,6 +10,7 @@ import Image from 'next/image'
 import { clsx } from 'clsx'
 import { Loader2, Check, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco, DIAS_TESTE_GRATIS } from '@/lib/planos'
+import { AceiteTermos, VERSOES_ACEITAS, MSG_ACEITE_OBRIGATORIO } from '@/components/legal/AceiteTermos'
 
 type Modo = 'entrar' | 'criar'
 
@@ -210,6 +211,7 @@ function Entrar({ router }: { router: ReturnType<typeof useRouter> }) {
 function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>; planoInicial?: 'essencial' | 'pro' }) {
   const [f, setF] = useState({ nome: '', email: '', senha: '', empresa: '', cnpj: '', telefone: '' })
   const [plano, setPlano] = useState<'essencial' | 'pro'>(planoInicial ?? 'pro')
+  const [aceite, setAceite] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
@@ -222,10 +224,11 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
     if (f.nome.trim().length < 2 || !f.email.trim() || f.senha.length < 6) {
       setError('Preencha nome, e-mail e uma senha de ao menos 6 caracteres.'); return
     }
+    if (!aceite) { setError(MSG_ACEITE_OBRIGATORIO); return }
     setLoading(true)
     const res = await fetch('/api/cadastro', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...f, plano }),
+      body: JSON.stringify({ ...f, plano, ...VERSOES_ACEITAS }),
     })
     const d = await res.json().catch(() => ({}))
     if (!res.ok) { setLoading(false); setError(d.error ?? 'Não foi possível criar a conta.'); return }
@@ -288,12 +291,14 @@ function Criar({ router, planoInicial }: { router: ReturnType<typeof useRouter>;
             </div>
           </div>
 
+          <AceiteTermos aceito={aceite} onChange={(v) => { setAceite(v); setError('') }} />
+
           {error && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>}
-          <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60">
+          <button type="submit" disabled={loading || !aceite}
+            className="w-full flex items-center justify-center gap-2 bg-gradient-brand text-white font-semibold text-[13px] py-2.5 rounded-lg hover:brightness-105 transition-all shadow-sm shadow-accent/20 mt-1 disabled:opacity-60 disabled:cursor-not-allowed">
             {loading && <Loader2 size={14} className="animate-spin" />} Começar teste de {DIAS_TESTE_GRATIS} dias
           </button>
-          <p className="text-[10.5px] text-faint text-center">Ao criar a conta você concorda com nossos termos. Cancele quando quiser.</p>
+          <p className="text-[10.5px] text-faint text-center">Sem cartão agora. Cancele quando quiser.</p>
         </form>
       </div>
 

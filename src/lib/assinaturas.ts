@@ -1,7 +1,21 @@
 // src/lib/assinaturas.ts — intenções de assinatura vindas do checkout público.
 // A cobrança real é de um gateway (Asaas/Iugu/Pagar.me/Stripe) — aqui só a
 // INTENÇÃO/pendência até a integração. NENHUM dado de cartão é armazenado.
+import { z } from 'zod'
 import { query } from '@/lib/db'
+import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
+
+/**
+ * Os dois campos do aceite, para toda rota que cria conta ou contrata (assinatura,
+ * checkout, autocadastro, convite). O aceite é da versão VIGENTE: uma página aberta antes
+ * de o texto mudar manda a versão antiga, e aceitar em nome de um texto que a pessoa não
+ * leu não vale como evidência. Campo ausente também cai aqui — sem aceite, sem conta.
+ */
+const SEM_ACEITE = 'Para continuar, marque que leu e está de acordo com os Termos de Uso.'
+export const camposAceite = {
+  termosVersao: z.literal(TERMOS_VERSAO, { errorMap: (_, ctx) => ({ message: ctx.data == null ? SEM_ACEITE : 'Os Termos de Uso foram atualizados. Recarregue a página e confira o aceite.' }) }),
+  privacidadeVersao: z.literal(PRIVACIDADE_VERSAO, { errorMap: (_, ctx) => ({ message: ctx.data == null ? SEM_ACEITE : 'A Política de Privacidade foi atualizada. Recarregue a página e confira o aceite.' }) }),
+}
 
 export interface Assinatura {
   id: number; nome: string | null; email: string; empresa: string | null; instituicao: string | null

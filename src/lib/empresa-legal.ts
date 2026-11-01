@@ -21,8 +21,8 @@ export const CONTROLADOR_RAZAO_SOCIAL = 'Tec Health Engenharia Hospitalar'
 
 export const CONTROLADOR_CNPJ = '33.888.916/0001-89'
 
-/** Cidade/UF da sede. Endereço completo entra aqui quando for definido. */
-export const CONTROLADOR_SEDE = 'São Paulo/SP'
+/** Endereço da sede, como aparece nos Termos e na Política ("com sede na …"). */
+export const CONTROLADOR_SEDE = 'R. das Gaivotas, 355 - Imbuí, Salvador - BA, 41720-070, Brasil'
 
 /**
  * Nome do Encarregado pelo Tratamento de Dados Pessoais (LGPD art. 41).
@@ -35,8 +35,8 @@ export const DPO_EMAIL = 'privacidade@govhealth.ai'
 /** E-mail comercial/suporte, usado nos Termos. */
 export const CONTATO_EMAIL = 'contato@techealth.com.br'
 
-/** Comarca do foro eleito nos Termos de Uso. */
-export const FORO = 'São Paulo/SP'
+/** Comarca do foro eleito nos Termos de Uso — a da sede. */
+export const FORO = 'Salvador/BA'
 
 /**
  * VERSÃO DOS DOCUMENTOS — é ela que o aceite grava (assinaturas.termos_versao).
@@ -46,5 +46,5 @@ export const FORO = 'São Paulo/SP'
  * ou /privacidade, MUDA A VERSÃO aqui, no mesmo commit. A rota de assinatura recusa um
  * aceite de versão que não é a vigente (a pessoa leu um texto que já não vale).
  */
-export const TERMOS_VERSAO = '2026-09-27'
-export const PRIVACIDADE_VERSAO = '2026-09-27'
+export const TERMOS_VERSAO = '2026-11-01'
+export const PRIVACIDADE_VERSAO = '2026-11-01'

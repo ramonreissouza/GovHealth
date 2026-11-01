@@ -5,6 +5,10 @@
 // contratação (revisão da #45). Estas colunas guardam a versão aceita dos dois
 // documentos, o instante e o IP de quem aceitou.
 //
+// As mesmas quatro colunas em `usuarios`: o autocadastro com teste grátis e o aceite de
+// convite de equipe criam conta sem passar por /assinar, e o "Li e estou de acordo" deles
+// também precisa virar prova (registrarAceiteUsuario em src/lib/users.ts).
+//
 // Segue docs/migrations.md: idempotente (ADD COLUMN IF NOT EXISTS), sai com código ≠ 0
 // na falha, e é compatível com o código de antes (colunas novas, todas anuláveis: o
 // código antigo não as escreve nem as lê).
@@ -33,6 +37,13 @@ try {
       ADD COLUMN IF NOT EXISTS aceite_em          TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS aceite_ip          TEXT`)
   console.log('✓ assinaturas: colunas de aceite dos Termos prontas')
+  await client.query(`
+    ALTER TABLE usuarios
+      ADD COLUMN IF NOT EXISTS termos_versao      TEXT,
+      ADD COLUMN IF NOT EXISTS privacidade_versao TEXT,
+      ADD COLUMN IF NOT EXISTS aceite_em          TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS aceite_ip          TEXT`)
+  console.log('✓ usuarios: colunas de aceite dos Termos prontas')
 } catch (e) {
   console.error('Falha na migração:', e.message)
   process.exitCode = 1

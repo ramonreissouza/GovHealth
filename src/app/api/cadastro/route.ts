@@ -5,9 +5,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { emailExiste, criarUsuario } from '@/lib/users'
+import { emailExiste, criarUsuario, registrarAceiteUsuario } from '@/lib/users'
 import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { enviarBoasVindasTrial } from '@/lib/email'
+import { camposAceite, erroDeAceite, ipDaRequisicao } from '@/lib/assinaturas'
 
 export const runtime = 'nodejs'
 
@@ -21,6 +22,8 @@ const Schema = z.object({
   empresa: z.string().max(160).optional(),
   cnpj: z.string().max(20).optional(),
   telefone: z.string().max(40).optional(),
+  // "Li e estou de acordo" obrigatório: sem ele (ou com versão antiga) não há conta.
+  ...camposAceite,
 })
 
 function dataMais(dias: number): string {
@@ -33,7 +36,7 @@ export async function POST(req: NextRequest) {
   try {
     const parsed = Schema.safeParse(await req.json().catch(() => ({})))
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Dados inválidos' }, { status: 400 })
+      return NextResponse.json({ error: erroDeAceite(parsed.error) ?? parsed.error.issues[0]?.message ?? 'Dados inválidos' }, { status: 400 })
     }
     const d = parsed.data
     const email = d.email.trim().toLowerCase()
@@ -56,6 +59,7 @@ export async function POST(req: NextRequest) {
       status_assinatura: 'trial',
       expira_em: trialAte,
     })
+    await registrarAceiteUsuario(email, { termosVersao: d.termosVersao, privacidadeVersao: d.privacidadeVersao, ip: ipDaRequisicao(req.headers) })
 
     // E-mail de boas-vindas do trial — best-effort, não bloqueia o cadastro.
     try {

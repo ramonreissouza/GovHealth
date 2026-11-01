@@ -97,6 +97,30 @@ export async function criarUsuario(data: {
   return (await buscarUsuario(id))!
 }
 
+/**
+ * Grava o ACEITE dos Termos e da Privacidade na conta: versão de cada documento, o
+ * instante (do servidor) e o IP. É a prova de qual texto a pessoa aceitou ao criar o
+ * usuário — autocadastro ou convite (colunas em migrate-aceite-termos.mjs).
+ *
+ * Mesmo desenho de registrarAceite (lib/assinaturas): fora do INSERT, e se a coluna ainda
+ * não existe (42703, código no ar antes da migration) o erro fica no log e o cadastro
+ * segue. Qualquer outro erro sobe.
+ */
+export async function registrarAceiteUsuario(id: string, a: { termosVersao: string; privacidadeVersao: string; ip: string | null }): Promise<void> {
+  try {
+    await query(
+      `UPDATE usuarios SET termos_versao = $2, privacidade_versao = $3, aceite_em = now(), aceite_ip = $4 WHERE id = $1`,
+      [norm(id), a.termosVersao, a.privacidadeVersao, a.ip],
+    )
+  } catch (e) {
+    if ((e as { code?: string })?.code === '42703') {
+      console.error(`[aceite] migração pendente (npm run aceite:migrate): aceite do usuário ${norm(id)} NÃO gravado`, a)
+      return
+    }
+    throw e
+  }
+}
+
 export async function atualizarUsuario(id: string, patch: Partial<Pick<Usuario, 'nome' | 'empresa' | 'telefone' | 'instituicao' | 'endereco' | 'cpf' | 'cnpj' | 'plano' | 'status_assinatura' | 'expira_em' | 'suspenso'>>): Promise<void> {
   const campos: string[] = []
   const params: unknown[] = []
@@ -360,7 +384,10 @@ export async function buscarConvite(token: string): Promise<{ email: string; emp
 }
 
 /** Aceita o convite: cria o usuário-membro com senha própria. */
-export async function aceitarConvite(params: { token: string; senha: string; nome: string }): Promise<{ ok: true; email: string } | { ok: false; erro: string }> {
+export async function aceitarConvite(params: {
+  token: string; senha: string; nome: string
+  aceite: { termosVersao: string; privacidadeVersao: string; ip: string | null }
+}): Promise<{ ok: true; email: string } | { ok: false; erro: string }> {
   const conv = await queryOne<{ id: string; email: string; titular_id: string; cnpj: string | null; plano: string | null }>(
     `SELECT id, email, titular_id, cnpj, plano FROM convites WHERE token=$1 AND aceito_em IS NULL AND expira_em>now()`, [params.token])
   if (!conv) return { ok: false, erro: 'invalido' }
@@ -378,6 +405,7 @@ export async function aceitarConvite(params: { token: string; senha: string; nom
     `INSERT INTO usuarios (id,email,nome,senha_hash,role,empresa,cnpj,plano,status_assinatura,titular_id,assentos)
      VALUES ($1,$1,$2,$3,'user',$4,$5,$6,'ativa',$7,0)`,
     [email, params.nome?.trim() || null, hash, tit?.empresa ?? null, conv.cnpj, conv.plano, conv.titular_id])
+  await registrarAceiteUsuario(email, params.aceite)
   await query(`UPDATE convites SET aceito_em=now() WHERE id=$1`, [conv.id])
   return { ok: true, email }
 }
