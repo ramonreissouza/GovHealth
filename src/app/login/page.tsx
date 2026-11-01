@@ -11,6 +11,7 @@ import { clsx } from 'clsx'
 import { Loader2, Check, Eye, EyeOff, ArrowLeft } from 'lucide-react'
 import { PLANOS, planoPorId, formatarPreco, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { AceiteTermos, VERSOES_ACEITAS, MSG_ACEITE_OBRIGATORIO } from '@/components/legal/AceiteTermos'
+import { validarCpfOuCnpj, soDigitos } from '@/lib/validators'
 
 type Modo = 'entrar' | 'criar'
 type Credenciais = { email: string; senha: string }
@@ -289,7 +290,7 @@ function Entrar({ router, recemCriada }: { router: ReturnType<typeof useRouter>;
 function Criar({ router, planoInicial, onPrecisaCodigo }: {
   router: ReturnType<typeof useRouter>; planoInicial?: 'essencial' | 'pro'; onPrecisaCodigo: (c: Credenciais) => void
 }) {
-  const [f, setF] = useState({ nome: '', email: '', senha: '', empresa: '', cnpj: '', telefone: '' })
+  const [f, setF] = useState({ nome: '', email: '', senha: '', empresa: '', cpfCnpj: '', telefone: '' })
   const [plano, setPlano] = useState<'essencial' | 'pro'>(planoInicial ?? 'pro')
   const [aceite, setAceite] = useState(false)
   const [error, setError] = useState('')
@@ -303,8 +304,12 @@ function Criar({ router, planoInicial, onPrecisaCodigo }: {
   async function handleCriar(e: FormEvent) {
     e.preventDefault()
     setError('')
+    // Todos os campos são obrigatórios — mesma regra do servidor (/api/cadastro).
     if (f.nome.trim().length < 2 || !f.email.trim()) { setError('Preencha nome e e-mail.'); return }
     if (!senhaOk) { setError('A senha precisa ter ao menos 8 caracteres, com letras e números.'); return }
+    if (!telefoneOk(f.telefone)) { setError('Informe um telefone com DDD.'); return }
+    if (f.empresa.trim().length < 2) { setError('Informe a empresa ou instituição.'); return }
+    if (!validarCpfOuCnpj(f.cpfCnpj)) { setError('Informe um CPF ou CNPJ válido.'); return }
     if (!aceite) { setError(MSG_ACEITE_OBRIGATORIO); return }
     setLoading(true)
     const res = await fetch('/api/cadastro', {
@@ -334,13 +339,13 @@ function Criar({ router, planoInicial, onPrecisaCodigo }: {
 
         <form onSubmit={handleCriar} className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
-            <Campo label="Nome completo *"><input className={inp} value={f.nome} onChange={set('nome')} /></Campo>
-            <Campo label="E-mail *"><input type="email" className={inp} value={f.email} onChange={set('email')} placeholder="voce@empresa.com.br" /></Campo>
+            <Campo label="Nome completo" obrigatorio><input required autoComplete="name" className={inp} value={f.nome} onChange={set('nome')} /></Campo>
+            <Campo label="E-mail" obrigatorio><input type="email" required autoComplete="email" className={inp} value={f.email} onChange={set('email')} placeholder="voce@empresa.com.br" /></Campo>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Campo label="Senha *">
+            <Campo label="Senha" obrigatorio>
               <div className="relative">
-                <input type={showPass ? 'text' : 'password'} autoComplete="new-password" className={inp + ' pr-10'} value={f.senha} onChange={set('senha')} placeholder="mín. 8, letras e números" />
+                <input type={showPass ? 'text' : 'password'} required autoComplete="new-password" className={inp + ' pr-10'} value={f.senha} onChange={set('senha')} placeholder="mín. 8, letras e números" />
                 <button type="button" onClick={() => setShowPass((v) => !v)} tabIndex={-1}
                   aria-label={showPass ? 'Ocultar senha' : 'Mostrar senha'}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint hover:text-strong transition-colors">
@@ -351,11 +356,11 @@ function Criar({ router, planoInicial, onPrecisaCodigo }: {
                 <div className="text-[11px] mt-1.5 text-amber-400">Mínimo 8 caracteres, com letras e números.</div>
               )}
             </Campo>
-            <Campo label="Telefone"><input className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Campo>
+            <Campo label="Telefone" obrigatorio><input required type="tel" autoComplete="tel" className={inp} value={f.telefone} onChange={set('telefone')} placeholder="(11) 90000-0000" /></Campo>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Campo label="Empresa / instituição"><input className={inp} value={f.empresa} onChange={set('empresa')} placeholder="Distribuidora, hospital…" /></Campo>
-            <Campo label="CNPJ"><input className={inp} value={f.cnpj} onChange={set('cnpj')} placeholder="00.000.000/0000-00" /></Campo>
+            <Campo label="Empresa / instituição" obrigatorio><input required autoComplete="organization" className={inp} value={f.empresa} onChange={set('empresa')} placeholder="Distribuidora, hospital…" /></Campo>
+            <Campo label="CPF ou CNPJ" obrigatorio><input required inputMode="numeric" className={inp} value={f.cpfCnpj} onChange={set('cpfCnpj')} placeholder="CPF ou CNPJ" /></Campo>
           </div>
 
           {/* Seleção de plano */}
@@ -405,6 +410,19 @@ function Criar({ router, planoInicial, onPrecisaCodigo }: {
   )
 }
 
-function Campo({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">{label}</label>{children}</div>
+function Campo({ label, obrigatorio, children }: { label: string; obrigatorio?: boolean; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="text-[11px] text-muted font-mono-custom uppercase tracking-wide block mb-1.5">
+        {label}{obrigatorio && <> <span className="text-red-500 font-bold" aria-hidden>*</span><span className="sr-only">(obrigatório)</span></>}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+/** DDD + número: 10 dígitos (fixo) ou 11 (celular). Mesma regra de /api/cadastro. */
+function telefoneOk(v: string): boolean {
+  const d = soDigitos(v)
+  return d.length === 10 || d.length === 11
 }
