@@ -30,10 +30,17 @@ export const CONTROLADOR_SEDE = 'R. das Gaivotas, 355 - Imbuí, Salvador - BA, 4
  */
 export const DPO_NOME = ''
 
-export const DPO_EMAIL = 'privacidade@govhealth.ai'
-
-/** E-mail comercial/suporte, usado nos Termos. */
+/** E-mail comercial/suporte, usado nos Termos. É também o remetente dos e-mails do sistema. */
 export const CONTATO_EMAIL = 'contato@techealth.com.br'
+
+/**
+ * Canal do Encarregado — o e-mail que os Termos e a Política mandam o titular usar para
+ * exercer direitos (LGPD arts. 18 e 41). Tem de ser uma caixa que EXISTE e alguém lê.
+ * Era `privacidade@govhealth.ai`, domínio sem caixa de e-mail nenhuma: os pedidos de
+ * titular iam para o vazio. Quando houver uma caixa própria (ex.: privacidade@
+ * techealth.com.br), troque aqui e mude as duas versões abaixo.
+ */
+export const DPO_EMAIL = CONTATO_EMAIL
 
 /** Comarca do foro eleito nos Termos de Uso — a da sede. */
 export const FORO = 'Salvador/BA'
@@ -46,5 +53,7 @@ export const FORO = 'Salvador/BA'
  * ou /privacidade, MUDA A VERSÃO aqui, no mesmo commit. A rota de assinatura recusa um
  * aceite de versão que não é a vigente (a pessoa leu um texto que já não vale).
  */
-export const TERMOS_VERSAO = '2026-11-01'
-export const PRIVACIDADE_VERSAO = '2026-11-01'
+// Sufixo -r2: segunda revisão no mesmo dia (canal do Encarregado corrigido). Só a
+// igualdade importa — nada lê isto como data.
+export const TERMOS_VERSAO = '2026-11-01-r2'
+export const PRIVACIDADE_VERSAO = '2026-11-01-r2'
