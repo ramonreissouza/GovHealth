@@ -7,6 +7,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { clsx } from 'clsx'
 import { Loader2, CheckCircle2, Check, AlertTriangle } from 'lucide-react'
+import { AceiteTermos, VERSOES_ACEITAS, MSG_ACEITE_OBRIGATORIO } from '@/components/legal/AceiteTermos'
 
 export default function AceitarConvitePage() {
   return (
@@ -21,6 +22,8 @@ const MSG: Record<string, string> = {
   email_existe: 'Já existe uma conta com este e-mail.',
   senha_fraca: 'A senha precisa ter ao menos 8 caracteres, com letras e números.',
   sem_vagas: 'A equipe atingiu o limite de usuários do plano.',
+  aceite: MSG_ACEITE_OBRIGATORIO,
+  aceite_desatualizado: 'Os Termos de Uso foram atualizados. Recarregue a página e confira o aceite.',
 }
 
 function Inner() {
@@ -30,6 +33,7 @@ function Inner() {
   const [estado, setEstado] = useState<'carregando' | 'ok' | 'invalido' | 'criado'>('carregando')
   const [nome, setNome] = useState('')
   const [senha, setSenha] = useState('')
+  const [aceite, setAceite] = useState(false)
   const [erro, setErro] = useState('')
   const [loading, setLoading] = useState(false)
   // Mesma regra do servidor (senhaForteOk em src/lib/users.ts).
@@ -46,10 +50,11 @@ function Inner() {
   async function submit(e: FormEvent) {
     e.preventDefault(); setErro('')
     if (!forteOk) { setErro(MSG.senha_fraca); return }
+    if (!aceite) { setErro(MSG.aceite); return }
     setLoading(true)
     const r = await fetch('/api/equipe/aceitar', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token, senha, nome }),
+      body: JSON.stringify({ token, senha, nome, ...VERSOES_ACEITAS }),
     })
     const d = await r.json().catch(() => ({}))
     setLoading(false)
@@ -109,9 +114,10 @@ function Inner() {
                     Mínimo 8 caracteres, com letras e números.
                   </div>
                 </div>
+                <AceiteTermos aceito={aceite} onChange={(v) => { setAceite(v); setErro('') }} />
                 {erro && <p className="text-[12px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{erro}</p>}
-                <button type="submit" disabled={loading}
-                  className="w-full flex items-center justify-center gap-2 bg-accent text-black font-semibold text-[13px] py-2.5 rounded-lg hover:bg-accent/90 transition-colors mt-1 disabled:opacity-60">
+                <button type="submit" disabled={loading || !aceite}
+                  className="w-full flex items-center justify-center gap-2 bg-accent text-black font-semibold text-[13px] py-2.5 rounded-lg hover:bg-accent/90 transition-colors mt-1 disabled:opacity-60 disabled:cursor-not-allowed">
                   {loading && <Loader2 size={14} className="animate-spin" />} Criar minha conta
                 </button>
               </form>

@@ -3,10 +3,9 @@
 // pelo middleware). A cobrança será feita pelo gateway quando integrado.
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { criarAssinatura, registrarAceite, ipDaRequisicao, erroDeAceite } from '@/lib/assinaturas'
+import { criarAssinatura, registrarAceite, ipDaRequisicao, erroDeAceite, camposAceite } from '@/lib/assinaturas'
 import { planoPorId } from '@/lib/planos'
 import { dadosCobrancaSchema, primeiraMensagem } from '@/lib/dados-cobranca'
-import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
 
 export const runtime = 'nodejs'
 
@@ -14,10 +13,8 @@ export const runtime = 'nodejs'
 const Schema = dadosCobrancaSchema.extend({
   plano: z.enum(['essencial', 'pro']),
   metodo: z.enum(['pix', 'cartao', 'boleto']).optional(),
-  // O aceite é da versão VIGENTE: uma página aberta antes de o texto mudar manda a versão
-  // antiga, e aceitar em nome de um texto que a pessoa não leu não vale como evidência.
-  termosVersao: z.literal(TERMOS_VERSAO, { errorMap: () => ({ message: 'Os Termos de Uso foram atualizados. Recarregue a página e confira o aceite.' }) }),
-  privacidadeVersao: z.literal(PRIVACIDADE_VERSAO, { errorMap: () => ({ message: 'A Política de Privacidade foi atualizada. Recarregue a página e confira o aceite.' }) }),
+  // Aceite só da versão VIGENTE (ver camposAceite).
+  ...camposAceite,
 })
 
 export async function POST(req: NextRequest) {

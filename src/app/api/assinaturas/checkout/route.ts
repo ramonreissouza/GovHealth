@@ -7,11 +7,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { randomBytes } from 'node:crypto'
-import { criarAssinatura, marcarCheckoutIniciado, registrarAceite, ipDaRequisicao, erroDeAceite } from '@/lib/assinaturas'
+import { criarAssinatura, marcarCheckoutIniciado, registrarAceite, ipDaRequisicao, erroDeAceite, camposAceite } from '@/lib/assinaturas'
 import { COOKIE_CHECKOUT, hashDoNonce } from '@/lib/checkout-cookie'
 import { planoPorId } from '@/lib/planos'
 import { dadosCobrancaSchema, primeiraMensagem } from '@/lib/dados-cobranca'
-import { TERMOS_VERSAO, PRIVACIDADE_VERSAO } from '@/lib/empresa-legal'
 import { getStripe, stripeConfigurado, lineItemDoPlano, appUrl } from '@/lib/stripe'
 
 export const runtime = 'nodejs'
@@ -20,8 +19,7 @@ export const runtime = 'nodejs'
 const Schema = dadosCobrancaSchema.extend({
   plano: z.enum(['essencial', 'pro']),
   // Mesma regra de /api/assinaturas: aceite só da versão vigente.
-  termosVersao: z.literal(TERMOS_VERSAO, { errorMap: () => ({ message: 'Os Termos de Uso foram atualizados. Recarregue a página e confira o aceite.' }) }),
-  privacidadeVersao: z.literal(PRIVACIDADE_VERSAO, { errorMap: () => ({ message: 'A Política de Privacidade foi atualizada. Recarregue a página e confira o aceite.' }) }),
+  ...camposAceite,
 })
 
 export async function POST(req: NextRequest) {

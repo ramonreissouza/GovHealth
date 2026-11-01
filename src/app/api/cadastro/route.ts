@@ -8,6 +8,8 @@ import { z } from 'zod'
 import { emailExiste, criarUsuario, senhaForteOk } from '@/lib/users'
 import { planoPorId, DIAS_TESTE_GRATIS } from '@/lib/planos'
 import { enviarBoasVindasTrial } from '@/lib/email'
+import { camposAceite, erroDeAceite, ipDaRequisicao } from '@/lib/assinaturas'
+import { validarCpfOuCnpj, soDigitos } from '@/lib/validators'
 
 export const runtime = 'nodejs'
 
@@ -18,9 +20,12 @@ const Schema = z.object({
   email: z.string().email('E-mail inválido'),
   senha: z.string().max(72).refine(senhaForteOk, 'A senha precisa ter ao menos 8 caracteres, com letras e números.'),
   plano: z.enum(['essencial', 'pro']),
-  empresa: z.string().max(160).optional(),
-  cnpj: z.string().max(20).optional(),
-  telefone: z.string().max(40).optional(),
+  // Todos obrigatórios: o teste é B2B e o cadastro identifica a empresa (mesma regra da tela).
+  telefone: z.string({ required_error: 'Informe um telefone com DDD.' }).max(40).refine((v) => [10, 11].includes(soDigitos(v).length), 'Informe um telefone com DDD.'),
+  empresa: z.string({ required_error: 'Informe a empresa ou instituição.' }).trim().min(2, 'Informe a empresa ou instituição.').max(160),
+  cpfCnpj: z.string({ required_error: 'Informe um CPF ou CNPJ válido.' }).max(20).refine(validarCpfOuCnpj, 'Informe um CPF ou CNPJ válido.'),
+  // "Li e estou de acordo" obrigatório: sem ele (ou com versão antiga) não há conta.
+  ...camposAceite,
 })
 
 function dataMais(dias: number): string {
@@ -33,7 +38,7 @@ export async function POST(req: NextRequest) {
   try {
     const parsed = Schema.safeParse(await req.json().catch(() => ({})))
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Dados inválidos' }, { status: 400 })
+      return NextResponse.json({ error: erroDeAceite(parsed.error) ?? parsed.error.issues[0]?.message ?? 'Dados inválidos' }, { status: 400 })
     }
     const d = parsed.data
     const email = d.email.trim().toLowerCase()
@@ -50,11 +55,15 @@ export async function POST(req: NextRequest) {
       senha: d.senha,
       role: 'user',
       empresa: d.empresa,
-      cnpj: d.cnpj,
+      // CPF e CNPJ em colunas separadas: a equipe (assentos) é agrupada por CNPJ, e um
+      // CPF na coluna cnpj juntaria contas que não são da mesma empresa.
+      ...(soDigitos(d.cpfCnpj).length === 11 ? { cpf: d.cpfCnpj } : { cnpj: d.cpfCnpj }),
       telefone: d.telefone,
       plano: plano.id,
       status_assinatura: 'trial',
       expira_em: trialAte,
+      // A prova do aceite vai no mesmo INSERT da conta: as duas nascem juntas ou nenhuma.
+      aceite: { termosVersao: d.termosVersao, privacidadeVersao: d.privacidadeVersao, ip: ipDaRequisicao(req.headers) },
     })
 
     // E-mail de boas-vindas do trial — best-effort, não bloqueia o cadastro.
@@ -66,6 +75,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, plano: plano.id, trialAte, diasTrial: DIAS_TRIAL })
   } catch (e) {
+    // Dois envios simultâneos passam juntos pelo emailExiste; o segundo INSERT bate na PK.
+    if ((e as { code?: string })?.code === '23505') {
+      return NextResponse.json({ error: 'Já existe uma conta com este e-mail. Faça login.' }, { status: 409 })
+    }
     console.error('[cadastro POST]', e)
     return NextResponse.json({ error: 'Não foi possível criar a conta.' }, { status: 500 })
   }

@@ -56,6 +56,12 @@ ALTER TABLE assinaturas
   ADD COLUMN IF NOT EXISTS privacidade_versao TEXT,
   ADD COLUMN IF NOT EXISTS aceite_em          TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS aceite_ip          TEXT;
+-- O mesmo na conta (autocadastro e convite). Obrigatório: criarUsuario cita as colunas.
+ALTER TABLE usuarios
+  ADD COLUMN IF NOT EXISTS termos_versao      TEXT,
+  ADD COLUMN IF NOT EXISTS privacidade_versao TEXT,
+  ADD COLUMN IF NOT EXISTS aceite_em          TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS aceite_ip          TEXT;
 
 -- Log de acessos (login e, se viável, page_view). Dado pessoal (LGPD) — expurgo > 90d.
 CREATE TABLE IF NOT EXISTS acessos (

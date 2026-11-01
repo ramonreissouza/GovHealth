@@ -55,6 +55,51 @@ export async function queryOne<T extends QueryResultRow = QueryResultRow>(
   return rows[0] ?? null
 }
 
+// ── Transação ───────────────────────────────────────────────────────────────
+// Para escritas que só fazem sentido JUNTAS (ex.: aceite de convite = criar o membro
+// + consumir o convite). Com `query` solto, uma falha entre as duas deixava metade
+// gravada — e a segunda tentativa batia na primeira metade (revisão da #70).
+
+/** O que a função dentro da transação recebe: as mesmas consultas, na MESMA conexão. */
+export interface Tx {
+  query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<T[]>
+  queryOne<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<T | null>
+}
+
+/** O mínimo de um cliente pg que a transação usa — separado para dar para testar sem banco. */
+export interface ClienteTx {
+  query(text: string, params?: unknown[]): Promise<{ rows: QueryResultRow[] }>
+  release(erro?: Error | boolean): void
+}
+
+/**
+ * BEGIN → fn → COMMIT; qualquer erro em fn faz ROLLBACK e é relançado. A conexão volta
+ * ao pool sempre — e, se nem o ROLLBACK passou, volta marcada como quebrada (o pool a
+ * descarta em vez de entregar uma conexão no meio de uma transação ao próximo pedido).
+ */
+export async function emTransacao<R>(cliente: ClienteTx, fn: (tx: Tx) => Promise<R>): Promise<R> {
+  const tx: Tx = {
+    query: async <T extends QueryResultRow>(text: string, params?: unknown[]) => (await cliente.query(text, params)).rows as T[],
+    queryOne: async <T extends QueryResultRow>(text: string, params?: unknown[]) => ((await cliente.query(text, params)).rows[0] as T | undefined) ?? null,
+  }
+  let quebrada: Error | undefined
+  try {
+    await cliente.query('BEGIN')
+    const r = await fn(tx)
+    await cliente.query('COMMIT')
+    return r
+  } catch (e) {
+    try { await cliente.query('ROLLBACK') } catch (e2) { quebrada = e2 as Error }
+    throw e
+  } finally {
+    cliente.release(quebrada)
+  }
+}
+
+export async function transacao<R>(fn: (tx: Tx) => Promise<R>): Promise<R> {
+  return emTransacao(await getPool().connect(), fn)
+}
+
 // ── Health (src/app/api/health) ──────────────────────────────────────────────
 // Pool próprio, com UMA conexão. A rota é pública: se usasse o pool acima, pedidos
 // repetidos com o banco travado ocupariam as 5 conexões do app e derrubariam as
