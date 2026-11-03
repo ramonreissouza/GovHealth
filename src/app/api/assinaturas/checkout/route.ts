@@ -31,6 +31,9 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ error: erroDeAceite(parsed.error) ?? primeiraMensagem(parsed.error), detalhes: parsed.error.flatten() }, { status: 400 })
     const d = parsed.data
     const plano = planoPorId(d.plano)!
+    // Antes de gravar qualquer coisa: um produto mal configurado no Stripe (sem preço
+    // padrão, valor diferente da tela) não pode deixar assinatura pendente órfã.
+    const lineItem = await lineItemDoPlano(plano)
 
     // 1) registra a pendência (auditoria/lead) e obtém o id interno
     const assinaturaId = await criarAssinatura({
@@ -48,7 +51,7 @@ export async function POST(req: NextRequest) {
       mode: 'subscription',
       ui_mode: 'embedded',
       payment_method_types: ['card'],
-      line_items: [lineItemDoPlano(plano)],
+      line_items: [lineItem],
       customer_email: d.email,
       locale: 'pt-BR',
       allow_promotion_codes: true,
